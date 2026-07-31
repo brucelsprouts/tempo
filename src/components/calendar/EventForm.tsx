@@ -10,6 +10,8 @@ import { Button, Field, inputClass, PanelHeader, SegmentedControl } from './ui';
 interface Props {
   mode: 'new' | 'edit';
   date?: CivilDate;
+  /** Set when the entry was started from an hour row, which also means "timed". */
+  startMinutes?: number;
   occurrence?: Occurrence;
   onClose: () => void;
 }
@@ -44,7 +46,7 @@ const toMinutes = (t: string) => {
 const fromMinutes = (n: number) =>
   `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
 
-export function EventForm({ mode, date, occurrence, onClose }: Props) {
+export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Props) {
   const timezone = useCalendar((s) => s.timezone);
   const categories = useCalendar((s) => s.categories);
   const createEvent = useCalendar((s) => s.createEvent);
@@ -58,18 +60,25 @@ export function EventForm({ mode, date, occurrence, onClose }: Props) {
 
   const [title, setTitle] = useState(existing?.title ?? '');
   const [kind, setKind] = useState<EventKind>(existing?.kind ?? 'event');
-  const [allDay, setAllDay] = useState(existing?.allDay ?? true);
+  // Clicking an hour row states a time, so the form opens timed rather than
+  // making you undo an all-day default you never asked for.
+  const [allDay, setAllDay] = useState(existing?.allDay ?? startMinutes == null);
   const [startDate, setStartDate] = useState<CivilDate>(
     existing?.startDate ?? occurrence?.date ?? seed,
   );
   const [endDate, setEndDate] = useState<CivilDate>(
     existing?.endDate ?? occurrence?.endDate ?? seed,
   );
+  const seedStart = occurrence?.startMinutes ?? startMinutes ?? null;
   const [startTime, setStartTime] = useState(
-    occurrence?.startMinutes != null ? fromMinutes(occurrence.startMinutes) : '09:00',
+    seedStart != null ? fromMinutes(seedStart) : '09:00',
   );
   const [endTime, setEndTime] = useState(
-    occurrence?.endMinutes != null ? fromMinutes(occurrence.endMinutes) : '10:00',
+    occurrence?.endMinutes != null
+      ? fromMinutes(occurrence.endMinutes)
+      : seedStart != null
+        ? fromMinutes(Math.min(23 * 60 + 59, seedStart + 60))
+        : '10:00',
   );
   const [categoryId, setCategoryId] = useState<string | null>(existing?.categoryId ?? null);
   const [freq, setFreq] = useState<'NONE' | Frequency>(existing?.recurrence?.freq ?? 'NONE');

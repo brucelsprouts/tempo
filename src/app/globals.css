@@ -97,6 +97,16 @@ body {
     outline: 1px solid var(--color-dim);
     outline-offset: 1px;
   }
+
+  /* Blurred rather than bulleted: -webkit-text-security isn't in Firefox, and a
+     row of dots loses the shape of the value. This keeps the length and rhythm
+     of the string legible while the characters themselves aren't readable —
+     and it works on an <input> without touching its type or autocomplete. */
+  .redacted {
+    color: transparent;
+    text-shadow: 0 0 7px var(--color-ink);
+    user-select: none;
+  }
 }
 
 /* dnd-kit sets this while a drag is in flight */

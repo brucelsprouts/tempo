@@ -11,7 +11,16 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Ref,
+} from 'react';
 import { groupOverrides, useCalendar } from '@/lib/store/calendar-store';
 import { addDays, diffDays, parts, startOfWeek, todayIn, type CivilDate } from '@/lib/tempo/civil';
 import { layoutWeek } from '@/lib/tempo/layout';
@@ -37,13 +46,27 @@ const BUCKET = 8;
 const PAD_BEFORE = 8;
 const PAD_AFTER = 24;
 
+/** Scrolling is owned here, so the app chrome above drives it through this. */
+export interface CalendarHandle {
+  jumpToToday: () => void;
+  jumpTo: (date: CivilDate) => void;
+}
+
 interface Props {
   onOpenOccurrence: (occ: Occurrence) => void;
   onOpenDay: (date: CivilDate) => void;
+  onNewOnDay: (date: CivilDate) => void;
   selectedDay: CivilDate | null;
+  ref?: Ref<CalendarHandle>;
 }
 
-export function ContinuousCalendar({ onOpenOccurrence, onOpenDay, selectedDay }: Props) {
+export function ContinuousCalendar({
+  onOpenOccurrence,
+  onOpenDay,
+  onNewOnDay,
+  selectedDay,
+  ref,
+}: Props) {
   const events = useCalendar((s) => s.events);
   const overrides = useCalendar((s) => s.overrides);
   const categories = useCalendar((s) => s.categories);
@@ -196,6 +219,18 @@ export function ContinuousCalendar({ onOpenOccurrence, onOpenDay, selectedDay }:
     scrollRef.current?.scrollTo({ top: TODAY_OFFSET, behavior: 'smooth' });
   }, []);
 
+  // Fixed row height again: the target week is arithmetic, not a search.
+  const jumpTo = useCallback(
+    (date: CivilDate) => {
+      const week = Math.floor(diffDays(startOfWeek(date), epochStart) / 7);
+      const top = Math.min(TOTAL_H - ROW_H, Math.max(0, week * ROW_H));
+      scrollRef.current?.scrollTo({ top, behavior: 'smooth' });
+    },
+    [epochStart],
+  );
+
+  useImperativeHandle(ref, () => ({ jumpToToday, jumpTo }), [jumpToToday, jumpTo]);
+
   // Which month the viewport is currently sitting in. There is no "current
   // page" here, so the readout is derived from what you can actually see.
   const topWeek = addDays(epochStart, topIndex * 7);
@@ -256,6 +291,7 @@ export function ContinuousCalendar({ onOpenOccurrence, onOpenDay, selectedDay }:
                       resizeOccurrence(occ, delta, edge, seriesMode.current ? 'series' : 'occurrence')
                     }
                     onDayOpen={onOpenDay}
+                    onDayNew={onNewOnDay}
                     selectedDay={selectedDay}
                   />
                 </div>
@@ -284,9 +320,7 @@ function Header({
   onToday: () => void;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-4 border-b border-hair px-4 py-3">
-      <span className="text-[12px] tracking-[0.3em] text-bright">TEMPO</span>
-      <span className="text-hair">│</span>
+    <div className="flex shrink-0 items-center gap-4 border-b border-hair px-4 py-2.5">
       <div className="flex items-baseline gap-2">
         <span className="text-[13px] tracking-[0.08em] text-ink">{month}</span>
         <span className="text-[11px] tabular-nums text-mute">{year}</span>

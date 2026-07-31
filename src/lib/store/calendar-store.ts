@@ -80,6 +80,7 @@ interface CalendarState {
   ) => Promise<void>;
   cancelOccurrence: (occ: Occurrence) => Promise<void>;
   setStatus: (occ: Occurrence, status: EventStatus) => Promise<void>;
+  setTimezone: (tz: string) => void;
   dismissError: () => void;
 }
 
@@ -92,6 +93,24 @@ const DEFAULT_CATEGORIES = [
 ];
 
 const DEFAULT_TZ = process.env.NEXT_PUBLIC_TEMPO_TIMEZONE || 'America/Toronto';
+
+/**
+ * The zone lives in localStorage, not in a table.
+ *
+ * It describes the device you are reading the calendar on, not the calendar
+ * itself — every event already carries its own `timezone` — so syncing it to
+ * the server would be wrong, and reading it during store construction would
+ * desync the server render. `load()` applies it instead, on the client.
+ */
+const TZ_KEY = 'tempo.timezone';
+
+function storedTimezone(): string | null {
+  try {
+    return window.localStorage.getItem(TZ_KEY);
+  } catch {
+    return null;
+  }
+}
 
 export const useCalendar = create<CalendarState>((set, get) => {
   const supabase = createClient();
@@ -168,8 +187,20 @@ export const useCalendar = create<CalendarState>((set, get) => {
 
     dismissError: () => set({ error: null }),
 
+    setTimezone: (tz) => {
+      try {
+        window.localStorage.setItem(TZ_KEY, tz);
+      } catch {
+        // private mode / storage disabled: the choice just doesn't survive a reload
+      }
+      set({ timezone: tz });
+    },
+
     load: async () => {
       set({ status: 'loading', error: null });
+
+      const saved = storedTimezone();
+      if (saved) set({ timezone: saved });
       const {
         data: { user },
       } = await supabase.auth.getUser();

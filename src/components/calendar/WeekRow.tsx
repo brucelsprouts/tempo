@@ -16,6 +16,7 @@ interface Props {
   onOpen: (occ: Occurrence) => void;
   onResize: (occ: Occurrence, deltaDays: number, edge: 'start' | 'end') => void;
   onDayOpen: (date: CivilDate) => void;
+  onDayNew: (date: CivilDate) => void;
   selectedDay: CivilDate | null;
 }
 
@@ -24,12 +25,14 @@ function DayCell({
   today,
   overflow,
   onDayOpen,
+  onDayNew,
   selected,
 }: {
   date: CivilDate;
   today: CivilDate;
   overflow: number;
   onDayOpen: (d: CivilDate) => void;
+  onDayNew: (d: CivilDate) => void;
   selected: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: date });
@@ -44,7 +47,7 @@ function DayCell({
       data-date={date}
       onDoubleClick={() => onDayOpen(date)}
       className={[
-        'relative h-full border-l border-hair transition-colors',
+        'group/day relative h-full border-l border-hair transition-colors',
         // Alternating month bands: the month changes are legible without the
         // grid ever breaking into pages.
         month % 2 === 0 ? 'band-even' : 'band-odd',
@@ -74,6 +77,22 @@ function DayCell({
         >
           {day}
         </span>
+
+        {/* Reveals on hover, the way a Notion row does: the affordance is where
+            the cursor already is, so adding an entry never needs a menu. */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDayNew(date);
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+          title="New entry"
+          aria-label={`New entry on ${date}`}
+          className="ml-auto flex h-[17px] w-[17px] shrink-0 self-center items-center justify-center border border-hair bg-panel text-[12px] leading-none text-mute opacity-0 transition-opacity hover:border-hairlit hover:text-bright focus-visible:opacity-100 group-hover/day:opacity-100"
+        >
+          +
+        </button>
       </div>
 
       {overflow > 0 && (
@@ -96,6 +115,7 @@ function WeekRowImpl({
   onOpen,
   onResize,
   onDayOpen,
+  onDayNew,
   selectedDay,
 }: Props) {
   const { weekStart, days, segments, overflow } = layout;
@@ -131,6 +151,7 @@ function WeekRowImpl({
               today={today}
               overflow={overflow[i]}
               onDayOpen={onDayOpen}
+              onDayNew={onDayNew}
               selected={date === selectedDay}
             />
           ))}
@@ -143,8 +164,11 @@ function WeekRowImpl({
           />
         )}
 
+        {/* Stays inert end to end: a blanket pointer-events-auto here would sit
+            over every day cell and swallow the hover and double-click the cells
+            below are listening for. Each bar re-enables itself instead. */}
         <div className="pointer-events-none absolute inset-0">
-          <div className="pointer-events-auto relative h-full">
+          <div className="relative h-full">
             {segments
               .filter((s) => !s.hidden)
               .map((segment) => (

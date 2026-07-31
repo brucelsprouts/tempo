@@ -27,10 +27,13 @@ export function SegmentedControl<T extends string>({
   value,
   options,
   onChange,
+  grow = true,
 }: {
   value: T;
   options: readonly { value: T; label: string }[];
   onChange: (v: T) => void;
+  /** Off for toolbars, where the control should be as wide as its labels. */
+  grow?: boolean;
 }) {
   return (
     <div className="flex border border-hair">
@@ -40,7 +43,8 @@ export function SegmentedControl<T extends string>({
           type="button"
           onClick={() => onChange(o.value)}
           className={[
-            'flex-1 px-2 py-1.5 text-[10px] tracking-[0.1em] transition-colors',
+            grow ? 'flex-1' : '',
+            'px-2 py-1.5 text-[10px] tracking-[0.1em] transition-colors',
             o.value === value
               ? 'bg-raised text-bright'
               : 'text-mute hover:bg-sunken hover:text-dim',
@@ -97,5 +101,59 @@ export function PanelHeader({
         ESC
       </button>
     </div>
+  );
+}
+
+/**
+ * Centred overlay. Escape is deliberately not bound here — the shell owns one
+ * keymap, so there is a single place that decides what Escape closes.
+ */
+export function Modal({
+  title,
+  meta,
+  onClose,
+  children,
+}: {
+  title: string;
+  meta?: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-void/85 px-6 py-[7vh]"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+    >
+      <div className="flex max-h-full w-full max-w-[600px] flex-col border border-hairlit bg-panel shadow-[0_24px_80px_rgba(0,0,0,0.75)]">
+        <PanelHeader title={title} meta={meta} onClose={onClose} />
+        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/** A titled block inside a panel or modal. */
+export function Section({
+  label,
+  meta,
+  children,
+}: {
+  label: string;
+  meta?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="border-b border-hair px-4 py-4 last:border-b-0">
+      <div className="mb-3 flex items-baseline gap-2">
+        <h2 className="label text-dim">{label}</h2>
+        {meta && <span className="label">{meta}</span>}
+      </div>
+      {children}
+    </section>
   );
 }

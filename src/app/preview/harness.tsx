@@ -1,13 +1,10 @@
 'use client';
 
-import { useState } from 'react';
-import { ContinuousCalendar } from '@/components/calendar/ContinuousCalendar';
-import { DayView } from '@/components/calendar/DayView';
-import { EventForm } from '@/components/calendar/EventForm';
+import { CalendarShell } from '@/components/calendar/CalendarShell';
 import { useCalendar } from '@/lib/store/calendar-store';
 import { addDays, instantFromCivil, startOfMonth, todayIn, type CivilDate } from '@/lib/tempo/civil';
 import { TEMPLATE_PRESETS } from '@/lib/tempo/derive';
-import type { Category, Occurrence, TempoEvent } from '@/lib/tempo/types';
+import type { Category, TempoEvent } from '@/lib/tempo/types';
 
 const TZ = 'America/Toronto';
 
@@ -153,12 +150,6 @@ function fixtures(today: CivilDate): TempoEvent[] {
   ];
 }
 
-type Rail =
-  | { mode: 'day'; date: CivilDate }
-  | { mode: 'edit'; occ: Occurrence }
-  | { mode: 'new'; date: CivilDate }
-  | null;
-
 // Seeded at module load rather than in an effect, so the components under test
 // are exactly the production ones with no extra render-cycle bookkeeping.
 // Writes still hit Supabase and get rolled back — this harness is for layout
@@ -173,44 +164,17 @@ useCalendar.setState({
   error: null,
 });
 
+/**
+ * The production shell against fixture data. Rendering anything else here would
+ * mean the harness can't catch a shell bug — which is exactly how the keyboard
+ * shortcuts ended up advertised but unbound.
+ */
 export function PreviewHarness() {
-  const [rail, setRail] = useState<Rail>(null);
-
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1">
-          <ContinuousCalendar
-            onOpenOccurrence={(occ) => setRail({ mode: 'edit', occ })}
-            onOpenDay={(date) => setRail({ mode: 'day', date })}
-            selectedDay={rail?.mode === 'day' ? rail.date : null}
-          />
-        </div>
-        {rail && (
-          <aside className="w-[360px] shrink-0 border-l border-hairlit bg-panel">
-            {rail.mode === 'day' && (
-              <DayView
-                date={rail.date}
-                onOpen={(occ) => setRail({ mode: 'edit', occ })}
-                onNew={(date) => setRail({ mode: 'new', date })}
-                onClose={() => setRail(null)}
-              />
-            )}
-            {rail.mode === 'edit' && (
-              <EventForm key={rail.occ.key} mode="edit" occurrence={rail.occ} onClose={() => setRail(null)} />
-            )}
-            {rail.mode === 'new' && (
-              <EventForm key={rail.date} mode="new" date={rail.date} onClose={() => setRail(null)} />
-            )}
-          </aside>
-        )}
-      </div>
-      <footer className="flex shrink-0 items-center gap-4 border-t border-hair px-4 py-2">
-        <span className="label">PREVIEW · FIXTURE DATA · NOT PERSISTED</span>
-        <span className="label ml-auto">
-          DRAG = MOVE · SHIFT+DROP = SERIES · DBL-CLICK DAY = OPEN
-        </span>
-      </footer>
-    </div>
+    <CalendarShell
+      email="preview@tempo.local"
+      onSignOut={() => {}}
+      banner="PREVIEW · FIXTURE DATA · NOT PERSISTED"
+    />
   );
 }

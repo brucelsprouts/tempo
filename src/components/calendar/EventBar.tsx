@@ -97,6 +97,9 @@ export function EventBar({ segment, color, colWidth, onOpen, onResize }: Props) 
         zIndex: preview ? 30 : undefined,
       }}
       className={[
+        // The bars sit in a pointer-events-none overlay so empty day space falls
+        // through to the cell underneath; each bar opts itself back in.
+        'pointer-events-auto',
         'group ml-[2px] flex items-center gap-1.5 overflow-hidden bg-raised pr-1 text-[11px]',
         'border-y border-r border-hair transition-colors',
         continuesBefore ? 'border-l border-l-hairlit pl-1' : 'pl-1.5',
