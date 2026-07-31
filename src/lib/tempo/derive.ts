@@ -98,6 +98,21 @@ function tidy(s: string): string {
     .trim();
 }
 
+/**
+ * Does this template need an anchor date to resolve?
+ *
+ * Lives here rather than in the form because it is a fact about the template
+ * language, and because a predicate inside a component is a predicate no test
+ * can reach. The form asked `template.includes('{yearsSince}')` for months,
+ * which the anniversary preset fails — it wraps the token as
+ * `{ordinal(yearsSince)}` — so the anchor field never rendered and every
+ * anniversary lost its number. Matching the token name after an optional call
+ * prefix covers any wrapper the language grows later.
+ */
+export function needsAnchor(template: string | null | undefined): boolean {
+  return /\{(?:ordinal\(\s*)?yearsSince/.test(template ?? '');
+}
+
 /** The resolved title for an occurrence, falling back to the raw title. */
 export function resolveTitle(
   template: string | null | undefined,

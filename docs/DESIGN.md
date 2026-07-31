@@ -112,7 +112,78 @@ the pointer — mixing the two offsets every drop by however far along the bar y
 happened to grab it. Both ends now measure the same thing. (This was a real bug,
 caught by dropping a block on a known date and checking where it landed.)
 
-## 8. Auth is one row, not a user system
+## 8. Three views over one dataset
+
+The scroll answers *what is around this week*. It is bad at two other questions,
+so each got a view rather than a compromise:
+
+- **List** — the stored rows as a table, with search, sort and grouping. Rows are
+  *events*, not occurrences: a birthday is one entry that happens sixty times,
+  and a table repeating it sixty times is a log, not a database. Expansion still
+  appears, as a NEXT column, which is the derived fact you actually want when
+  scanning the whole set.
+- **Year** — twelve months at once, density carried by category colour rather
+  than counts, because a number is unreadable at that scale and three coloured
+  ticks under a date are not. Year-to-year navigation is a strip, so any year in
+  the epoch is one click away.
+
+No view owns data. All three read the same store and the same expander, so
+switching is a render, not a reload, and there is no second source of truth.
+
+## 9. One shell, one keymap, shared with the harness
+
+`CalendarShell` owns the chrome, the view choice, and every shortcut. The
+preview harness renders *that* shell against fixtures rather than a lookalike —
+a harness that renders a different shell cannot catch a shell bug, which is
+exactly how the shortcuts came to be advertised in the footer while `T` was
+never bound at all.
+
+Two bugs of the same family were fixed with it. The event-bar overlay set
+`pointer-events: auto` across the whole week row, so it sat over every day cell
+and swallowed the double-click the cells were listening for — the bars now
+re-enable themselves individually and the row stays inert. And the day panel had
+always passed a clicked hour up as a start time that the caller discarded.
+
+The footer used to carry a legend of these gestures. Discoverability now lives in
+settings, next to the keymap it documents, and the affordance for *new entry* is
+a `+` that appears on the day under the cursor — where the cursor already is,
+rather than in a line of text at the bottom of the screen.
+
+## 10. Settings, because the calendar is not the whole app
+
+Single account means there is no account *management* — only two facts worth
+keeping somewhere: which identity this session is, and how to end it. Both were
+pinned to the footer, permanently on screen, which is the wrong place for
+something you look at twice a year.
+
+The identity is redacted by default and revealed on request. Blurred rather than
+bulleted: `-webkit-text-security` isn't in Firefox, and a row of dots loses the
+shape of the value. On the login field this is CSS rather than
+`type="password"`, which would break `autocomplete` and invite a password
+manager to fill the wrong field. The rule is deliberately **unlayered** — it
+always sits beside a colour utility of equal specificity, and a layered rule
+loses to a later layer however specific it is, so layering it would make the
+outcome depend on the order Tailwind happened to emit the two.
+
+Timezone lives in `localStorage`, not in a table: it describes the device you
+are reading on, not the calendar — every event already carries its own zone.
+It is applied in `load()` rather than read during store construction, because
+the server has no `localStorage` and a different first paint is a hydration
+error. The view preference is a `useSyncExternalStore` for the same reason,
+which is the one API that expresses "server default, client value after
+hydration" without a cascading render.
+
+**Scrollbars are hidden — a reversal.** They were styled as thin
+instrument-panel rails, on the argument that a scroll position is information
+and hiding it is a cost. That argument doesn't survive contact with this app,
+which nests scroll containers: the week grid, the list, and every overlay each
+own one, so the single tasteful rail turned into four competing vertical lines
+down a surface whose only other vertical marks are hairlines that mean
+something. Nothing was actually lost by hiding them — the position is already
+readable from the header date and the month bands, which are exact rather than
+proportional. `overflow` is unchanged; only the widget is gone.
+
+## 11. Auth is one row, not a user system
 
 Supabase Auth with a single account, sign-ups disabled, RLS on every table
 keyed to `owner_id`. `src/proxy.ts` gates every route at the network boundary,

@@ -42,25 +42,28 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Instrument-panel scrollbars: present, but never the loudest thing on screen. */
+/**
+ * Scrollbars are hidden, not styled.
+ *
+ * They used to be thin instrument-panel rails, on the theory that a scroll
+ * position is information worth showing. That was wrong here, because this app
+ * nests scroll containers: the week grid, the list, and every overlay each own
+ * one. The single tasteful rail became four competing vertical lines down a
+ * surface whose only other vertical marks are hairlines that mean something.
+ *
+ * Nothing is lost by hiding them. The scroll position is already readable from
+ * the header date and the alternating month bands, which are exact rather than
+ * proportional, and every scroll region stays reachable by wheel and keyboard.
+ * `overflow` is untouched — this hides the widget, it does not stop the scroll.
+ */
 * {
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-hairlit) transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
-*::-webkit-scrollbar-thumb {
-  background: var(--color-hairlit);
-  border: 3px solid var(--color-void);
-  border-radius: 6px;
-}
-*::-webkit-scrollbar-thumb:hover {
-  background: var(--color-mute);
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 @layer utilities {
@@ -98,15 +101,30 @@ body {
     outline-offset: 1px;
   }
 
-  /* Blurred rather than bulleted: -webkit-text-security isn't in Firefox, and a
-     row of dots loses the shape of the value. This keeps the length and rhythm
-     of the string legible while the characters themselves aren't readable —
-     and it works on an <input> without touching its type or autocomplete. */
-  .redacted {
-    color: transparent;
-    text-shadow: 0 0 7px var(--color-ink);
-    user-select: none;
-  }
+}
+
+/**
+ * Redaction.
+ *
+ * Blurred rather than bulleted: `-webkit-text-security` isn't in Firefox, and a
+ * row of dots loses the shape of the value. This keeps the length and rhythm of
+ * the string readable while the characters aren't — and it works on an `<input>`
+ * without touching its `type`, which would break `autocomplete` and invite a
+ * password manager to fill the wrong field.
+ *
+ * Deliberately unlayered. It is always applied next to a colour utility, and a
+ * layered rule loses to a later layer no matter how specific it is — so putting
+ * this in `@layer utilities` makes it depend on the order Tailwind happened to
+ * emit the two, which differs per route chunk. Unlayered beats every layer.
+ */
+.redacted {
+  color: transparent;
+  /* what actually paints an input's value in WebKit; `color` alone leaves it readable */
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 0 7px var(--color-ink);
+  /* currentColor is transparent now, which would take the caret with it */
+  caret-color: var(--color-ink);
+  user-select: none;
 }
 
 /* dnd-kit sets this while a drag is in flight */

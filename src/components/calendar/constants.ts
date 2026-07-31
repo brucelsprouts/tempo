@@ -24,7 +24,15 @@ export const ROW_H = 132;
  */
 export const TOTAL_H = WEEK_COUNT * ROW_H;
 export const TODAY_OFFSET = WEEKS_BEFORE * ROW_H;
-export const DAY_HEADER_H = 26;
+/**
+ * 30 rather than 26. At 26 the day number sat hard against the cell's top
+ * hairline, which reads as a clipping artefact rather than as a header — the
+ * one number every cell always shows was the worst-set text on screen.
+ *
+ * The extra 4px is taken from the row's unused slack: nothing has ever been
+ * drawn below the last lane. All four lanes still fit, 4px lower.
+ */
+export const DAY_HEADER_H = 30;
 export const LANE_H = 21;
 export const LANE_GAP = 3;
 export const MAX_LANES = 4;

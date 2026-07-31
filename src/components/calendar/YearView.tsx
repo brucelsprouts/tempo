@@ -16,6 +16,7 @@ import {
 import { expandAll } from '@/lib/tempo/recurrence';
 import type { Occurrence } from '@/lib/tempo/types';
 import { DEFAULT_CATEGORY_COLOR, MONTHS } from './constants';
+import { inputClass } from './ui';
 
 /**
  * Twelve months at once.
@@ -78,51 +79,55 @@ export function YearView({ year, onYear, onOpenDay, selectedDay }: Props) {
     [byDay],
   );
 
-  const years = Array.from(
-    { length: YEAR_SPAN_BEFORE + YEAR_SPAN_AFTER + 1 },
-    (_, i) => thisYear - YEAR_SPAN_BEFORE + i,
-  );
+  /**
+   * Every year in the epoch, plus whichever one is on screen.
+   *
+   * The steppers are unbounded and can walk past either end. A `<select>` whose
+   * value is absent from its options renders blank in every browser, so the one
+   * number the header exists to state would silently vanish exactly when you
+   * had navigated somewhere unusual. Same splice, for the same reason, as the
+   * timezone list in `Settings`.
+   */
+  const years = useMemo(() => {
+    const epoch = Array.from(
+      { length: YEAR_SPAN_BEFORE + YEAR_SPAN_AFTER + 1 },
+      (_, i) => thisYear - YEAR_SPAN_BEFORE + i,
+    );
+    return epoch.includes(year) ? epoch : [...epoch, year].sort((a, b) => a - b);
+  }, [thisYear, year]);
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-4 border-b border-hair px-4 py-2.5">
-        <div className="flex items-center">
+        {/*
+          A native select rather than the strip of 16 buttons this replaces. The
+          strip had to live in an `overflow-x-auto` sliver, so most of the epoch
+          was off-screen and reachable only by scrolling sideways through a
+          scrollbar that is now hidden. It also carried a second, redundant jump
+          control beside it. A select states the current year, lists every other
+          one, and needs no custom behaviour — the app already uses native
+          selects for timezone and category.
+        */}
+        <div className="flex items-center gap-1">
           <YearStep label="‹" onClick={() => onYear(year - 1)} title="Previous year" />
-          <span className="w-[72px] text-center text-[13px] tabular-nums tracking-[0.12em] text-ink">
-            {year}
-          </span>
+          <div className="w-[116px]">
+            <select
+              value={year}
+              onChange={(e) => onYear(Number(e.target.value))}
+              aria-label="Year"
+              className={`${inputClass} tabular-nums`}
+            >
+              {years.map((y) => (
+                <option key={y} value={y}>
+                  {y === thisYear ? `${y} · TODAY` : y}
+                </option>
+              ))}
+            </select>
+          </div>
           <YearStep label="›" onClick={() => onYear(year + 1)} title="Next year" />
         </div>
 
         <span className="label">{total} ENTRIES</span>
-
-        {/* Every year in the epoch, one click away — the calendar-wide jump the
-            scroll view can only reach by scrolling. */}
-        <div className="ml-4 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-          {years.map((y) => (
-            <button
-              key={y}
-              onClick={() => onYear(y)}
-              className={[
-                'shrink-0 px-1.5 py-1 text-[10px] tabular-nums tracking-[0.08em] transition-colors',
-                y === year
-                  ? 'bg-raised text-bright'
-                  : y === thisYear
-                    ? 'text-dim hover:text-ink'
-                    : 'text-mute hover:text-dim',
-              ].join(' ')}
-            >
-              {y}
-            </button>
-          ))}
-        </div>
-
-        <button
-          onClick={() => onYear(thisYear)}
-          className="label shrink-0 border border-hair px-2 py-1 transition-colors hover:border-hairlit hover:text-dim"
-        >
-          [T] {thisYear}
-        </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">

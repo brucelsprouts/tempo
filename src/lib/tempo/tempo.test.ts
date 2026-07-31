@@ -9,7 +9,7 @@ import {
   startOfWeek,
   yearsBetween,
 } from './civil';
-import { ordinal, renderTemplate, resolveTitle, TEMPLATE_PRESETS } from './derive';
+import { needsAnchor, ordinal, renderTemplate, resolveTitle, TEMPLATE_PRESETS } from './derive';
 import { expandEvent } from './recurrence';
 import type { OccurrenceOverride, TempoEvent } from './types';
 
@@ -187,6 +187,45 @@ describe('derived display fields', () => {
     expect(
       resolveTitle(null, { title: 'Mom', date: '2026-06-14', anchorDate: null, index: 1 }),
     ).toBe('Mom');
+  });
+
+  /**
+   * Asserted over the whole preset table, and against the renderer rather than
+   * against a second copy of the predicate's own regex.
+   *
+   * A preset needs an anchor exactly when rendering it with one differs from
+   * rendering it without — that is the user-visible definition, and it is the
+   * one the old `template.includes('{yearsSince}')` gate got wrong: the
+   * anniversary preset wraps the token as `{ordinal(yearsSince)}`, so the form
+   * never offered an anchor field and every anniversary silently lost its
+   * number. Testing the table rather than one string is what stops a future
+   * preset from reopening the same hole.
+   */
+  it('flags every preset whose output depends on an anchor', () => {
+    const ctx = { title: 'Thing', date: '2026-09-01', index: 13 };
+    const presets = Object.entries(TEMPLATE_PRESETS);
+
+    const dependent = presets
+      .filter(
+        ([, template]) =>
+          renderTemplate(template, { ...ctx, anchorDate: '2014-09-01' }) !==
+          renderTemplate(template, { ...ctx, anchorDate: null }),
+      )
+      .map(([name]) => name);
+
+    // Guards the guard. If this ever comes back empty the loop below passes
+    // vacuously, and the regression it exists to catch walks straight back in.
+    expect(dependent).toEqual(['birthday', 'anniversary']);
+
+    for (const [name, template] of presets) {
+      expect(needsAnchor(template), name).toBe(dependent.includes(name));
+    }
+  });
+
+  it('treats an absent template as needing nothing', () => {
+    expect(needsAnchor(null)).toBe(false);
+    expect(needsAnchor(undefined)).toBe(false);
+    expect(needsAnchor('')).toBe(false);
   });
 });
 

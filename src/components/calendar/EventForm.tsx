@@ -3,7 +3,11 @@
 import { useMemo, useState } from 'react';
 import { useCalendar, type EventDraft } from '@/lib/store/calendar-store';
 import { civil, parts, todayIn, yearsBetween, type CivilDate } from '@/lib/tempo/civil';
-import { renderTemplate, TEMPLATE_PRESETS } from '@/lib/tempo/derive';
+import {
+  needsAnchor as templateNeedsAnchor,
+  renderTemplate,
+  TEMPLATE_PRESETS,
+} from '@/lib/tempo/derive';
 import type { EventKind, Frequency, Occurrence, Recurrence } from '@/lib/tempo/types';
 import { Button, Field, inputClass, PanelHeader, SegmentedControl } from './ui';
 
@@ -100,7 +104,7 @@ export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Pro
     : (TEMPLATES.find((t) => t.value === templateKey)?.template ?? null);
   const effectiveAnchor = isBirthday ? startDate : anchorDate;
   const recurs = effectiveFreq !== 'NONE';
-  const needsAnchor = Boolean(effectiveTemplate?.includes('{yearsSince}'));
+  const needsAnchor = templateNeedsAnchor(effectiveTemplate);
 
   /** What the title will actually read as, this year. */
   const preview = useMemo(() => {
@@ -266,10 +270,7 @@ export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Pro
         )}
 
         {recurs && !isBirthday && (
-          <Field
-            label="[04] DERIVED LABEL"
-            hint="Computed per occurrence at render time, not stored."
-          >
+          <Field label="[04] DERIVED LABEL">
             <select
               value={templateKey}
               onChange={(e) => setTemplateKey(e.target.value)}
@@ -285,7 +286,7 @@ export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Pro
         )}
 
         {needsAnchor && !isBirthday && (
-          <Field label="ANCHOR DATE" hint="Counted from, to produce the number.">
+          <Field label="ANCHOR DATE">
             <input
               type="date"
               value={anchorDate}
@@ -316,7 +317,7 @@ export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Pro
             onChange={(e) => setNotes(e.target.value)}
             rows={3}
             className={`${inputClass} resize-none`}
-            placeholder="Short context only — long-form lives in Obsidian."
+            placeholder="…"
           />
         </Field>
 

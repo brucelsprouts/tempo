@@ -56,8 +56,12 @@ function DayCell({
         selected ? 'bg-sunken' : '',
       ].join(' ')}
     >
+      {/* Padded off the top hairline rather than centred: the number has to
+          line up across all seven columns, and the month label beside it is a
+          different size, so a baseline set from the top edge is the only one
+          that holds. */}
       <div
-        className="flex items-baseline gap-1.5 px-1.5"
+        className="flex items-baseline gap-1.5 px-1.5 pt-1"
         style={{ height: DAY_HEADER_H }}
       >
         {monthStart && (

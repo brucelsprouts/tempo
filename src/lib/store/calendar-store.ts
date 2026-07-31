@@ -80,6 +80,9 @@ interface CalendarState {
   ) => Promise<void>;
   cancelOccurrence: (occ: Occurrence) => Promise<void>;
   setStatus: (occ: Occurrence, status: EventStatus) => Promise<void>;
+  createCategory: (name: string, color: string) => Promise<void>;
+  updateCategory: (id: string, patch: { name?: string; color?: string }) => Promise<void>;
+  deleteCategory: (id: string) => Promise<void>;
   setTimezone: (tz: string) => void;
   dismissError: () => void;
 }
@@ -385,6 +388,83 @@ export const useCalendar = create<CalendarState>((set, get) => {
         return;
       }
       await get().updateEvent(occ.eventId, { status });
+    },
+
+    createCategory: async (name, color) => {
+      const ownerId = get().ownerId;
+      if (!ownerId) return;
+      const title = name.trim();
+      if (!title) return;
+
+      // Appended, never inserted: `sort_order` is the display order and the
+      // seeded four already occupy 0..3, so a new one takes the next number
+      // rather than renumbering rows nobody asked to move.
+      const id = crypto.randomUUID();
+      const sortOrder = get().categories.reduce((n, c) => Math.max(n, c.sortOrder + 1), 0);
+      const category: Category = { id, name: title, color, sortOrder };
+
+      await optimistic(
+        () => set((s) => ({ categories: [...s.categories, category] })),
+        async () => {
+          const { error } = await supabase.from('categories').insert({
+            id,
+            owner_id: ownerId,
+            name: category.name,
+            color: category.color,
+            sort_order: category.sortOrder,
+          });
+          return { error };
+        },
+      );
+    },
+
+    updateCategory: async (id, patch) => {
+      await optimistic(
+        () =>
+          set((s) => ({
+            categories: s.categories.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+          })),
+        async () => {
+          // `name` and `color` are spelled identically in both shapes, so this
+          // needs no mapper. `sortOrder` is the one field that isn't, and it is
+          // deliberately not patchable here.
+          const { error } = await supabase.from('categories').update(patch).eq('id', id);
+          return { error };
+        },
+      );
+    },
+
+    deleteCategory: async (id) => {
+      await optimistic(
+        () =>
+          set((s) => ({
+            categories: s.categories.filter((c) => c.id !== id),
+            events: s.events.map((e) =>
+              e.categoryId === id ? { ...e, categoryId: null } : e,
+            ),
+          })),
+        async () => {
+          /**
+           * Null the references first, then drop the row.
+           *
+           * The generated types confirm `events_category_id_fkey` exists but
+           * say nothing about its `ON DELETE`, and the three possibilities
+           * disagree loudly: RESTRICT rejects the delete outright, CASCADE
+           * takes the events with it, SET NULL does this anyway. Clearing
+           * explicitly is correct under all three, and it is the only version
+           * that matches what local state was just told happened — a rollback
+           * can only restore a snapshot, not reconstruct a cascade.
+           */
+          const cleared = await supabase
+            .from('events')
+            .update({ category_id: null })
+            .eq('category_id', id);
+          if (cleared.error) return { error: cleared.error };
+
+          const { error } = await supabase.from('categories').delete().eq('id', id);
+          return { error };
+        },
+      );
     },
   };
 });
