@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { KIND_HEIGHT, LANE_GAP, layoutWeek } from './layout';
+import { addDays } from './civil';
+import { KIND_HEIGHT, LANE_GAP, layoutWeek, occurrencesInMarquee } from './layout';
 import type { EventKind, Occurrence } from './types';
 
 // week of Sunday 2026-07-26 … Saturday 2026-08-01
@@ -7,6 +8,9 @@ const WEEK_START = '2026-07-26';
 
 /** ROW_H 146 − DAY_HEADER_H 30 − OVERFLOW_H 13. Mirrors `constants.ts`. */
 const BUDGET = 103;
+/** The other two figures the grid is drawn from. Also `constants.ts`. */
+const ROW_H = 146;
+const DAY_HEADER_H = 30;
 
 function occ(key: string, date: string, endDate = date): Occurrence {
   return {
@@ -94,6 +98,16 @@ describe('week layout', () => {
     ]);
     expect(laneOf(segments, 'long')).toBe(0);
     expect(laneOf(segments, 'short')).toBe(1);
+  });
+
+  it('measures `top` from the lane area, not from the row', () => {
+    // The header offset is added once, by `WeekRow`, when it positions the bar
+    // overlay — and the lasso's hit test adds it again for the same reason. If
+    // it is ever "fixed" here as well it would be counted twice against the
+    // budget and every bar would be selectable 30px below where it is drawn.
+    const [seg] = layoutWeek(WEEK_START, [occ('a', '2026-07-28')], BUDGET).segments;
+    expect(seg.lane).toBe(0);
+    expect(seg.top).toBe(0);
   });
 });
 
@@ -204,5 +218,131 @@ describe('variable bar heights', () => {
     for (let i = 1; i < laneTops.length; i++) {
       expect(laneTops[i]).toBe(laneTops[i - 1] + laneHeights[i - 1] + LANE_GAP);
     }
+  });
+});
+
+/**
+ * The lasso, without a DOM.
+ *
+ * These are the cases the arithmetic exists for. A marquee dragged past the
+ * viewport covers rows the virtualiser never mounted, so a hit test that read
+ * element rects would quietly select only the visible part of the sweep — which
+ * is exactly what cannot be caught by driving the app, because on screen it
+ * looks like the selection simply stopped where you expected it to.
+ */
+describe('lasso hit-testing', () => {
+  const COL_W = 100;
+  const METRICS = { colWidth: COL_W, rowH: ROW_H, headerH: DAY_HEADER_H };
+
+  /** Week 10 is `WEEK_START`; the epoch is three rows long, 10 through 12. */
+  const weekStartOf = (index: number) => addDays(WEEK_START, (index - 10) * 7);
+
+  /** A row lookup over one fixture set. `layoutWeek` clips to the week itself. */
+  const grid = (occurrences: Occurrence[]) => (index: number) =>
+    index >= 10 && index <= 12 ? layoutWeek(weekStartOf(index), occurrences, BUDGET) : null;
+
+  /** Content-space y, `offset` px into the given row. */
+  const at = (week: number, offset: number) => week * ROW_H + offset;
+
+  // Lanes of 21px events sit at 0 and 24, so in row coordinates the first two
+  // bars occupy [30, 51] and [54, 75].
+  const LANE_0 = DAY_HEADER_H + 5;
+  const LANE_1 = DAY_HEADER_H + KIND_HEIGHT.event + LANE_GAP + 5;
+
+  const FIXTURE = [
+    occ('mon', '2026-07-27'), //           week 10, column 1
+    occ('thu', '2026-07-30'), //           week 10, column 4
+    occ('across', '2026-07-31', '2026-08-04'), // weeks 10 and 11
+    occ('next', '2026-08-11'), //          week 12, column 2
+  ];
+
+  it('takes the bars inside the rect and leaves the ones beside it', () => {
+    const hits = occurrencesInMarquee(
+      { x0: 0, y0: at(10, 0), x1: 2.5 * COL_W, y1: at(10, ROW_H) },
+      grid(FIXTURE),
+      METRICS,
+    );
+    expect([...hits]).toEqual(['mon']);
+  });
+
+  it('picks the lane the band actually crosses', () => {
+    // Two bars on one day, so which lane each lands in is settled by the sort's
+    // final tiebreak on the key rather than by anything under test here.
+    const stacked = [occ('upper', '2026-07-29'), occ('zlower', '2026-07-29')];
+    const sweep = (offset: number) =>
+      occurrencesInMarquee(
+        { x0: 0, y0: at(10, offset), x1: 7 * COL_W, y1: at(10, offset + 10) },
+        grid(stacked),
+        METRICS,
+      );
+
+    expect([...sweep(LANE_0)]).toEqual(['upper']);
+    expect([...sweep(LANE_1)]).toEqual(['zlower']);
+  });
+
+  it('reaches rows that were never rendered', () => {
+    const hits = occurrencesInMarquee(
+      { x0: 0, y0: at(10, LANE_0), x1: 7 * COL_W, y1: at(12, LANE_0 + 10) },
+      grid(FIXTURE),
+      METRICS,
+    );
+    // `across` is drawn as two segments in two rows and is one entry in both.
+    expect(hits).toEqual(new Set(['mon', 'thu', 'across', 'next']));
+  });
+
+  it('reads the same dragged backwards as forwards', () => {
+    const forwards = { x0: 0, y0: at(10, LANE_0), x1: 7 * COL_W, y1: at(11, LANE_0 + 10) };
+    const backwards = { x0: forwards.x1, y0: forwards.y1, x1: forwards.x0, y1: forwards.y0 };
+    expect(occurrencesInMarquee(backwards, grid(FIXTURE), METRICS)).toEqual(
+      occurrencesInMarquee(forwards, grid(FIXTURE), METRICS),
+    );
+  });
+
+  it('takes nothing from a sweep that stays inside the day headers', () => {
+    const hits = occurrencesInMarquee(
+      { x0: 0, y0: at(10, 2), x1: 7 * COL_W, y1: at(10, DAY_HEADER_H - 2) },
+      grid(FIXTURE),
+      METRICS,
+    );
+    expect(hits.size).toBe(0);
+  });
+
+  it('ignores rows outside the epoch rather than inventing them', () => {
+    const hits = occurrencesInMarquee(
+      { x0: 0, y0: at(-40, 0), x1: 7 * COL_W, y1: at(9, ROW_H) },
+      grid(FIXTURE),
+      METRICS,
+    );
+    expect(hits.size).toBe(0);
+  });
+
+  it('skips bars that rolled into a "+N" chip instead of being drawn', () => {
+    // Six on one day: four are drawn and two are counted, and a chip has no
+    // outline to light.
+    const many = Array.from({ length: 6 }, (_, i) => occ(`e${i}`, '2026-07-29'));
+    const hits = occurrencesInMarquee(
+      { x0: 0, y0: at(10, 0), x1: 7 * COL_W, y1: at(10, ROW_H) },
+      grid(many),
+      METRICS,
+    );
+    expect(hits.size).toBe(4);
+  });
+
+  it('skips read-only instances, which refuse everything a selection can do', () => {
+    const hits = occurrencesInMarquee(
+      { x0: 0, y0: at(10, 0), x1: 7 * COL_W, y1: at(10, ROW_H) },
+      grid([{ ...occ('google', '2026-07-27'), readOnly: true }, occ('mine', '2026-07-29')]),
+      METRICS,
+    );
+    expect([...hits]).toEqual(['mine']);
+  });
+
+  it('selects nothing before the columns have been measured', () => {
+    const hits = occurrencesInMarquee(
+      { x0: 0, y0: at(10, 0), x1: 700, y1: at(12, ROW_H) },
+      grid(FIXTURE),
+      { ...METRICS, colWidth: 0 },
+    );
+    expect(hits.size).toBe(0);
   });
 });

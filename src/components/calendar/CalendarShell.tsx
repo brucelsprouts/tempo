@@ -167,13 +167,47 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
      * already dismissed.
      */
     if (e.key === 'Escape') {
-      if (overlays.length > 0) pop();
-      else if (typing) target.blur();
+      if (overlays.length > 0) {
+        pop();
+      } else if (!calendarRef.current?.unwind() && typing) {
+        // The grid's own layers sit under the stack: a pending bulk-delete
+        // confirmation, then the selection. Blurring is last because it is not
+        // a layer — in the scroll view there is nothing to be typing into.
+        target.blur();
+      }
       return;
     }
 
     // Never shadow a browser or OS chord.
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+
+    /**
+     * What a selection answers to.
+     *
+     * Bound ahead of everything below and only while the grid actually has
+     * something lit, so an unselected calendar keeps the browser's own arrow
+     * scrolling and Backspace keeps meaning nothing. `calendarRef` is null in
+     * the other two views, which is what scopes these to the grid.
+     */
+    if (overlays.length === 0) {
+      const grid = calendarRef.current;
+      const acted =
+        e.key === 'Delete' || e.key === 'Backspace'
+          ? grid?.deleteSelection()
+          : e.key === 'ArrowLeft'
+            ? grid?.moveSelection(-1)
+            : e.key === 'ArrowRight'
+              ? grid?.moveSelection(1)
+              : e.key === 'ArrowUp'
+                ? grid?.moveSelection(-7)
+                : e.key === 'ArrowDown'
+                  ? grid?.moveSelection(7)
+                  : false;
+      if (acted) {
+        e.preventDefault();
+        return;
+      }
+    }
 
     /**
      * Space re-centres on today.

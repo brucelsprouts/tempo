@@ -39,10 +39,10 @@ export const SHORTCUTS: ReadonlyArray<{
   { keys: ['DEL'], meaning: 'Delete the selection' },
   { keys: ['←', '→'], joiner: '/', meaning: 'Move selection ∓1 day' },
   { keys: ['↑', '↓'], joiner: '/', meaning: 'Move selection ∓7 days' },
-  { keys: ['CLICK'], meaning: 'Empty day → new entry' },
-  { keys: ['DRAG'], meaning: 'Empty days → new entry across the span' },
-  { keys: ['⌘', 'DRAG'], joiner: '+', meaning: 'Lasso-select bars' },
+  { keys: ['DRAG'], meaning: 'Lasso-select, on empty grid' },
+  { keys: ['CLICK'], meaning: 'Empty grid → clear the selection' },
   { keys: ['⌘', 'CLICK'], joiner: '+', meaning: 'Add or remove one bar' },
+  { keys: ['DRAG'], meaning: 'A selected bar → move them all' },
   { keys: ['SHIFT', 'DROP'], joiner: '+', meaning: 'Move the whole series instead' },
 ];
 
@@ -147,8 +147,11 @@ export function Settings({ email, onClose, onSignOut, readOnly }: Props) {
             turned the section people read most into the longest scroll in the
             modal. */}
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 sm:grid-cols-[auto_1fr_auto_1fr] sm:gap-x-4">
+        {/* Keyed on the meaning rather than the caps: DRAG means two different
+            things depending on what is under the pointer, so the caps stopped
+            being unique the moment the lasso landed. */}
           {SHORTCUTS.map(({ keys, joiner, meaning }) => (
-            <div key={keys.join(' ')} className="contents">
+            <div key={meaning} className="contents">
               <dt className="flex items-center gap-1 whitespace-nowrap">
                 {keys.map((k, i) => (
                   <span key={k} className="flex items-center gap-1">

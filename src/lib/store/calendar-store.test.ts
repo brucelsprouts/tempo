@@ -29,6 +29,7 @@ function query(table: string) {
     select: () => q,
     order: () => q,
     eq: () => q,
+    in: () => q,
     insert: (p: unknown) => ((state.op = 'insert'), (state.payload = p), q),
     update: (p: unknown) => ((state.op = 'update'), (state.payload = p), q),
     upsert: (p: unknown) => ((state.op = 'upsert'), (state.payload = p), q),
@@ -183,6 +184,122 @@ describe('moving an occurrence', () => {
 
     expect(useCalendar.getState().events[0].startDate).toBe('2026-08-10');
     expect(recorded).toHaveLength(0);
+  });
+});
+
+// ------------------------------------------------------------ bulk mutations
+
+/**
+ * A selection has to move or vanish as one unit.
+ *
+ * The interesting property is not that the dates come out right — that is
+ * `moveOccurrence` again — but that a group is one snapshot and one statement
+ * per table. A loop of single writes would leave four entries moved and two not
+ * on a failure partway through, which the snapshot rollback has no way to
+ * express, let alone undo.
+ */
+describe('moving a selection', () => {
+  it('splits into one write per table, whatever the mix', async () => {
+    const one = event({ id: 'e1', startDate: '2026-08-10', endDate: '2026-08-10' });
+    const two = event({ id: 'e2', startDate: '2026-08-12', endDate: '2026-08-14' });
+    const series = event({ id: 'e3', recurrence: { freq: 'WEEKLY' } });
+    seed([one, two, series]);
+
+    await useCalendar.getState().moveOccurrences(
+      [
+        occurrenceOf(one, '2026-08-10'),
+        occurrenceOf(two, '2026-08-12', '2026-08-14'),
+        occurrenceOf(series, '2026-08-10'),
+      ],
+      7,
+      'occurrence',
+    );
+
+    const moved = new Map(useCalendar.getState().events.map((e) => [e.id, e]));
+    expect(moved.get('e1')!.startDate).toBe('2026-08-17');
+    expect(moved.get('e2')!.endDate).toBe('2026-08-21');
+    // The recurring one is excepted rather than rewritten, exactly as a single
+    // occurrence-scoped move would be.
+    expect(moved.get('e3')!.startDate).toBe('2026-08-10');
+    expect(useCalendar.getState().overrides[0].patch.startDate).toBe('2026-08-17');
+
+    expect(recorded.filter((c) => c.table === 'events')).toHaveLength(1);
+    expect(recorded.filter((c) => c.table === 'occurrence_overrides')).toHaveLength(1);
+  });
+
+  it('collapses two occurrences of one series into a single row', async () => {
+    const e = event({ recurrence: { freq: 'WEEKLY' } });
+    seed([e]);
+
+    await useCalendar
+      .getState()
+      .moveOccurrences([occurrenceOf(e, '2026-08-10'), occurrenceOf(e, '2026-08-17')], 1, 'series');
+
+    // Both describe the same row, and one statement cannot touch a row twice.
+    expect(lastCall('upsert')!.payload).toHaveLength(1);
+    expect(useCalendar.getState().events[0].startDate).toBe('2026-08-11');
+  });
+
+  it('leaves read-only instances where they are', async () => {
+    const mine = event({ id: 'e1' });
+    const theirs = event({ id: 'e2', source: 'google' });
+    seed([mine, theirs]);
+
+    await useCalendar
+      .getState()
+      .moveOccurrences(
+        [occurrenceOf(mine, '2026-08-10'), occurrenceOf(theirs, '2026-08-10')],
+        2,
+        'occurrence',
+      );
+
+    const after = new Map(useCalendar.getState().events.map((e) => [e.id, e]));
+    expect(after.get('e1')!.startDate).toBe('2026-08-12');
+    expect(after.get('e2')!.startDate).toBe('2026-08-10');
+  });
+
+  it('rolls the whole group back together', async () => {
+    const one = event({ id: 'e1' });
+    const two = event({ id: 'e2', startDate: '2026-08-12', endDate: '2026-08-12' });
+    seed([one, two]);
+    shouldFail = true;
+
+    await useCalendar
+      .getState()
+      .moveOccurrences([occurrenceOf(one, '2026-08-10'), occurrenceOf(two, '2026-08-12')], 3, 'occurrence');
+
+    expect(useCalendar.getState().events.map((e) => e.startDate)).toEqual([
+      '2026-08-10',
+      '2026-08-12',
+    ]);
+    expect(useCalendar.getState().error).toBe('write rejected');
+  });
+});
+
+describe('deleting a selection', () => {
+  it('takes the rows and their exceptions in one statement', async () => {
+    seed([event({ id: 'e1' }), event({ id: 'e2' }), event({ id: 'e3' })]);
+    useCalendar.setState({
+      overrides: [
+        { id: 'o1', eventId: 'e2', occurrenceDate: '2026-08-10', cancelled: false, patch: {} },
+      ],
+    });
+
+    await useCalendar.getState().deleteEvents(['e1', 'e2']);
+
+    expect(useCalendar.getState().events.map((e) => e.id)).toEqual(['e3']);
+    expect(useCalendar.getState().overrides).toHaveLength(0);
+    expect(recorded.filter((c) => c.op === 'delete')).toHaveLength(1);
+  });
+
+  it('restores every row when the delete is rejected', async () => {
+    seed([event({ id: 'e1' }), event({ id: 'e2' })]);
+    shouldFail = true;
+
+    await useCalendar.getState().deleteEvents(['e1', 'e2']);
+
+    expect(useCalendar.getState().events).toHaveLength(2);
+    expect(useCalendar.getState().error).toBe('write rejected');
   });
 });
 

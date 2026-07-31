@@ -199,3 +199,88 @@ function bySpanThenStart(
 export function occurrencesOn(occurrences: Occurrence[], day: CivilDate): Occurrence[] {
   return occurrences.filter((o) => rangesOverlap(o.date, o.endDate, day, day));
 }
+
+// ------------------------------------------------------------------- lasso
+
+/**
+ * A marquee, in the scroll container's **content** coordinates: `x` from the
+ * left edge of the seven columns, `y` from the top of week 0. Content rather
+ * than viewport, so the rect survives autoscroll without being recomputed —
+ * scrolling under a stationary pointer moves the pointer's content position and
+ * leaves the anchor exactly where it was pressed.
+ */
+export interface MarqueeRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface GridMetrics {
+  colWidth: number;
+  /** Every row is this tall. The identity the whole scroll architecture rests on. */
+  rowH: number;
+  /** The day-number strip a segment's `top` is measured below. */
+  headerH: number;
+}
+
+/**
+ * Which bars a marquee covers.
+ *
+ * Computed, never measured. Rows are virtualised, so a marquee dragged past the
+ * viewport covers rows that have no elements to read a rect from — reading the
+ * DOM would silently select only the part of the sweep that happened to be on
+ * screen. Every row is exactly `rowH` tall and every segment's band inside its
+ * row is already known, so the intersection is arithmetic that works just as
+ * well for a row that was never mounted. It is also why no rAF throttle is
+ * needed here: nothing is being measured, so nothing can force a layout.
+ *
+ * `layoutOf` is a lookup rather than a prepared map because the range of weeks
+ * to consider is itself part of the answer — the caller would have to redo this
+ * function's row arithmetic to know which layouts to hand over.
+ */
+export function occurrencesInMarquee(
+  rect: MarqueeRect,
+  layoutOf: (weekIndex: number) => WeekLayout | null,
+  { colWidth, rowH, headerH }: GridMetrics,
+): Set<string> {
+  const hits = new Set<string>();
+  if (colWidth <= 0 || rowH <= 0) return hits;
+
+  // Normalised, so dragging up and to the left works like dragging down and to
+  // the right rather than selecting nothing.
+  const left = Math.min(rect.x0, rect.x1);
+  const right = Math.max(rect.x0, rect.x1);
+  const top = Math.min(rect.y0, rect.y1);
+  const bottom = Math.max(rect.y0, rect.y1);
+
+  const firstCol = Math.floor(left / colWidth);
+  const lastCol = Math.floor(right / colWidth);
+  if (lastCol < 0 || firstCol > DAYS_PER_WEEK - 1) return hits;
+
+  for (let week = Math.floor(top / rowH); week <= Math.floor(bottom / rowH); week++) {
+    const layout = layoutOf(week);
+    if (!layout) continue;
+
+    // The marquee's band clipped to this row, in row-local pixels.
+    const bandTop = Math.max(top - week * rowH, 0);
+    const bandBottom = Math.min(bottom - week * rowH, rowH);
+
+    for (const segment of layout.segments) {
+      // A hidden segment is a "+N" chip, not a bar. Selecting something with no
+      // outline to light would be a selection you cannot see.
+      if (segment.hidden) continue;
+      // Google-sourced instances refuse every edit a selection can apply, so
+      // lighting them would be an affordance that does nothing.
+      if (segment.occurrence.readOnly) continue;
+      if (segment.endCol < firstCol || segment.startCol > lastCol) continue;
+
+      const segTop = headerH + segment.top;
+      if (segTop + segment.height < bandTop || segTop > bandBottom) continue;
+
+      hits.add(segment.occurrence.key);
+    }
+  }
+
+  return hits;
+}

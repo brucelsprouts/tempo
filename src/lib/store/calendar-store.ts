@@ -18,6 +18,7 @@ import {
   eventFromRow,
   eventToRow,
   overrideFromRow,
+  overrideKey,
 } from '@/lib/tempo/mappers';
 import { addDays, instantFromCivil, type CivilDate } from '@/lib/tempo/civil';
 import { eventSpan } from '@/lib/tempo/recurrence';
@@ -65,7 +66,9 @@ interface CalendarState {
   createEvent: (draft: EventDraft) => Promise<void>;
   updateEvent: (id: string, patch: Partial<TempoEvent>) => Promise<void>;
   deleteEvent: (id: string) => Promise<void>;
+  deleteEvents: (ids: string[]) => Promise<void>;
   moveOccurrence: (occ: Occurrence, deltaDays: number, scope: EditScope) => Promise<void>;
+  moveOccurrences: (occs: Occurrence[], deltaDays: number, scope: EditScope) => Promise<void>;
   resizeOccurrence: (
     occ: Occurrence,
     deltaDays: number,
@@ -315,6 +318,23 @@ export const useCalendar = create<CalendarState>((set, get) => {
       );
     },
 
+    deleteEvents: async (ids) => {
+      const doomed = new Set(ids);
+      if (doomed.size === 0) return;
+
+      await optimistic(
+        () =>
+          set((s) => ({
+            events: s.events.filter((e) => !doomed.has(e.id)),
+            overrides: s.overrides.filter((o) => !doomed.has(o.eventId)),
+          })),
+        async () => {
+          const { error } = await supabase.from('events').delete().in('id', [...doomed]);
+          return { error };
+        },
+      );
+    },
+
     moveOccurrence: async (occ, deltaDays, scope) => {
       if (occ.readOnly || deltaDays === 0) return;
 
@@ -331,6 +351,108 @@ export const useCalendar = create<CalendarState>((set, get) => {
 
       const ev = occ.event;
       await get().updateEvent(ev.id, shiftEvent(ev, deltaDays, deltaDays, get().timezone));
+    },
+
+    /**
+     * A whole selection moved as one unit.
+     *
+     * Not a loop over `moveOccurrence`. Each call is its own snapshot, so a
+     * failure partway through a loop of six leaves four entries moved, one
+     * rolled back and one never attempted — a state the single-snapshot
+     * rollback has no way to describe, let alone undo. So the group is resolved
+     * first, applied in one `set`, and written as at most one statement per
+     * table.
+     *
+     * The remaining seam is honest and narrow: with both a series rewrite and
+     * an override in the same selection, the events write can land and the
+     * overrides write fail, leaving the server ahead of the rolled-back client
+     * until the next load. Closing that needs a transaction, which means an
+     * RPC, which is a server-side surface this app does not otherwise have.
+     */
+    moveOccurrences: async (occs, deltaDays, scope) => {
+      if (deltaDays === 0) return;
+      const ownerId = get().ownerId;
+      if (!ownerId) return;
+
+      const tz = get().timezone;
+      const byId = new Map(get().events.map((e) => [e.id, e]));
+
+      const patches = new Map<string, Partial<TempoEvent>>();
+      const overrides = new Map<string, OccurrenceOverride>();
+
+      for (const occ of occs) {
+        if (occ.readOnly) continue;
+        const ev = byId.get(occ.eventId);
+        if (!ev) continue;
+
+        // A one-off has no series to distinguish itself from, so it moves whole
+        // whatever the scope says — the same rule `moveOccurrence` applies.
+        if (scope === 'series' || !ev.recurrence) {
+          // Keyed by event id, because two occurrences of one series shifted by
+          // the same delta describe one row, and a single upsert statement
+          // cannot touch the same row twice.
+          if (!patches.has(ev.id)) patches.set(ev.id, shiftEvent(ev, deltaDays, deltaDays, tz));
+          continue;
+        }
+
+        const key = overrideKey(occ);
+        if (overrides.has(key)) continue;
+        const existing = findOverride(occ.eventId, occ.seriesDate);
+        overrides.set(key, {
+          id: existing?.id ?? crypto.randomUUID(),
+          eventId: occ.eventId,
+          occurrenceDate: occ.seriesDate,
+          cancelled: false,
+          patch: {
+            ...(existing?.patch ?? {}),
+            startDate: addDays(occ.date, deltaDays),
+            endDate: addDays(occ.endDate, deltaDays),
+          },
+        });
+      }
+
+      if (patches.size === 0 && overrides.size === 0) return;
+      const rewritten = [...overrides.values()];
+
+      await optimistic(
+        () =>
+          set((s) => ({
+            events: s.events.map((e) => {
+              const patch = patches.get(e.id);
+              return patch ? { ...e, ...patch } : e;
+            }),
+            overrides: mergeOverrides(s.overrides, rewritten),
+          })),
+        async () => {
+          if (patches.size > 0) {
+            // Read back out of the store rather than rebuilt here: `apply` has
+            // already run, so these are the rows the calendar is showing, and
+            // the write and the optimistic state cannot drift apart.
+            const rows = get()
+              .events.filter((e) => patches.has(e.id))
+              .map((e) => ({ id: e.id, owner_id: ownerId, title: e.title, ...eventToRow(e) }));
+            const { error } = await supabase.from('events').upsert(rows);
+            if (error) return { error };
+          }
+
+          if (rewritten.length > 0) {
+            const { error } = await supabase.from('occurrence_overrides').upsert(
+              rewritten.map((o) => ({
+                id: o.id,
+                owner_id: ownerId,
+                event_id: o.eventId,
+                occurrence_date: o.occurrenceDate,
+                cancelled: o.cancelled,
+                patch: o.patch as never,
+              })),
+              { onConflict: 'event_id,occurrence_date' },
+            );
+            if (error) return { error };
+          }
+
+          return { error: null };
+        },
+      );
     },
 
     resizeOccurrence: async (occ, deltaDays, edge, scope) => {
@@ -502,6 +624,22 @@ function shiftEvent(
       zone,
     ).toISOString(),
   };
+}
+
+/**
+ * Replace-or-append, keyed by `(event, occurrence date)`.
+ *
+ * That pair is the table's own unique constraint, so rewriting an exception
+ * that already exists has to update the row rather than add a second one for
+ * the same day — which the upsert would then reject.
+ */
+function mergeOverrides(
+  existing: OccurrenceOverride[],
+  incoming: OccurrenceOverride[],
+): OccurrenceOverride[] {
+  const identity = (o: OccurrenceOverride) => `${o.eventId}:${o.occurrenceDate}`;
+  const replaced = new Set(incoming.map(identity));
+  return [...existing.filter((o) => !replaced.has(identity(o))), ...incoming];
 }
 
 /** Overrides grouped for the expander. */

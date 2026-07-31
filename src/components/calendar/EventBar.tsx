@@ -1,7 +1,7 @@
 'use client';
 
 import { useDraggable } from '@dnd-kit/core';
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import type { WeekSegment } from '@/lib/tempo/layout';
 import type { Occurrence } from '@/lib/tempo/types';
 import { DAYS_PER_WEEK } from '@/lib/tempo/layout';
@@ -9,11 +9,20 @@ import { KIND_HEIGHT } from '@/lib/tempo/layout';
 
 interface Props {
   segment: WeekSegment;
+  /**
+   * Which week row this segment is drawn in, and therefore half of the
+   * draggable's identity — see the `useDraggable` call below.
+   */
+  weekIndex: number;
   color: string;
-  /** Pixel width of one day column, needed to convert a drag into whole days. */
-  colWidth: number;
+  selected: boolean;
   onOpen: (occ: Occurrence) => void;
-  onResize: (occ: Occurrence, deltaDays: number, edge: 'start' | 'end') => void;
+  onToggleSelect: (occ: Occurrence) => void;
+  /**
+   * Resize is reported upward rather than handled here. The gesture has to be
+   * able to cross week rows, and a bar can only see its own row.
+   */
+  onResizeStart: (occ: Occurrence, edge: 'start' | 'end', e: React.PointerEvent) => void;
 }
 
 const pct = (cols: number) => `${(cols / DAYS_PER_WEEK) * 100}%`;
@@ -29,54 +38,42 @@ function timeLabel(minutes: number | null): string | null {
 
 const STATUS_GLYPH = { todo: '[ ]', doing: '[~]', done: '[x]' } as const;
 
-export function EventBar({ segment, color, colWidth, onOpen, onResize }: Props) {
+export function EventBar({
+  segment,
+  weekIndex,
+  color,
+  selected,
+  onOpen,
+  onToggleSelect,
+  onResizeStart,
+}: Props) {
   const { occurrence: occ, startCol, endCol, continuesBefore, continuesAfter } = segment;
 
-  // Live resize preview, in whole day columns. Committed on pointer-up.
-  const [preview, setPreview] = useState<{ edge: 'start' | 'end'; delta: number } | null>(null);
-  const resizing = useRef(false);
+  /**
+   * Whether the press that is about to end began on a resize handle.
+   *
+   * A press and release on a handle with no movement still produces a `click`
+   * on the bar, which would open the entry modal on top of the resize that was
+   * just committed. The flag is cleared by the bar's own pointer-down, so it
+   * can never go stale and eat a later, genuine click: the handles stop
+   * propagation, so a press anywhere else on the bar always resets it first.
+   */
+  const fromHandle = useRef(false);
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: occ.key,
+    // Not `occ.key`. A bar crossing a week boundary is drawn as two segments,
+    // and dnd-kit keys its node registry by id — under one id the second
+    // registration clobbered the first, so both halves translated together and
+    // the active rect belonged to whichever had mounted last. The two halves
+    // are two draggables; the occurrence rides along in `data`, which is what
+    // the drag handlers actually read.
+    id: `${occ.key}#${weekIndex}`,
     data: { occurrence: occ },
-    disabled: occ.readOnly || preview !== null,
+    disabled: occ.readOnly,
   });
 
-  let left = startCol;
-  let span = endCol - startCol + 1;
-  if (preview) {
-    if (preview.edge === 'end') {
-      span = Math.max(1, span + preview.delta);
-    } else {
-      const shift = Math.min(preview.delta, span - 1);
-      left += shift;
-      span -= shift;
-    }
-  }
-
-  function beginResize(e: React.PointerEvent, edge: 'start' | 'end') {
-    // Stop dnd-kit from reading this as the start of a drag.
-    e.stopPropagation();
-    e.preventDefault();
-    if (occ.readOnly) return;
-
-    resizing.current = true;
-    const originX = e.clientX;
-
-    const move = (ev: PointerEvent) => {
-      setPreview({ edge, delta: Math.round((ev.clientX - originX) / colWidth) });
-    };
-    const finish = (ev: PointerEvent) => {
-      window.removeEventListener('pointermove', move);
-      resizing.current = false;
-      setPreview(null);
-      const delta = Math.round((ev.clientX - originX) / colWidth);
-      if (delta !== 0) onResize(occ, delta, edge);
-    };
-
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', finish, { once: true });
-  }
+  const left = startCol;
+  const span = endCol - startCol + 1;
 
   const time = occ.allDay ? null : timeLabel(occ.startMinutes);
   const glyph = occ.kind === 'assignment' && occ.status ? STATUS_GLYPH[occ.status] : null;
@@ -100,7 +97,10 @@ export function EventBar({ segment, color, colWidth, onOpen, onResize }: Props) 
         transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
         opacity: isDragging ? 0.25 : 1,
         borderLeft: continuesBefore ? undefined : `2px solid ${color}`,
-        zIndex: preview ? 30 : undefined,
+        // Ink rather than `hairlit`, which is a hairline colour and disappears
+        // against `bg-raised` at the one moment it has to be unmistakable.
+        // White is spoken for: it marks today.
+        outline: selected ? '1px solid var(--color-ink)' : undefined,
       }}
       className={[
         // The bars sit in a pointer-events-none overlay so empty day space falls
@@ -120,9 +120,25 @@ export function EventBar({ segment, color, colWidth, onOpen, onResize }: Props) 
       // ahead of anything you would actually want to reach with Tab. Modal's
       // `trapTab` filters on `tabIndex >= 0`, so it needs nothing from this.
       tabIndex={-1}
+      // Also after the spread, and it must forward: this is dnd-kit's only
+      // listener on the bar, so replacing it outright would disable dragging.
+      onPointerDown={(e) => {
+        fromHandle.current = false;
+        listeners?.onPointerDown?.(e);
+      }}
       onClick={(e) => {
         e.stopPropagation();
-        if (!resizing.current) onOpen(occ);
+        if (fromHandle.current) {
+          fromHandle.current = false;
+          return;
+        }
+        // Cmd/Ctrl rather than Shift: Shift already means "rewrite the series"
+        // at drop time, and one modifier cannot mean two things on one bar.
+        if (e.metaKey || e.ctrlKey) {
+          onToggleSelect(occ);
+          return;
+        }
+        onOpen(occ);
       }}
       title={occ.title}
     >
@@ -156,18 +172,26 @@ export function EventBar({ segment, color, colWidth, onOpen, onResize }: Props) 
       {continuesAfter && <span className="shrink-0 text-mute">›</span>}
 
       {/* Resize handles. Hidden on a clipped edge — you can only lengthen a bar
-          from an end that is actually in this row. */}
+          from an end that is actually in this row, which is also what makes the
+          cross-week gesture unambiguous: there is exactly one handle per end of
+          an entry, however many rows the entry spans. */}
       {!occ.readOnly && !continuesBefore && (
         <span
-          onPointerDown={(e) => beginResize(e, 'start')}
-          className="absolute left-0 top-0 h-full w-1.5 cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100"
+          onPointerDown={(e) => {
+            fromHandle.current = true;
+            onResizeStart(occ, 'start', e);
+          }}
+          className="absolute left-0 top-0 h-full w-2 cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100"
           style={{ background: `linear-gradient(90deg, ${color}, transparent)` }}
         />
       )}
       {!occ.readOnly && !continuesAfter && (
         <span
-          onPointerDown={(e) => beginResize(e, 'end')}
-          className="absolute right-0 top-0 h-full w-1.5 cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100"
+          onPointerDown={(e) => {
+            fromHandle.current = true;
+            onResizeStart(occ, 'end', e);
+          }}
+          className="absolute right-0 top-0 h-full w-2 cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100"
           style={{ background: `linear-gradient(270deg, ${color}, transparent)` }}
         />
       )}

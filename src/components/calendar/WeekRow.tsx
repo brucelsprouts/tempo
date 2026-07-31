@@ -20,13 +20,21 @@ import { DAY_HEADER_H, GRID_PAD_R, GUTTER_W, LANE_BUDGET, MONTHS, ROW_H } from '
 
 interface Props {
   layout: WeekLayout;
+  /** The row's index in the epoch. Bars need it to be uniquely identifiable. */
+  weekIndex: number;
   today: CivilDate;
-  colWidth: number;
   colorFor: (categoryId: string | null) => string;
-  /** Where a draft entry would land, if it touches this row. */
+  /**
+   * Where a draft entry would land, if it touches this row — and, mid-drag,
+   * where the bar under the cursor is headed. One dashed band, two callers:
+   * both questions are "what footprint is about to exist here".
+   */
   ghost: { start: CivilDate; end: CivilDate } | null;
+  /** Occurrence keys drawn with a lit outline. */
+  selection: ReadonlySet<string>;
   onOpen: (occ: Occurrence) => void;
-  onResize: (occ: Occurrence, deltaDays: number, edge: 'start' | 'end') => void;
+  onToggleSelect: (occ: Occurrence) => void;
+  onResizeStart: (occ: Occurrence, edge: 'start' | 'end', e: React.PointerEvent) => void;
   onDayOpen: (date: CivilDate) => void;
   onDayNew: (date: CivilDate) => void;
   selectedDay: CivilDate | null;
@@ -61,7 +69,10 @@ function DayCell({
       data-date={date}
       onDoubleClick={() => onDayOpen(date)}
       className={[
-        'group/day relative h-full border-l border-hair transition-colors',
+        // Unselectable, because a drag across the grid is a lasso: without this
+        // the browser would answer the same gesture by highlighting the day
+        // numbers it swept over.
+        'group/day relative h-full select-none border-l border-hair transition-colors',
         // Alternating month bands: the month changes are legible without the
         // grid ever breaking into pages. The weekend shade composes with the
         // month rather than overriding it, so a Saturday still says which
@@ -136,12 +147,14 @@ function DayCell({
 
 function WeekRowImpl({
   layout,
+  weekIndex,
   today,
-  colWidth,
   colorFor,
   ghost,
+  selection,
   onOpen,
-  onResize,
+  onToggleSelect,
+  onResizeStart,
   onDayOpen,
   onDayNew,
   selectedDay,
@@ -247,10 +260,12 @@ function WeekRowImpl({
                 <EventBar
                   key={segment.occurrence.key}
                   segment={segment}
+                  weekIndex={weekIndex}
                   color={colorFor(segment.occurrence.categoryId)}
-                  colWidth={colWidth}
+                  selected={selection.has(segment.occurrence.key)}
                   onOpen={onOpen}
-                  onResize={onResize}
+                  onToggleSelect={onToggleSelect}
+                  onResizeStart={onResizeStart}
                 />
               ))}
 
