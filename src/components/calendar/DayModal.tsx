@@ -1,0 +1,139 @@
+'use client';
+
+import { useMemo, useState, useSyncExternalStore } from 'react';
+import { groupOverrides, useCalendar } from '@/lib/store/calendar-store';
+import { addDays, dayOfWeek, parts, todayIn, type CivilDate } from '@/lib/tempo/civil';
+import { expandAll } from '@/lib/tempo/recurrence';
+import type { Occurrence } from '@/lib/tempo/types';
+import { DayView } from './DayView';
+import { TasksPane } from './TasksPane';
+import { MONTHS_LONG, WEEKDAYS } from './constants';
+import { Modal, SegmentedControl } from './ui';
+
+/**
+ * A day, in full, over the calendar rather than beside it.
+ *
+ * This is where the density the grid gives up goes. A row is 146px and holds
+ * about three bars before it starts counting the rest into a "+N" chip; that
+ * chip opens this, and everything the row could not draw is here with room to
+ * spare. The grid stays a legible overview because it is allowed to stop being
+ * exhaustive.
+ */
+
+interface Props {
+  date: CivilDate;
+  onDate: (d: CivilDate) => void;
+  onOpen: (occ: Occurrence) => void;
+  onNew: (date: CivilDate, startMinutes?: number) => void;
+  onClose: () => void;
+}
+
+export function DayModal({ date, onDate, onOpen, onNew, onClose }: Props) {
+  const events = useCalendar((s) => s.events);
+  const overrides = useCalendar((s) => s.overrides);
+  const timezone = useCalendar((s) => s.timezone);
+
+  // Expanded once here and handed to both panes. They show the same day from
+  // two angles; expanding twice would let them disagree mid-render if a write
+  // landed between the two memos.
+  const occurrences = useMemo(
+    () => expandAll(events, groupOverrides(overrides), date, date),
+    [events, overrides, date],
+  );
+
+  const wide = useWide();
+  const [pane, setPane] = useState<'day' | 'tasks'>('day');
+
+  const { year, month, day } = parts(date);
+  const isToday = date === todayIn(timezone);
+
+  return (
+    <Modal
+      size="day"
+      title={`${WEEKDAYS[dayOfWeek(date)]} ${String(day).padStart(2, '0')}`}
+      meta={`${MONTHS_LONG[month - 1].toUpperCase()} ${year}${isToday ? ' · TODAY' : ''}`}
+      onClose={onClose}
+    >
+      <div className="flex items-center gap-2 border-b border-hair px-3 py-2">
+        <Stepper label="Previous day" onClick={() => onDate(addDays(date, -1))}>
+          ‹
+        </Stepper>
+        <Stepper label="Next day" onClick={() => onDate(addDays(date, 1))}>
+          ›
+        </Stepper>
+
+        {/* Only a switch when there isn't room for both. Above the breakpoint
+            the timeline and the list are the same surface, and a control that
+            hides half of what is already on screen is just a way to lose it. */}
+        {!wide && (
+          <div className="ml-auto">
+            <SegmentedControl
+              value={pane}
+              options={[
+                { value: 'day', label: 'DAY' },
+                { value: 'tasks', label: 'TASKS' },
+              ]}
+              onChange={setPane}
+              grow={false}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className={wide ? 'grid grid-cols-2 divide-x divide-hair' : ''}>
+        {(wide || pane === 'day') && (
+          <div className="h-[52vh] min-h-0">
+            <DayView date={date} occurrences={occurrences} onOpen={onOpen} onNew={onNew} />
+          </div>
+        )}
+        {(wide || pane === 'tasks') && (
+          <div className="h-[52vh] min-h-0">
+            <TasksPane occurrences={occurrences} onOpen={onOpen} />
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function Stepper({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className="border border-hair px-2 py-1 text-[11px] leading-none text-mute transition-colors hover:border-hairlit hover:text-ink"
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Two panes or one, decided once.
+ *
+ * Rendering both and hiding one with `lg:hidden` would mount two 24-hour
+ * timelines, each with its own scroll container and its own "open on the
+ * working day" effect — and the hidden one has no height, so its scroll silently
+ * clamps to zero and it is wrong the moment it becomes visible.
+ */
+function useWide(): boolean {
+  return useSyncExternalStore(
+    (cb) => {
+      const mq = window.matchMedia('(min-width: 1024px)');
+      mq.addEventListener('change', cb);
+      return () => mq.removeEventListener('change', cb);
+    },
+    () => window.matchMedia('(min-width: 1024px)').matches,
+    () => true,
+  );
+}
+

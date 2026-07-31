@@ -57,6 +57,13 @@ interface Props {
   onOpenDay: (date: CivilDate) => void;
   onNewOnDay: (date: CivilDate) => void;
   selectedDay: CivilDate | null;
+  /** Where a draft entry would land. Drawn dashed; never affects layout. */
+  ghost?: { start: CivilDate; end: CivilDate } | null;
+  /**
+   * The viewport band the ghost occupies, so the entry modal's scrim can leave
+   * it undimmed. `null` when there is no ghost or it is scrolled out of view.
+   */
+  onGhostBand?: (band: { top: number; bottom: number } | null) => void;
   ref?: Ref<CalendarHandle>;
 }
 
@@ -65,6 +72,8 @@ export function ContinuousCalendar({
   onOpenDay,
   onNewOnDay,
   selectedDay,
+  ghost,
+  onGhostBand,
   ref,
 }: Props) {
   const events = useCalendar((s) => s.events);
@@ -231,6 +240,46 @@ export function ContinuousCalendar({
 
   useImperativeHandle(ref, () => ({ jumpToToday, jumpTo }), [jumpToToday, jumpTo]);
 
+  /**
+   * Where the ghost sits on screen, in viewport pixels.
+   *
+   * Arithmetic, not measurement. Every row is exactly `ROW_H` tall, so the top
+   * of week *n* is `n * ROW_H` into the scrolled content and no row has to be
+   * found in the DOM — which matters because the rows that matter here are
+   * virtualised and the ones off screen do not exist to be measured. This is
+   * the same identity `jumpTo` and the ruler are built on.
+   *
+   * Reported through a callback and only when it actually changes: the consumer
+   * stores it in state, so echoing an equal value back every render would spin.
+   */
+  const lastBand = useRef<string>('');
+  useEffect(() => {
+    if (!onGhostBand) return;
+
+    const el = scrollRef.current;
+    let band: { top: number; bottom: number } | null = null;
+
+    if (ghost && el) {
+      const gridTop = el.getBoundingClientRect().top;
+      const firstWeek = Math.floor(diffDays(startOfWeek(ghost.start), epochStart) / 7);
+      const lastWeek = Math.floor(diffDays(startOfWeek(ghost.end), epochStart) / 7);
+      const top = gridTop + firstWeek * ROW_H - scrollOffset;
+      const bottom = gridTop + (lastWeek + 1) * ROW_H - scrollOffset;
+
+      // Fully above or below the scroll viewport: there is nothing to keep lit,
+      // and a band clamped to a zero-height sliver at the edge would read as a
+      // rendering fault rather than as "your draft is somewhere else".
+      const visibleTop = Math.max(top, gridTop);
+      const visibleBottom = Math.min(bottom, gridTop + el.clientHeight);
+      if (visibleBottom > visibleTop) band = { top: visibleTop, bottom: visibleBottom };
+    }
+
+    const key = band ? `${band.top}:${band.bottom}` : '';
+    if (key === lastBand.current) return;
+    lastBand.current = key;
+    onGhostBand(band);
+  }, [ghost, scrollOffset, epochStart, onGhostBand]);
+
   // Which month the viewport is currently sitting in. There is no "current
   // page" here, so the readout is derived from what you can actually see.
   const topWeek = addDays(epochStart, topIndex * 7);
@@ -286,6 +335,7 @@ export function ContinuousCalendar({
                     today={today}
                     colWidth={colWidth}
                     colorFor={colorFor}
+                    ghost={ghost ?? null}
                     onOpen={onOpenOccurrence}
                     onResize={(occ, delta, edge) =>
                       resizeOccurrence(occ, delta, edge, seriesMode.current ? 'series' : 'occurrence')

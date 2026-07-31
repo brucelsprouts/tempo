@@ -346,10 +346,16 @@ New component `DatePicker.tsx`. Replaces every `<input type="date">` in
   is the constraint the native input was carrying.
 
 **Escape ordering.** The shell owns one keymap and unwinds one layer at a time.
-An open picker is a layer, so it must be unwound before its modal is. The picker
-registers itself with the shell while open rather than binding its own
-`keydown` — a second window listener would make the outcome depend on listener
-order.
+An open picker is a layer, so it must be unwound before its modal is.
+
+*Revised during session 2.* The plan was for the picker to register itself with
+the shell while open. It does not need to: calling `stopPropagation()` in the
+picker's own React `onKeyDown` stops the event before it reaches the shell's
+`window` listener, because React attaches at the root container rather than at
+`window`. That is one mechanism instead of two and there is no registry to keep
+in sync — and it is the pattern `Settings.tsx` already uses for the same problem
+in its category name field. The rule the registry existed to protect is intact:
+there is still exactly one `keydown` listener on `window`.
 
 Built on `civil.ts` throughout. No `Date` object ever holds an all-day value.
 

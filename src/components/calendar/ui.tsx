@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
+
 /** Shared form primitives, so every control in the app is the same object. */
 
 export const inputClass =
@@ -104,38 +106,138 @@ export function PanelHeader({
   );
 }
 
+/** Widths, per surface. The grid behind is never resized to make room. */
+const MODAL_WIDTH = {
+  entry: 640,
+  day: 880,
+  settings: 600,
+} as const;
+
 /**
- * Centred overlay. Escape is deliberately not bound here — the shell owns one
- * keymap, so there is a single place that decides what Escape closes.
+ * A horizontal band of the viewport, in CSS pixels, that the scrim must not
+ * cover. See `Modal`.
+ */
+export interface ScrimCutout {
+  top: number;
+  bottom: number;
+}
+
+/**
+ * Centred overlay, and the only one in the app.
+ *
+ * Escape is deliberately not bound here — the shell owns one keymap, so there
+ * is a single place that decides what Escape unwinds and in what order. A modal
+ * that closed itself would be a second opinion.
+ *
+ * The overlay is centred rather than docked to an edge on purpose. A rail that
+ * opens beside the grid moves the calendar sideways every time, and pinning it
+ * open only trades that for a permanently narrower, permanently off-centre
+ * grid. Nothing here changes the layout of what is behind it.
  */
 export function Modal({
   title,
   meta,
   onClose,
+  size = 'settings',
+  cutout,
   children,
 }: {
   title: string;
   meta?: string;
   onClose: () => void;
+  size?: keyof typeof MODAL_WIDTH;
+  /**
+   * Leaves this band of the viewport undimmed.
+   *
+   * The entry form draws a ghost bar on the calendar showing where the draft
+   * will land, which a solid scrim would dim along with everything else —
+   * defeating the one thing that tells you where you are. So the scrim is cut
+   * into two rects with a gap instead. `Modal` knows nothing about calendars;
+   * it just takes a band.
+   */
+  cutout?: ScrimCutout | null;
   children: React.ReactNode;
 }) {
+  const restoreTo = useRef<Element | null>(null);
+  const frame = useRef<HTMLDivElement>(null);
+
+  // Focus moves in on open and back out on close. Without the restore, closing
+  // an overlay opened from the keyboard drops focus onto <body> and the next
+  // Tab starts from the top of the document.
+  useEffect(() => {
+    restoreTo.current = document.activeElement;
+    const first = frame.current?.querySelector<HTMLElement>(FOCUSABLE);
+    (first ?? frame.current)?.focus();
+    return () => {
+      if (restoreTo.current instanceof HTMLElement) restoreTo.current.focus();
+    };
+  }, []);
+
+  function trapTab(e: React.KeyboardEvent) {
+    if (e.key !== 'Tab' || !frame.current) return;
+    const stops = [...frame.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+      // The selector can't express this: `button:not([disabled])` matches a
+      // button that has opted out with `tabindex="-1"`, and the date picker
+      // renders 42 of those for its day cells. Including them puts the trap's
+      // "last stop" on an element Tab will never reach, so it never wraps.
+      (el) => el.tabIndex >= 0,
+    );
+    if (stops.length === 0) return;
+    const edge = e.shiftKey ? stops[0] : stops[stops.length - 1];
+    if (document.activeElement !== edge) return;
+    e.preventDefault();
+    (e.shiftKey ? stops[stops.length - 1] : stops[0]).focus();
+  }
+
+  /** Mousedown anywhere on the backdrop dismisses, cut or not. */
+  const backdrop = { onMouseDown: onClose, 'aria-hidden': true } as const;
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-void/85 px-6 py-[7vh]"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+      className="fixed inset-0 z-50"
       role="dialog"
       aria-modal="true"
       aria-label={title}
+      onKeyDown={trapTab}
     >
-      <div className="flex max-h-full w-full max-w-[600px] flex-col border border-hairlit bg-panel shadow-[0_24px_80px_rgba(0,0,0,0.75)]">
-        <PanelHeader title={title} meta={meta} onClose={onClose} />
-        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+      {cutout ? (
+        <>
+          <div
+            {...backdrop}
+            className="absolute inset-x-0 top-0 bg-void/85"
+            style={{ height: Math.max(0, cutout.top) }}
+          />
+          {/* The lit band. Still dismisses, just isn't dimmed. */}
+          <div
+            {...backdrop}
+            className="absolute inset-x-0"
+            style={{ top: cutout.top, height: Math.max(0, cutout.bottom - cutout.top) }}
+          />
+          <div {...backdrop} className="absolute inset-x-0 bottom-0 bg-void/85" style={{ top: cutout.bottom }} />
+        </>
+      ) : (
+        <div {...backdrop} className="absolute inset-0 bg-void/85" />
+      )}
+
+      {/* Inert wrapper: it spans the viewport for centring, so it must not eat
+          the backdrop clicks passing underneath it. The frame opts back in. */}
+      <div className="pointer-events-none absolute inset-0 flex items-start justify-center px-6 py-[7vh]">
+        <div
+          ref={frame}
+          tabIndex={-1}
+          style={{ maxWidth: MODAL_WIDTH[size] }}
+          className="pointer-events-auto flex max-h-full w-full flex-col border border-hairlit bg-panel shadow-[0_24px_80px_rgba(0,0,0,0.75)] outline-none"
+        >
+          <PanelHeader title={title} meta={meta} onClose={onClose} />
+          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        </div>
       </div>
     </div>
   );
 }
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** A titled block inside a panel or modal. */
 export function Section({

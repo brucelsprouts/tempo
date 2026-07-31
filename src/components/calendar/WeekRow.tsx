@@ -2,17 +2,28 @@
 
 import { useDroppable } from '@dnd-kit/core';
 import { memo } from 'react';
-import { isFirstOfMonth, isoWeek, parts, type CivilDate } from '@/lib/tempo/civil';
-import type { WeekLayout } from '@/lib/tempo/layout';
+import {
+  diffDays,
+  isFirstOfMonth,
+  isoWeek,
+  maxDate,
+  minDate,
+  parts,
+  rangesOverlap,
+  type CivilDate,
+} from '@/lib/tempo/civil';
+import { DAYS_PER_WEEK, type WeekLayout } from '@/lib/tempo/layout';
 import type { Occurrence } from '@/lib/tempo/types';
 import { EventBar } from './EventBar';
-import { DAY_HEADER_H, GUTTER_W, MONTHS, ROW_H } from './constants';
+import { DAY_HEADER_H, GUTTER_W, LANE_H, MAX_LANES, MONTHS, ROW_H, laneTop } from './constants';
 
 interface Props {
   layout: WeekLayout;
   today: CivilDate;
   colWidth: number;
   colorFor: (categoryId: string | null) => string;
+  /** Where a draft entry would land, if it touches this row. */
+  ghost: { start: CivilDate; end: CivilDate } | null;
   onOpen: (occ: Occurrence) => void;
   onResize: (occ: Occurrence, deltaDays: number, edge: 'start' | 'end') => void;
   onDayOpen: (date: CivilDate) => void;
@@ -116,14 +127,36 @@ function WeekRowImpl({
   today,
   colWidth,
   colorFor,
+  ghost,
   onOpen,
   onResize,
   onDayOpen,
   onDayNew,
   selectedDay,
 }: Props) {
-  const { weekStart, days, segments, overflow } = layout;
+  const { weekStart, weekEnd, days, segments, overflow, laneCount } = layout;
   const containsToday = days.includes(today);
+
+  /**
+   * The draft's footprint in this row, if it has one.
+   *
+   * Clipped to the week the same way a real segment is, but assigned a lane
+   * *after* the last real one rather than through `layoutWeek` — a draft that
+   * competed for lanes could push a real bar into the overflow counter, so the
+   * calendar would rearrange itself while you were still deciding whether to
+   * create anything at all. It stacks on top and displaces nothing.
+   */
+  const draft =
+    ghost && rangesOverlap(ghost.start, ghost.end, weekStart, weekEnd)
+      ? {
+          startCol: diffDays(maxDate(ghost.start, weekStart), weekStart),
+          endCol: diffDays(minDate(ghost.end, weekEnd), weekStart),
+          // Clamped rather than allowed to run past the row: on a full week
+          // there is no free slot, and the honest failure is to sit on the last
+          // lane rather than to draw outside the row and over the week below.
+          lane: Math.min(laneCount, MAX_LANES - 1),
+        }
+      : null;
 
   // Month label in the gutter whenever a month begins inside this row.
   const monthStartDay = days.find(isFirstOfMonth);
@@ -185,6 +218,20 @@ function WeekRowImpl({
                   onResize={onResize}
                 />
               ))}
+
+            {draft && (
+              <div
+                aria-hidden
+                style={{
+                  position: 'absolute',
+                  left: `${(draft.startCol / DAYS_PER_WEEK) * 100}%`,
+                  width: `calc(${((draft.endCol - draft.startCol + 1) / DAYS_PER_WEEK) * 100}% - 3px)`,
+                  top: laneTop(draft.lane),
+                  height: LANE_H,
+                }}
+                className="ml-[2px] border border-dashed border-mute bg-raised/40"
+              />
+            )}
           </div>
         </div>
       </div>

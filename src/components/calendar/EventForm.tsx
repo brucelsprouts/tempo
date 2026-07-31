@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useCalendar, type EventDraft } from '@/lib/store/calendar-store';
 import { civil, parts, todayIn, yearsBetween, type CivilDate } from '@/lib/tempo/civil';
 import {
@@ -9,15 +9,33 @@ import {
   TEMPLATE_PRESETS,
 } from '@/lib/tempo/derive';
 import type { EventKind, Frequency, Occurrence, Recurrence } from '@/lib/tempo/types';
-import { Button, Field, inputClass, PanelHeader, SegmentedControl } from './ui';
+import type { EntrySeed } from './CalendarShell';
+import { DatePicker } from './DatePicker';
+import { Button, Field, inputClass, SegmentedControl } from './ui';
+
+/**
+ * The one form in the app.
+ *
+ * It lives in a centred modal rather than a side rail, which is why it lays out
+ * in two columns: 640px is enough for the paired fields to sit beside each
+ * other, so the common case stops scrolling. It draws no header and no cancel
+ * button — the modal owns both, and a form that supplied its own would put two
+ * ways to dismiss it three inches apart.
+ */
 
 interface Props {
   mode: 'new' | 'edit';
-  date?: CivilDate;
-  /** Set when the entry was started from an hour row, which also means "timed". */
-  startMinutes?: number;
+  /** `new` only: what the entry is pre-filled with. */
+  seed?: EntrySeed;
+  /** `edit` only. */
   occurrence?: Occurrence;
   onClose: () => void;
+  /**
+   * `new` only. Drives the ghost bar on the calendar behind — with the form at
+   * the centre of the screen rather than under the cursor, this is the only
+   * thing that says where the entry is going to land.
+   */
+  onDraftDatesChange?: (start: CivilDate, end: CivilDate) => void;
 }
 
 const KINDS = [
@@ -50,7 +68,7 @@ const toMinutes = (t: string) => {
 const fromMinutes = (n: number) =>
   `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
 
-export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Props) {
+export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange }: Props) {
   const timezone = useCalendar((s) => s.timezone);
   const categories = useCalendar((s) => s.categories);
   const createEvent = useCalendar((s) => s.createEvent);
@@ -60,20 +78,20 @@ export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Pro
 
   const existing = occurrence?.event;
   const today = todayIn(timezone);
-  const seed = date ?? occurrence?.date ?? today;
+  const from = seed?.start ?? occurrence?.date ?? today;
 
   const [title, setTitle] = useState(existing?.title ?? '');
   const [kind, setKind] = useState<EventKind>(existing?.kind ?? 'event');
-  // Clicking an hour row states a time, so the form opens timed rather than
-  // making you undo an all-day default you never asked for.
-  const [allDay, setAllDay] = useState(existing?.allDay ?? startMinutes == null);
+  // Starting from an hour row states a time, so the form opens timed rather
+  // than making you undo an all-day default you never asked for.
+  const [allDay, setAllDay] = useState(existing?.allDay ?? seed?.startMinutes == null);
   const [startDate, setStartDate] = useState<CivilDate>(
-    existing?.startDate ?? occurrence?.date ?? seed,
+    existing?.startDate ?? occurrence?.date ?? from,
   );
   const [endDate, setEndDate] = useState<CivilDate>(
-    existing?.endDate ?? occurrence?.endDate ?? seed,
+    existing?.endDate ?? occurrence?.endDate ?? seed?.end ?? from,
   );
-  const seedStart = occurrence?.startMinutes ?? startMinutes ?? null;
+  const seedStart = occurrence?.startMinutes ?? seed?.startMinutes ?? null;
   const [startTime, setStartTime] = useState(
     seedStart != null ? fromMinutes(seedStart) : '09:00',
   );
@@ -90,7 +108,7 @@ export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Pro
     TEMPLATES.find((t) => t.template === existing?.displayTemplate)?.value ?? 'none',
   );
   const [anchorDate, setAnchorDate] = useState<CivilDate>(
-    existing?.anchorDate ?? occurrence?.date ?? seed,
+    existing?.anchorDate ?? occurrence?.date ?? from,
   );
   const [notify, setNotify] = useState(existing?.notify ?? false);
   const [notes, setNotes] = useState(existing?.notes ?? '');
@@ -105,6 +123,12 @@ export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Pro
   const effectiveAnchor = isBirthday ? startDate : anchorDate;
   const recurs = effectiveFreq !== 'NONE';
   const needsAnchor = templateNeedsAnchor(effectiveTemplate);
+
+  // Reported on every change, including the first render, so the ghost appears
+  // with the form rather than only once a date is touched.
+  useEffect(() => {
+    onDraftDatesChange?.(startDate, endDate < startDate ? startDate : endDate);
+  }, [startDate, endDate, onDraftDatesChange]);
 
   /** What the title will actually read as, this year. */
   const preview = useMemo(() => {
@@ -169,40 +193,41 @@ export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Pro
 
   return (
     <form onSubmit={save} className="flex h-full flex-col">
-      <PanelHeader
-        title={mode === 'new' ? 'NEW ENTRY' : 'EDIT'}
-        meta={recurs && mode === 'edit' ? 'EDITS APPLY TO THE WHOLE SERIES' : undefined}
-        onClose={onClose}
-      />
-
-      <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
-        <Field label="[00] TITLE">
-          <input
-            autoFocus
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className={inputClass}
-            placeholder="…"
-          />
-        </Field>
+      {/* Two columns, and fields that want the width say so. Enter submits from
+          anywhere by virtue of being a real form with a real submit button —
+          the notes field is the one exception, handled at the textarea. */}
+      <div className="grid flex-1 grid-cols-2 gap-x-4 gap-y-4 overflow-y-auto px-4 py-4">
+        <div className="col-span-2">
+          <Field label="[00] TITLE">
+            <input
+              autoFocus
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className={inputClass}
+              placeholder="…"
+            />
+          </Field>
+        </div>
 
         {preview && (
-          <div className="border-l-2 border-hairlit bg-panel px-3 py-2">
+          <div className="col-span-2 border-l-2 border-hairlit bg-panel px-3 py-2">
             <span className="label">RENDERS AS</span>
             <div className="mt-1 text-[12px] text-bright">{preview}</div>
           </div>
         )}
 
-        <Field label="[01] TYPE">
-          <SegmentedControl
-            value={kind}
-            options={KINDS}
-            onChange={(k) => {
-              setKind(k);
-              if (k === 'birthday') setAllDay(true);
-            }}
-          />
-        </Field>
+        <div className="col-span-2">
+          <Field label="[01] TYPE">
+            <SegmentedControl
+              value={kind}
+              options={KINDS}
+              onChange={(k) => {
+                setKind(k);
+                if (k === 'birthday') setAllDay(true);
+              }}
+            />
+          </Field>
+        </div>
 
         {!isBirthday && (
           <Field label="[02] SPAN">
@@ -217,33 +242,38 @@ export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Pro
           </Field>
         )}
 
-        <div className="grid grid-cols-2 gap-3">
-          <Field label={isBirthday ? 'BIRTH DATE' : 'START'}>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => {
-                setStartDate(e.target.value);
-                if (endDate < e.target.value) setEndDate(e.target.value);
-              }}
-              className={inputClass}
+        {!isBirthday && (
+          <Field label="[03] REPEATS">
+            <SegmentedControl value={freq} options={FREQS} onChange={setFreq} />
+          </Field>
+        )}
+
+        <Field label={isBirthday ? 'BIRTH DATE' : 'START'}>
+          <DatePicker
+            label={isBirthday ? 'Birth date' : 'Start date'}
+            value={startDate}
+            timezone={timezone}
+            onChange={(d) => {
+              setStartDate(d);
+              if (endDate < d) setEndDate(d);
+            }}
+          />
+        </Field>
+
+        {!isBirthday && (
+          <Field label="END">
+            <DatePicker
+              label="End date"
+              value={endDate}
+              min={startDate}
+              timezone={timezone}
+              onChange={setEndDate}
             />
           </Field>
-          {!isBirthday && (
-            <Field label="END">
-              <input
-                type="date"
-                value={endDate}
-                min={startDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className={inputClass}
-              />
-            </Field>
-          )}
-        </div>
+        )}
 
         {!allDay && !isBirthday && (
-          <div className="grid grid-cols-2 gap-3">
+          <>
             <Field label="FROM">
               <input
                 type="time"
@@ -260,13 +290,7 @@ export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Pro
                 className={inputClass}
               />
             </Field>
-          </div>
-        )}
-
-        {!isBirthday && (
-          <Field label="[03] REPEATS">
-            <SegmentedControl value={freq} options={FREQS} onChange={setFreq} />
-          </Field>
+          </>
         )}
 
         {recurs && !isBirthday && (
@@ -287,11 +311,11 @@ export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Pro
 
         {needsAnchor && !isBirthday && (
           <Field label="ANCHOR DATE">
-            <input
-              type="date"
+            <DatePicker
+              label="Anchor date"
               value={anchorDate}
-              onChange={(e) => setAnchorDate(e.target.value)}
-              className={inputClass}
+              timezone={timezone}
+              onChange={setAnchorDate}
             />
           </Field>
         )}
@@ -311,17 +335,7 @@ export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Pro
           </select>
         </Field>
 
-        <Field label="[06] NOTES">
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={3}
-            className={`${inputClass} resize-none`}
-            placeholder="…"
-          />
-        </Field>
-
-        <label className="flex cursor-pointer items-center gap-2.5 border border-hair px-3 py-2.5">
+        <label className="flex cursor-pointer items-center gap-2.5 self-end border border-hair px-3 py-2.5">
           <input
             type="checkbox"
             checked={notify}
@@ -330,6 +344,28 @@ export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Pro
           />
           <span className="text-[11px] text-dim">Mirror to Google for reminders</span>
         </label>
+
+        <div className="col-span-2">
+          <Field label="[06] NOTES">
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              onKeyDown={(e) => {
+                // The only field where Enter has a native meaning worth
+                // keeping, so the chord is inverted here rather than everywhere
+                // else: Enter saves like it does in every other field, and
+                // Shift+Enter is how you get a line break.
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  e.currentTarget.form?.requestSubmit();
+                }
+              }}
+              rows={3}
+              className={`${inputClass} resize-none`}
+              placeholder="…"
+            />
+          </Field>
+        </div>
       </div>
 
       <div className="shrink-0 space-y-2 border-t border-hair px-4 py-3">
@@ -337,39 +373,34 @@ export function EventForm({ mode, date, startMinutes, occurrence, onClose }: Pro
           <Button type="submit" variant="primary" className="flex-1">
             {mode === 'new' ? 'CREATE' : 'SAVE'}
           </Button>
-          <Button type="button" onClick={onClose}>
-            CANCEL
-          </Button>
-        </div>
 
-        {mode === 'edit' && occurrence && (
-          <div className="flex gap-2">
-            {occurrence.event.recurrence && (
+          {mode === 'edit' && occurrence && (
+            <>
+              {occurrence.event.recurrence && (
+                <Button
+                  type="button"
+                  variant="quiet"
+                  onClick={async () => {
+                    await cancelOccurrence(occurrence);
+                    onClose();
+                  }}
+                >
+                  SKIP THIS ONE
+                </Button>
+              )}
               <Button
                 type="button"
                 variant="quiet"
-                className="flex-1"
                 onClick={async () => {
-                  await cancelOccurrence(occurrence);
+                  await deleteEvent(occurrence.eventId);
                   onClose();
                 }}
               >
-                SKIP THIS ONE
+                DELETE {occurrence.event.recurrence ? 'SERIES' : ''}
               </Button>
-            )}
-            <Button
-              type="button"
-              variant="quiet"
-              className="flex-1"
-              onClick={async () => {
-                await deleteEvent(occurrence.eventId);
-                onClose();
-              }}
-            >
-              DELETE {occurrence.event.recurrence ? 'SERIES' : ''}
-            </Button>
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </div>
     </form>
   );

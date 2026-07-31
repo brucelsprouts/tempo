@@ -39,6 +39,33 @@ export const MAX_LANES = 4;
 
 export const GUTTER_W = 58;
 
+/**
+ * The epoch expressed in years, and the one place that answers "which years
+ * exist".
+ *
+ * Derived from the week counts above rather than restated, because it was
+ * restated: the year view and the date picker each grew their own copy of the
+ * same 5-and-10, and a third would have arrived with the next surface that
+ * needed a year list. Widening `WEEKS_BEFORE` now widens all of them at once
+ * instead of leaving two of the three quietly disagreeing.
+ */
+export const EPOCH_YEARS_BEFORE = Math.round(WEEKS_BEFORE / 52);
+export const EPOCH_YEARS_AFTER = Math.round(WEEKS_AFTER / 52);
+
+/**
+ * Every reachable year. `include` is folded in when it falls outside — a stored
+ * date can predate the epoch, and a select that cannot show its own value shows
+ * the wrong one instead.
+ */
+export function epochYears(thisYear: number, include?: number): number[] {
+  const years = Array.from(
+    { length: EPOCH_YEARS_BEFORE + EPOCH_YEARS_AFTER + 1 },
+    (_, i) => thisYear - EPOCH_YEARS_BEFORE + i,
+  );
+  if (include == null || years.includes(include)) return years;
+  return [...years, include].sort((a, b) => a - b);
+}
+
 export const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'] as const;
 
 export const MONTHS = [

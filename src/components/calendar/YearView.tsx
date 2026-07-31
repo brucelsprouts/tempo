@@ -15,7 +15,7 @@ import {
 } from '@/lib/tempo/civil';
 import { expandAll } from '@/lib/tempo/recurrence';
 import type { Occurrence } from '@/lib/tempo/types';
-import { DEFAULT_CATEGORY_COLOR, MONTHS } from './constants';
+import { DEFAULT_CATEGORY_COLOR, epochYears, MONTHS } from './constants';
 import { inputClass } from './ui';
 
 /**
@@ -30,9 +30,6 @@ import { inputClass } from './ui';
  */
 
 const DOTS_PER_DAY = 3;
-/** Years reachable from the strip, matching the scroll view's fixed epoch. */
-const YEAR_SPAN_BEFORE = 5;
-const YEAR_SPAN_AFTER = 10;
 
 interface Props {
   year: number;
@@ -88,13 +85,7 @@ export function YearView({ year, onYear, onOpenDay, selectedDay }: Props) {
    * had navigated somewhere unusual. Same splice, for the same reason, as the
    * timezone list in `Settings`.
    */
-  const years = useMemo(() => {
-    const epoch = Array.from(
-      { length: YEAR_SPAN_BEFORE + YEAR_SPAN_AFTER + 1 },
-      (_, i) => thisYear - YEAR_SPAN_BEFORE + i,
-    );
-    return epoch.includes(year) ? epoch : [...epoch, year].sort((a, b) => a - b);
-  }, [thisYear, year]);
+  const years = useMemo(() => epochYears(thisYear, year), [thisYear, year]);
 
   return (
     <div className="flex h-full flex-col">
