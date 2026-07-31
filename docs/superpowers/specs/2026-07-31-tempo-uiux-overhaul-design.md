@@ -1,8 +1,8 @@
 # Tempo — UI/UX overhaul
 
 Design record for a set of interaction and chrome changes. Three sessions, in
-order: **Chrome**, **Panel**, **Grid**. Session 3 depends on session 2 (its
-range-select hands off to the panel's entry form).
+order: **Chrome**, **Overlays**, **Grid**. Session 3 depends on session 2 (its
+range-select hands off to the entry modal).
 
 ---
 
@@ -10,16 +10,62 @@ range-select hands off to the panel's entry form).
 
 Recorded here because the rest of the document assumes them.
 
-1. **The right panel is always open and is the only place forms live.** No
-   floating popover for creating or editing an entry. The panel switches
-   between DAY, TASKS and ENTRY modes.
-2. **A task must be the loudest thing on a day.** Height carries importance:
+1. **The grid never reflows.** In every state, in every view, the calendar
+   occupies the full width of the content area. There is no side rail. Nothing
+   opens beside the grid, so nothing ever pushes it off centre. This is the
+   decision the rest of the document is built around; §"Why not a rail" states
+   what it replaces.
+2. **Forms and day detail are overlays.** Creating or editing an entry opens a
+   centered modal over the grid. The day timeline and the day's task list open
+   as a second, wider centered modal. Both are transient; the grid underneath is
+   the only persistent surface.
+3. **A task must be the loudest thing on a day.** Height carries importance:
    task > birthday > event > mark.
-3. **The fixed row height survives.** `ROW_H` stays a compile-time constant.
-   Variable bar heights are absorbed by a pixel budget per row, not by rows
-   that measure themselves. See [DESIGN.md §6](../../DESIGN.md).
-4. **One keymap.** New gestures are registered in the `SHORTCUTS` table in
+4. **The fixed row height survives.** `ROW_H` stays a compile-time constant.
+   Variable bar heights are absorbed by a pixel budget per row, not by rows that
+   measure themselves. See [DESIGN.md §6](../../DESIGN.md).
+5. **One keymap.** New gestures are registered in the `SHORTCUTS` table in
    `Settings.tsx`, which the shell binds and the settings panel documents.
+
+### Why not a rail
+
+An earlier draft of this document put every form in an always-open 360px right
+rail. Three objections killed it, and they are worth writing down so the rail
+does not get reinvented:
+
+- A panel that opens and closes moves the calendar sideways every time. The grid
+  is the thing you are reading; it should not slide.
+- Pinning the panel open to stop the sliding does not fix it — it just makes the
+  grid permanently narrower and permanently off-centre, with a bright block of
+  chrome parked in peripheral vision.
+- Overlaying the panel on top of the grid stops the reflow but hides Friday and
+  Saturday, which is worse than moving.
+
+An overlay has none of these properties: it is centered, it is temporary, and
+the grid behind it is unchanged when it closes. It is also the interaction the
+app is being modelled on — content stays put, detail opens over it.
+
+### The overlay stack
+
+The shell holds an ordered stack rather than a single `rail` slot:
+
+```ts
+type Overlay =
+  | { kind: 'day'; date: CivilDate }
+  | { kind: 'entry'; seed: EntrySeed }         // new
+  | { kind: 'entry'; occurrence: Occurrence }  // edit
+  | { kind: 'settings' };
+
+const [overlays, setOverlays] = useState<Overlay[]>([]);
+```
+
+Only the topmost overlay is rendered and only one scrim is drawn, so two stacked
+modals never produce two layers of dimming. The stack exists so that returning
+is defined: opening ENTRY from inside the DAY modal pushes, and dismissing it
+pops back to DAY rather than to nothing.
+
+Depth is capped at 2 in practice — nothing pushes a third — but the type does
+not need to say so.
 
 ### Escape unwind order
 
@@ -27,11 +73,13 @@ Escape unwinds exactly one layer per press, and the shell owns the whole
 sequence. Stated once here because three sections below touch it:
 
 1. an open date picker (§2.6)
-2. an open settings modal
+2. the topmost overlay — pop one off the stack (§2.1)
 3. a non-empty selection (§3.4)
-4. ENTRY mode → back to the last context mode (§2.1)
 
-Escape never empties the panel — there is no state in which it is closed.
+The picker is nearest the front, so it goes first; the selection lives on the
+grid, which is furthest back, so it goes last. Escape while typing inside an
+overlay still unwinds the overlay — blurring the field instead would make the
+key mean two different things depending on where the caret was.
 
 ## Two pre-existing defects this work fixes
 
@@ -168,73 +216,88 @@ reintroducing the same gap.
 
 ---
 
-# Session 2 — The panel
+# Session 2 — Overlays
 
-Converts the right rail from a thing that opens into the app's one form surface.
+Removes the right rail and replaces it with two centered modals over an
+unmoving grid.
 
 ## 2.1 Shape
 
-Always rendered in **Scroll** and **Year** views. Not in **List**, where the
-table wants the width.
+`CalendarShell` drops `Rail` and gains the stack from
+[The overlay stack](#the-overlay-stack), plus `focusedDay: CivilDate`
+defaulting to today. `focusedDay` is what `N` and `D` target and what the grid
+marks as selected.
 
-```ts
-type PanelMode =
-  | { mode: 'day' }
-  | { mode: 'tasks' }
-  | { mode: 'entry'; seed: EntrySeed }        // new
-  | { mode: 'entry'; occurrence: Occurrence };// edit
+One new component, `Modal.tsx`, owns everything common to the three overlays:
+the scrim, centering, the `Escape` registration, focus trapping, and restoring
+focus to whatever was focused before it opened. `Settings.tsx` is refitted onto
+it so there is one modal implementation rather than two.
+
+```tsx
+<Modal
+  size="entry" | "day" | "settings"
+  title={…}
+  meta={…}
+  onDismiss={pop}
+/>
 ```
 
-`CalendarShell` also holds `focusedDay: CivilDate`, defaulting to today. DAY and
-TASKS both read it.
+Sizes are `min(640px, 92vw)` for ENTRY, `min(880px, 94vw)` for DAY, and the
+existing width for settings. All three cap at `min(85vh, …)` and scroll
+internally past that — which is invisible after §1.1.
 
-A segmented control at the top of the panel switches DAY ↔ TASKS. ENTRY takes
-over the whole panel and returns to whichever of the two was last active when
-dismissed. The shell remembers that in `lastContextMode`.
+The grid does not know the modal exists. `ContinuousCalendar`, `YearView` and
+`ListView` render at full width in every state, and `selectedDay` continues to
+be the only prop that changes when focus moves.
 
-There is no close button and no collapse. `Escape` in ENTRY returns to the
-context mode; it does not empty the panel.
+## 2.2 ENTRY modal
 
-## 2.2 DAY mode
-
-The existing `DayView` 24-hour timeline, unchanged in substance. It already is a
-timeline with every event placed on it — the panel is not gaining a checklist, it
-is losing its open/close lifecycle.
-
-Its `onClose` prop is removed and the footer becomes the DAY/TASKS switch.
-
-The `+ NEW ON THIS DAY` button and the day-header `+` hover button **stay** for
-the whole of session 2. Whitespace-click does not exist until §3.3, and removing
-both here would leave `N` and the top-bar `+ NEW` as the only ways to create an
-entry. §3.3 retires them once their replacement lands.
-
-## 2.3 TASKS mode
-
-New. For `focusedDay`, list everything due that day, tasks first, each with its
-status glyph and a control to advance it (`todo → doing → done`). Then
-birthdays and marks, then events.
-
-This is the surface that absorbs the density the grid gives up in §3.1 — a day
-whose bars overflow into `+N` is fully readable here.
-
-## 2.4 ENTRY mode
-
-`EventForm` moves into the panel for both `new` and `edit`. Its content is
-unchanged apart from §2.5 and the description cull in §1.5.
+`EventForm` moves into `Modal` for both `new` and `edit`. Its content is
+unchanged apart from §2.5, §2.6 and the description cull in §1.5, but it
+relayouts: 640px is wide enough for a two-column grid, so START/END, FROM/TO and
+CATEGORY/REPEATS pair up and the form stops scrolling in the common case. Its
+own `PanelHeader` and its `CANCEL` button are dropped — the modal supplies both.
 
 Reached by:
 
-- clicking empty whitespace in a day cell → `new`, seeded with that date
-- finishing a range drag → `new`, seeded with the whole span (session 3)
+- clicking empty whitespace in a day cell → `new`, seeded with that date (§3.3)
+- finishing a range drag → `new`, seeded with the whole span (§3.3)
 - clicking a bar → `edit`
+- clicking an hour row in the DAY modal → `new`, seeded with date and time
 - `N` → `new` on `focusedDay`
+- the top bar's `+ NEW` → `new` on `focusedDay`
 
-## 2.5 The ghost bar
+## 2.3 DAY modal
 
-While ENTRY is open in `new` mode, the calendar renders a **dashed, muted ghost
-bar** at the draft's current start/end dates, updating live as the form's dates
-change. This is what tells you where the entry will land now that the form is at
-the edge of the screen rather than under your cursor.
+Opened by clicking a day number, clicking a `+N` overflow chip, or pressing `D`.
+Two panes side by side under one header:
+
+- **left** — the existing `DayView` 24-hour timeline, unchanged in substance.
+  Its `onClose` prop is removed; the modal owns dismissal.
+- **right** — new. For that date, everything due, tasks first, each with its
+  status glyph and a control to advance it (`todo → doing → done`). Then
+  birthdays and marks, then events.
+
+The right pane is what absorbs the density the grid gives up in §3.1 — a day
+whose bars overflow into `+N` is fully readable here, and the `+N` chip opens
+exactly this.
+
+Below `900px` the two panes collapse to a `SegmentedControl` switching DAY ↔
+TASKS, which is the only place the earlier draft's segmented control survives.
+
+The header carries `‹ ›` day steppers, so reading Tuesday after Monday does not
+mean dismissing and re-opening.
+
+The `+ NEW ON THIS DAY` button is dropped: clicking an hour row already creates
+a timed entry, and all-day entries are created on the grid, which is visible
+behind the modal.
+
+## 2.4 The ghost bar
+
+While the ENTRY modal is open in `new` mode, the calendar renders a **dashed,
+muted ghost bar** at the draft's current start/end dates, updating live as the
+form's dates change. This is what tells you where the entry will land now that
+the form is over the middle of the screen rather than under your cursor.
 
 `EventForm` reports its dates upward via `onDraftDatesChange(start, end)`.
 `CalendarShell` holds `ghost: { start, end } | null` and passes it to
@@ -243,6 +306,31 @@ the edge of the screen rather than under your cursor.
 The ghost is not draggable and takes no part in lane assignment, so it can never
 displace real content. It is drawn on top of the row at the lane slot after the
 last drawn one, clamped to stay inside the row when there is no free slot.
+
+### The scrim is cut, not solid
+
+A solid scrim would dim the ghost along with everything else, which defeats it.
+So the scrim is drawn as **two rects with a gap**, leaving the ghost's week rows
+undimmed: one from the top of the viewport to the first ghost row's top, one
+from the last ghost row's bottom to the bottom of the viewport.
+
+This is affordable precisely because of decision 4. `ContinuousCalendar` exposes
+
+```ts
+ghostBand(): { top: number; bottom: number } | null   // viewport px
+```
+
+on its imperative handle, computed as `index * ROW_H - scrollTop + gridTop` —
+arithmetic, not measurement, and the same identity the ruler and `jumpTo`
+already rely on. It returns `null` when the ghost is scrolled out of view or the
+view is not `scroll`, and the scrim falls back to one solid rect.
+
+`Modal` takes an optional `cutout` prop and knows nothing about calendars.
+
+## 2.5 Not in List view
+
+`ListView` gets the full width and the ENTRY modal, same as everywhere else.
+Nothing view-specific is needed — an overlay is an overlay.
 
 ## 2.6 Custom date picker
 
@@ -258,8 +346,8 @@ New component `DatePicker.tsx`. Replaces every `<input type="date">` in
   is the constraint the native input was carrying.
 
 **Escape ordering.** The shell owns one keymap and unwinds one layer at a time.
-An open picker is a layer, so it must be unwound before ENTRY mode is. The
-picker registers itself with the shell while open rather than binding its own
+An open picker is a layer, so it must be unwound before its modal is. The picker
+registers itself with the shell while open rather than binding its own
 `keydown` — a second window listener would make the outcome depend on listener
 order.
 
@@ -318,15 +406,17 @@ export const LANE_BUDGET = ROW_H - DAY_HEADER_H - OVERFLOW_H;  // 103
 `MAX_LANES` is removed.
 
 `ROW_H` remains a constant, so `TOTAL_H` is still known at compile time, the
-container is still correctly sized on first paint, and jumping to a date is
-still exact arithmetic rather than a measured scroll. This is the invariant the
-whole scroll architecture rests on and it is not being traded away.
+container is still correctly sized on first paint, jumping to a date is still
+exact arithmetic rather than a measured scroll, and §2.4's cut scrim can locate
+a row without measuring it. This is the invariant the whole scroll architecture
+rests on and it is not being traded away.
 
 **Density cost, stated plainly.** Four events still fit: lane offsets 0, 24, 48,
 72, last bottom at 93 ≤ 103. Three tasks fit: offsets 0, 35, 70, last bottom at
 102 ≤ 103. But a day with two tasks and two events draws three bars and a `+1`
 where it previously drew four — the fourth lane starts at 94 and would end at
-115. TASKS mode (§2.3) is where that day stays fully readable.
+115. The DAY modal's task pane (§2.3) is where that day stays fully readable,
+and the `+1` chip is the link to it.
 
 ## 3.2 Cross-week resize
 
@@ -358,9 +448,9 @@ lengthen a bar from the end that is actually in the row you are pointing at.
 
 On a day cell's empty whitespace, with no modifier:
 
-- **click** (no movement) → panel ENTRY, `new`, seeded with that date
+- **click** (no movement) → ENTRY modal, `new`, seeded with that date
 - **drag** → the covered day cells highlight as the pointer moves → release
-  opens panel ENTRY, `new`, seeded with the whole inclusive span
+  opens the ENTRY modal, `new`, seeded with the whole inclusive span
 
 The range highlight is inclusive and resolves per day cell, so dragging
 backwards works and dragging into the following week works.
@@ -368,14 +458,14 @@ backwards works and dragging into the following week works.
 This does not fight dnd-kit: day cells are droppables, not draggables, so a
 pointer-down on a cell never arms the `PointerSensor`.
 
-The `+` hover button in the day header and the panel's `+ NEW ON THIS DAY`
-button are both removed here, having been kept alive through session 2 (§2.2).
-Whitespace is now the affordance, and two overlapping ways to do the same thing
-on the same 30px strip is worse than one.
+The `+` hover button in the day header is removed here — whitespace is now the
+affordance, and two overlapping ways to do the same thing on the same 30px strip
+is worse than one.
 
-Clicking the **day number** sets `focusedDay`. That is the only remaining
-special target in the cell. The existing double-click-to-open-day gesture is
-removed entirely — the panel is always open, so there is nothing to open.
+Clicking the **day number** sets `focusedDay` and opens the DAY modal (§2.3).
+That is the only remaining special target in the cell. The existing
+double-click-to-open-day gesture is removed; a single click on the number does
+it, and a double-click on whitespace would otherwise fire create twice.
 
 ## 3.4 Marquee selection
 
@@ -392,7 +482,7 @@ Hit-testing compares the marquee rect against rendered bar rects, throttled with
 `requestAnimationFrame` so the highlight is live rather than resolved on
 release. Selected bars render with a `hairlit` outline.
 
-With a selection active:
+With a selection active and no overlay open:
 
 | gesture | effect |
 |---|---|
@@ -402,9 +492,9 @@ With a selection active:
 | drag any selected bar | move every selected entry by the same delta |
 | `Escape` | clear the selection |
 
-Clearing the selection is layer 3 of the shell's unwind order — see
-[Escape unwind order](#escape-unwind-order). A picker or a modal, being nearer
-the front, unwinds first.
+Clearing the selection is the last layer of the shell's unwind order — see
+[Escape unwind order](#escape-unwind-order). A picker or an overlay, being
+nearer the front, unwinds first.
 
 Deleting more than one entry asks first. The others are reversible by dragging
 back; a bulk delete is not.
@@ -426,6 +516,25 @@ that the single-snapshot rollback cannot express.
 
 ---
 
+## Keymap after this work
+
+The full `SHORTCUTS` table, since three sections add to it:
+
+| key | effect |
+|---|---|
+| `1` `2` `3` | scroll / list / year |
+| `N` | new entry on `focusedDay` |
+| `D` | open the DAY modal on `focusedDay` |
+| `T` | today |
+| `/` | search (list view) |
+| `,` `?` | settings |
+| `Esc` | unwind one layer |
+| `Del` `Backspace` | delete selection |
+| `←` `→` `↑` `↓` | move selection by ∓1 / ∓7 days |
+| `Ctrl`/`Cmd` + drag | marquee select |
+| `Ctrl`/`Cmd` + click | toggle a bar in the selection |
+| `Shift` at drop | apply to the whole series |
+
 ## Testing
 
 - `layout.test.ts` — lane heights, cumulative tops, and the budget cutoff.
@@ -437,12 +546,15 @@ that the single-snapshot rollback cannot express.
   `deleteEvents` and `moveOccurrences` roll back cleanly as one unit on failure.
 - Date arithmetic in `DatePicker` goes through `civil.ts` and is covered there;
   the component itself is verified in the preview harness.
+- The grid's width must not depend on overlay state. Asserted in the harness by
+  reading the grid's `clientWidth` with and without a modal open.
 
-The preview harness renders `CalendarShell`, so it exercises the real panel, the
-real keymap and the real grid. Every gesture added here is reachable from it.
+The preview harness renders `CalendarShell`, so it exercises the real overlays,
+the real keymap and the real grid. Every gesture added here is reachable from
+it.
 
 ## Out of scope
 
 Not touched by this work, and not to be opportunistically refactored:
 Google Calendar sync, the timeline ruler, the command palette, and the List view
-beyond the description cull in §1.5.
+beyond the description cull in §1.5 and the width change in §2.5.
