@@ -7,17 +7,29 @@
  * achromatic, and category colour is the only hue on screen. A "today" accent
  * would compete with the one signal that carries meaning, so today is marked by
  * inversion and weight instead of by hue.
+ *
+ * That rule is why the greys have to do all the work, and why the steps between
+ * them are wider than they look like they need to be. The four surface tokens
+ * once sat inside 4% lightness of each other, which made every plane read as
+ * the same plane and left nothing drawn on top of them separated from what was
+ * under it. Contrast here is bought by widening the grey ladder, never by
+ * reaching for hue.
+ *
+ * `--color-mute` is the load-bearing one: it carries `.label`, past-date
+ * numbers, bar times and the "+N" chips — most of the small text in the app —
+ * so it is set for its contrast against the grid rather than for how quiet it
+ * looks beside `--color-ink`.
  */
 
 @theme {
-  --color-void: #08090a;
-  --color-panel: #0b0c0e;
-  --color-raised: #121316;
-  --color-sunken: #0e0f11;
-  --color-hair: #1b1d21;
-  --color-hairlit: #2a2d33;
-  --color-mute: #4e5359;
-  --color-dim: #868b92;
+  --color-void: #07080a;
+  --color-panel: #0d0f12;
+  --color-raised: #16181c;
+  --color-sunken: #0a0b0d;
+  --color-hair: #202329;
+  --color-hairlit: #31353d;
+  --color-mute: #6a7078;
+  --color-dim: #9aa0a8;
   --color-ink: #e4e6e9;
   --color-bright: #ffffff;
 
@@ -66,14 +78,54 @@ body {
   display: none;
 }
 
+/**
+ * Focus rings are suppressed, everywhere.
+ *
+ * A deliberate trade: the browser's ring is the only keyboard-only affordance
+ * in the app, and giving it up costs something. `.focus-ring` below stays
+ * defined so any control that later wants one back can ask for it by name.
+ *
+ * Which is why this is in `@layer base` rather than left unlayered. `.focus-ring`
+ * lives in `utilities`, a later layer, so it still wins wherever it is applied —
+ * whereas an unlayered rule beats every layer no matter how specific the layered
+ * one is (the same cascade fact that makes `.redacted` below deliberately
+ * unlayered), and would have killed the escape hatch on the way in.
+ */
+@layer base {
+  *:focus,
+  *:focus-visible {
+    outline: none;
+  }
+}
+
 @layer utilities {
-  /* Small-caps technical label: `// NAV`, `W31`, `STATUS` */
+  /* Small-caps technical label: `// NAV`, `W31`, `STATUS`.
+
+     Tracking is 0.1em rather than 0.14em: this is the smallest text in the
+     system and 0.14em was the widest tracking in it, which is the one
+     combination that stops letters reading as words. */
   .label {
     font-size: 10px;
     line-height: 1;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--color-mute);
+  }
+
+  /* A label lifted one step, for the five weekday headings that are *not* the
+     weekend — the header's half of the weekend banding in the grid below.
+     Marking the weekend by stepping the other five up rather than by pushing
+     those two down, because `.label` already sits at the dimmest weight this
+     size stays readable at.
+
+     A utility rather than `label text-dim` at the call site: `.label` and
+     `.text-dim` are both single-class rules in the `utilities` layer, so which
+     one paints depends on the order Tailwind emits its generated utilities
+     relative to this block — and it currently emits them first, which makes
+     `label text-dim` silently do nothing. Two rules in one authored block have
+     a source order that is not in question. */
+  .label-lit {
+    color: var(--color-dim);
   }
 
   .label-dim {
@@ -87,6 +139,21 @@ body {
   }
   .band-odd {
     background: color-mix(in oklab, var(--color-raised) 55%, var(--color-void));
+  }
+
+  /* Weekends compose with the month band rather than replacing it. Four shades
+     instead of two, because a single weekend colour would erase the month
+     boundary across two of every seven columns — the one orientation cue the
+     grid has.
+
+     Both weekend steps are a lift, not a further darkening: `--color-void` is
+     within about 3% of black, so there is no headroom underneath it and a
+     darker band would simply be invisible. */
+  .band-even-wk {
+    background: color-mix(in oklab, var(--color-raised) 22%, var(--color-void));
+  }
+  .band-odd-wk {
+    background: color-mix(in oklab, var(--color-raised) 72%, var(--color-void));
   }
 
   .hairline-t {

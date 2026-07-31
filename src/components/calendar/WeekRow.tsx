@@ -3,6 +3,7 @@
 import { useDroppable } from '@dnd-kit/core';
 import { memo } from 'react';
 import {
+  dayOfWeek,
   diffDays,
   isFirstOfMonth,
   isoWeek,
@@ -15,7 +16,7 @@ import {
 import { DAYS_PER_WEEK, KIND_HEIGHT, LANE_GAP, type WeekLayout } from '@/lib/tempo/layout';
 import type { Occurrence } from '@/lib/tempo/types';
 import { EventBar } from './EventBar';
-import { DAY_HEADER_H, GUTTER_W, LANE_BUDGET, MONTHS, ROW_H } from './constants';
+import { DAY_HEADER_H, GRID_PAD_R, GUTTER_W, LANE_BUDGET, MONTHS, ROW_H } from './constants';
 
 interface Props {
   layout: WeekLayout;
@@ -51,6 +52,8 @@ function DayCell({
   const monthStart = isFirstOfMonth(date);
   const isToday = date === today;
   const past = date < today;
+  const dow = dayOfWeek(date);
+  const weekend = dow === 0 || dow === 6;
 
   return (
     <div
@@ -60,8 +63,17 @@ function DayCell({
       className={[
         'group/day relative h-full border-l border-hair transition-colors',
         // Alternating month bands: the month changes are legible without the
-        // grid ever breaking into pages.
-        month % 2 === 0 ? 'band-even' : 'band-odd',
+        // grid ever breaking into pages. The weekend shade composes with the
+        // month rather than overriding it, so a Saturday still says which
+        // month it is in — a flat weekend colour would have taken the boundary
+        // out of two columns in every seven.
+        month % 2 === 0
+          ? weekend
+            ? 'band-even-wk'
+            : 'band-even'
+          : weekend
+            ? 'band-odd-wk'
+            : 'band-odd',
         monthStart ? 'border-l-hairlit' : '',
         isOver ? 'bg-raised' : '',
         selected ? 'bg-sunken' : '',
@@ -76,13 +88,13 @@ function DayCell({
         style={{ height: DAY_HEADER_H }}
       >
         {monthStart && (
-          <span className="text-[9px] tracking-[0.16em] text-dim">
+          <span className="text-[10px] tracking-[0.16em] text-dim">
             {MONTHS[month - 1]}
           </span>
         )}
         <span
           className={[
-            'text-[11px] tabular-nums leading-none',
+            'text-[12px] tabular-nums leading-none',
             isToday
               ? 'bg-bright px-1 py-0.5 font-medium text-void'
               : past
@@ -113,7 +125,7 @@ function DayCell({
       {overflow > 0 && (
         <button
           onClick={() => onDayOpen(date)}
-          className="absolute bottom-1 left-1.5 text-[9px] tracking-[0.1em] text-mute hover:text-dim"
+          className="absolute bottom-1 left-1.5 text-[10px] tracking-[0.1em] text-mute hover:text-dim"
         >
           +{overflow}
         </button>
@@ -180,13 +192,19 @@ function WeekRowImpl({
             <div className="text-[9px] text-mute">{parts(monthStartDay).year}</div>
           </div>
         ) : (
-          <div className="text-[9px] tracking-[0.12em] text-mute">
+          <div className="text-[10px] tracking-[0.12em] text-mute">
             W{String(isoWeek(weekStart)).padStart(2, '0')}
           </div>
         )}
       </div>
 
-      <div className="relative flex-1">
+      {/* The right gutter is a margin on this box and not padding on the row,
+          so the columns, the bars laid out in percentages of them, and the
+          `colWidth` measured off the header grid all keep describing the same
+          width. The `border-b` stays on the row outside it, so the hairline
+          still runs edge to edge and the gutter reads as a margin rather than
+          as a gap in the rule. */}
+      <div className="relative flex-1" style={{ marginRight: GRID_PAD_R }}>
         <div className="grid h-full grid-cols-7">
           {days.map((date, i) => (
             <DayCell
@@ -208,10 +226,20 @@ function WeekRowImpl({
           />
         )}
 
-        {/* Stays inert end to end: a blanket pointer-events-auto here would sit
+        {/* Offset by the header rather than pinned to the top of the row.
+            `segment.top` is measured from the top of the lane area and
+            `LANE_BUDGET` already excludes the header, so this is the single
+            place `DAY_HEADER_H` is added — at `inset-0` lane 0 was drawn
+            straight over the day numbers and the hover `+`, which is what made
+            both unreliable to click. The draft band below inherits it for free.
+
+            Stays inert end to end: a blanket pointer-events-auto here would sit
             over every day cell and swallow the hover and double-click the cells
             below are listening for. Each bar re-enables itself instead. */}
-        <div className="pointer-events-none absolute inset-0">
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0"
+          style={{ top: DAY_HEADER_H }}
+        >
           <div className="relative h-full">
             {segments
               .filter((s) => !s.hidden)

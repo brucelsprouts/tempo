@@ -115,6 +115,11 @@ export function EventBar({ segment, color, colWidth, onOpen, onResize }: Props) 
       ].join(' ')}
       {...attributes}
       {...listeners}
+      // After the spread, deliberately. dnd-kit stamps `tabIndex={0}` on every
+      // draggable, which puts several dozen bars per screen into the tab order
+      // ahead of anything you would actually want to reach with Tab. Modal's
+      // `trapTab` filters on `tabIndex >= 0`, so it needs nothing from this.
+      tabIndex={-1}
       onClick={(e) => {
         e.stopPropagation();
         if (!resizing.current) onOpen(occ);

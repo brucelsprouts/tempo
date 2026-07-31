@@ -69,6 +69,21 @@ export const LANE_BUDGET = ROW_H - DAY_HEADER_H - OVERFLOW_H;
 export const GUTTER_W = 58;
 
 /**
+ * A gutter on the right edge of the grid, so the Saturday column stops butting
+ * the window. Scrollbars are hidden, so without it there is no margin at all on
+ * that side and the last bar's resize handle lives in the final six pixels of
+ * the screen.
+ *
+ * Applied as a **margin** on the two boxes that have to stay the same width —
+ * the weekday header's column grid and each week row's column box — never as
+ * padding. `colWidth` is measured from the header grid's own `contentRect` and
+ * bars are positioned in percentages of the row's column box; padding would
+ * shrink the inside of one box and not the other, putting every bar 8px out of
+ * step with the column it belongs to. A margin shrinks both identically.
+ */
+export const GRID_PAD_R = 8;
+
+/**
  * The epoch expressed in years, and the one place that answers "which years
  * exist".
  *

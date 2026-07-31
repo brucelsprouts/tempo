@@ -30,6 +30,7 @@ import { DragGhost } from './EventBar';
 import { WeekRow } from './WeekRow';
 import {
   DEFAULT_CATEGORY_COLOR,
+  GRID_PAD_R,
   GUTTER_W,
   LANE_BUDGET,
   MONTHS_LONG,
@@ -299,9 +300,25 @@ export function ContinuousCalendar({
 
       <div className="flex shrink-0 border-b border-hairlit bg-panel">
         <div className="shrink-0" style={{ width: GUTTER_W }} />
-        <div ref={gridRef} className="grid flex-1 grid-cols-7">
-          {WEEKDAYS.map((d) => (
-            <div key={d} className="label border-l border-hair px-1.5 py-2">
+        {/* Same right margin the week rows carry, and for the same reason:
+            `colWidth` is this element's `contentRect` divided by seven, so it
+            has to shrink exactly as far as the columns it is measuring. */}
+        <div
+          ref={gridRef}
+          className="grid flex-1 grid-cols-7"
+          style={{ marginRight: GRID_PAD_R }}
+        >
+          {WEEKDAYS.map((d, i) => (
+            <div
+              key={d}
+              className={[
+                'label border-l border-hair px-1.5 py-2',
+                // Sunday and Saturday keep `.label`'s weight while the five
+                // weekdays lift, so the header marks the same two columns the
+                // weekend bands mark in the grid below.
+                i === 0 || i === 6 ? '' : 'label-lit',
+              ].join(' ')}
+            >
               {d}
             </div>
           ))}
