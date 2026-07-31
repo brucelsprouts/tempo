@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /** Shared form primitives, so every control in the app is the same object. */
 
@@ -158,20 +158,42 @@ export function Modal({
   cutout?: ScrimCutout | null;
   children: React.ReactNode;
 }) {
-  const restoreTo = useRef<Element | null>(null);
   const frame = useRef<HTMLDivElement>(null);
+
+  /**
+   * Whatever had focus before this opened, captured by a lazy initialiser.
+   *
+   * It has to be read during the first render, not in the effect: by the time
+   * effects run React has already applied a child's `autoFocus` during commit,
+   * so `document.activeElement` is the form field *inside* the modal and
+   * "restore on close" would hand focus back to an element that no longer
+   * exists. A `useState` initialiser runs at the right moment and, unlike
+   * assigning to a ref during render, is a legal thing to do there.
+   */
+  const [restoreTo] = useState<Element | null>(() =>
+    typeof document === 'undefined' ? null : document.activeElement,
+  );
 
   // Focus moves in on open and back out on close. Without the restore, closing
   // an overlay opened from the keyboard drops focus onto <body> and the next
   // Tab starts from the top of the document.
   useEffect(() => {
-    restoreTo.current = document.activeElement;
-    const first = frame.current?.querySelector<HTMLElement>(FOCUSABLE);
-    (first ?? frame.current)?.focus();
+    const el = frame.current;
+    if (!el) return;
+
+    // A child that asked for focus has already been given it. Overriding that
+    // put the caret on the header's dismiss button every time the entry form
+    // opened, so typing a title meant reaching for the mouse first.
+    if (!el.contains(document.activeElement)) {
+      const wanted =
+        el.querySelector<HTMLElement>('[autofocus]') ?? el.querySelector<HTMLElement>(FOCUSABLE);
+      (wanted ?? el).focus();
+    }
+
     return () => {
-      if (restoreTo.current instanceof HTMLElement) restoreTo.current.focus();
+      if (restoreTo instanceof HTMLElement) restoreTo.focus();
     };
-  }, []);
+  }, [restoreTo]);
 
   function trapTab(e: React.KeyboardEvent) {
     if (e.key !== 'Tab' || !frame.current) return;

@@ -31,7 +31,7 @@ import { WeekRow } from './WeekRow';
 import {
   DEFAULT_CATEGORY_COLOR,
   GUTTER_W,
-  MAX_LANES,
+  LANE_BUDGET,
   MONTHS_LONG,
   ROW_H,
   TODAY_OFFSET,
@@ -323,7 +323,7 @@ export function ContinuousCalendar({
           <div className="relative w-full" style={{ height: TOTAL_H }}>
             {items.map((item) => {
               const weekStart = addDays(epochStart, item.index * 7);
-              const layout = layoutWeek(weekStart, byWeek.get(item.index) ?? [], MAX_LANES);
+              const layout = layoutWeek(weekStart, byWeek.get(item.index) ?? [], LANE_BUDGET);
               return (
                 <div
                   key={item.key}
@@ -382,7 +382,7 @@ function Header({
         onClick={onToday}
         className="label ml-auto border border-hair px-2 py-1 transition-colors hover:border-hairlit hover:text-dim"
       >
-        [T] TODAY
+        [SPACE] TODAY
       </button>
     </div>
   );

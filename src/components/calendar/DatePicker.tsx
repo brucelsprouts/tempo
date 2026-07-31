@@ -13,7 +13,7 @@ import {
   todayIn,
   type CivilDate,
 } from '@/lib/tempo/civil';
-import { epochYears, MONTHS_LONG, WEEKDAYS } from './constants';
+import { MONTHS_LONG, pickerYears, WEEKDAYS } from './constants';
 import { Button, inputClass } from './ui';
 
 /**
@@ -88,7 +88,7 @@ export function DatePicker({
    * an entry dated outside the epoch would silently lose the one number the
    * header exists to state. Same splice, for the same reason, as `YearView`.
    */
-  const years = useMemo(() => epochYears(parts(today).year, shownYear), [today, shownYear]);
+  const years = useMemo(() => pickerYears(parts(today).year, shownYear), [today, shownYear]);
 
   const days = useMemo(() => {
     const first = startOfWeek(monthStart);

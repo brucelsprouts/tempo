@@ -12,10 +12,10 @@ import {
   rangesOverlap,
   type CivilDate,
 } from '@/lib/tempo/civil';
-import { DAYS_PER_WEEK, type WeekLayout } from '@/lib/tempo/layout';
+import { DAYS_PER_WEEK, KIND_HEIGHT, LANE_GAP, type WeekLayout } from '@/lib/tempo/layout';
 import type { Occurrence } from '@/lib/tempo/types';
 import { EventBar } from './EventBar';
-import { DAY_HEADER_H, GUTTER_W, LANE_H, MAX_LANES, MONTHS, ROW_H, laneTop } from './constants';
+import { DAY_HEADER_H, GUTTER_W, LANE_BUDGET, MONTHS, ROW_H } from './constants';
 
 interface Props {
   layout: WeekLayout;
@@ -134,7 +134,7 @@ function WeekRowImpl({
   onDayNew,
   selectedDay,
 }: Props) {
-  const { weekStart, weekEnd, days, segments, overflow, laneCount } = layout;
+  const { weekStart, weekEnd, days, segments, overflow, laneTops, laneHeights, laneCount } = layout;
   const containsToday = days.includes(today);
 
   /**
@@ -146,17 +146,24 @@ function WeekRowImpl({
    * calendar would rearrange itself while you were still deciding whether to
    * create anything at all. It stacks on top and displaces nothing.
    */
-  const draft =
-    ghost && rangesOverlap(ghost.start, ghost.end, weekStart, weekEnd)
-      ? {
-          startCol: diffDays(maxDate(ghost.start, weekStart), weekStart),
-          endCol: diffDays(minDate(ghost.end, weekEnd), weekStart),
-          // Clamped rather than allowed to run past the row: on a full week
-          // there is no free slot, and the honest failure is to sit on the last
-          // lane rather than to draw outside the row and over the week below.
-          lane: Math.min(laneCount, MAX_LANES - 1),
-        }
-      : null;
+  const draft = (() => {
+    if (!ghost || !rangesOverlap(ghost.start, ghost.end, weekStart, weekEnd)) return null;
+
+    const height = KIND_HEIGHT.event;
+    const after =
+      laneCount === 0 ? 0 : (laneTops[laneCount - 1] ?? 0) + (laneHeights[laneCount - 1] ?? 0) + LANE_GAP;
+    // Clamped rather than allowed to run past the row: on a full week there is
+    // no free slot, and the honest failure is to sit on the last line of the
+    // budget rather than to draw outside the row and over the week below.
+    const top = Math.min(after, Math.max(0, LANE_BUDGET - height));
+
+    return {
+      startCol: diffDays(maxDate(ghost.start, weekStart), weekStart),
+      endCol: diffDays(minDate(ghost.end, weekEnd), weekStart),
+      top,
+      height,
+    };
+  })();
 
   // Month label in the gutter whenever a month begins inside this row.
   const monthStartDay = days.find(isFirstOfMonth);
@@ -226,8 +233,8 @@ function WeekRowImpl({
                   position: 'absolute',
                   left: `${(draft.startCol / DAYS_PER_WEEK) * 100}%`,
                   width: `calc(${((draft.endCol - draft.startCol + 1) / DAYS_PER_WEEK) * 100}% - 3px)`,
-                  top: laneTop(draft.lane),
-                  height: LANE_H,
+                  top: draft.top,
+                  height: draft.height,
                 }}
                 className="ml-[2px] border border-dashed border-mute bg-raised/40"
               />

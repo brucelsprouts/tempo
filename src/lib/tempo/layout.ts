@@ -12,9 +12,30 @@
  */
 
 import { addDays, diffDays, maxDate, minDate, rangesOverlap, type CivilDate } from './civil';
-import type { Occurrence } from './types';
+import type { EventKind, Occurrence } from './types';
 
 export const DAYS_PER_WEEK = 7;
+
+/**
+ * Height carries importance.
+ *
+ * A task is the loudest thing a day can contain and has to look like it at a
+ * glance, across seven columns, without being read. Colour can't do that job —
+ * it is already spoken for by category — and a 2px border weight is invisible
+ * at this scale. Size is the one channel left that survives being glanced at.
+ *
+ * A mark is a tick because a mark is a moment rather than a span: there is no
+ * duration to draw and no second line to write. A birthday gets the extra room
+ * its derived age needs; a task gets two lines, title and status.
+ */
+export const KIND_HEIGHT: Record<EventKind, number> = {
+  milestone: 14,
+  event: 21,
+  birthday: 27,
+  assignment: 32,
+};
+
+export const LANE_GAP = 3;
 
 export interface WeekSegment {
   occurrence: Occurrence;
@@ -25,8 +46,12 @@ export interface WeekSegment {
   /** The bar is clipped: it began in an earlier week / ends in a later one. */
   continuesBefore: boolean;
   continuesAfter: boolean;
-  /** Beyond `maxLanes`; rolled into the day's "+N" counter instead of drawn. */
+  /** Past the pixel budget; rolled into the day's "+N" counter instead of drawn. */
   hidden: boolean;
+  /** Offset from the top of the lane area. `WeekRow` adds the header height. */
+  top: number;
+  /** The bar's own height — `KIND_HEIGHT[kind]`, not its lane's. */
+  height: number;
 }
 
 export interface WeekLayout {
@@ -34,11 +59,22 @@ export interface WeekLayout {
   weekEnd: CivilDate;
   days: CivilDate[];
   segments: WeekSegment[];
-  /** Lanes actually drawn, after the overflow cutoff. Drives row height. */
+  /** Lanes actually drawn, after the overflow cutoff. */
   laneCount: number;
+  /** Tallest bar in each lane. Lanes are as tall as their loudest occupant. */
+  laneHeights: number[];
+  /** Cumulative offset of each lane from the top of the lane area. */
+  laneTops: number[];
   /** Per column, how many occurrences were suppressed. */
   overflow: number[];
 }
+
+/**
+ * Default pixel budget for the lane area, in case a caller doesn't state one.
+ * `constants.ts` derives the real figure from `ROW_H` and passes it in, the way
+ * it used to pass `maxLanes`.
+ */
+export const DEFAULT_LANE_BUDGET = 103;
 
 export function weekDays(weekStart: CivilDate): CivilDate[] {
   return Array.from({ length: DAYS_PER_WEEK }, (_, i) => addDays(weekStart, i));
@@ -47,13 +83,16 @@ export function weekDays(weekStart: CivilDate): CivilDate[] {
 /**
  * Assigns lanes for one week row.
  *
- * `maxLanes` caps the drawn stack so a single busy week can't blow the row
- * height out and wreck the scroll rhythm; the remainder becomes a "+N" chip.
+ * `budget` caps the drawn stack in *pixels* rather than in lanes, so a single
+ * busy week can't blow the row height out and wreck the scroll rhythm; the
+ * remainder becomes a "+N" chip. It is a pixel budget because lanes are no
+ * longer a uniform height — three tasks and four events both fill the row, and
+ * counting lanes could only be right for one of them.
  */
 export function layoutWeek(
   weekStart: CivilDate,
   occurrences: Occurrence[],
-  maxLanes = 4,
+  budget = DEFAULT_LANE_BUDGET,
 ): WeekLayout {
   const weekEnd = addDays(weekStart, DAYS_PER_WEEK - 1);
   const days = weekDays(weekStart);
@@ -77,8 +116,7 @@ export function layoutWeek(
   // multi-day spine of a week settles into the top lanes and short chips fill
   // in beneath, which keeps lanes stable as you scroll across a boundary.
   const laneEnds: number[] = [];
-  const segments: WeekSegment[] = [];
-  const overflow = new Array<number>(DAYS_PER_WEEK).fill(0);
+  const assigned: Array<(typeof clipped)[number] & { lane: number }> = [];
 
   for (const c of clipped) {
     let lane = laneEnds.findIndex((end) => end < c.startCol);
@@ -88,20 +126,57 @@ export function layoutWeek(
     } else {
       laneEnds[lane] = c.endCol;
     }
-
-    const hidden = lane >= maxLanes;
-    if (hidden) {
-      for (let col = c.startCol; col <= c.endCol; col++) overflow[col] += 1;
-    }
-    segments.push({ ...c, lane, hidden });
+    assigned.push({ ...c, lane });
   }
 
-  const laneCount = Math.min(
-    maxLanes,
-    segments.reduce((n, s) => Math.max(n, s.lane + 1), 0),
-  );
+  /**
+   * Lane geometry, resolved after assignment rather than during it.
+   *
+   * A lane is as tall as the tallest thing in it, and each lane starts below
+   * the one above — so the offsets can only be known once every bar has a lane.
+   * Measured from the top of the *lane area*, not of the row: `WeekRow` adds
+   * `DAY_HEADER_H` once when it positions the overlay, so the header appears in
+   * exactly one place and cannot be double-counted against the budget.
+   */
+  const laneHeights: number[] = [];
+  for (const a of assigned) {
+    const h = KIND_HEIGHT[a.occurrence.kind];
+    laneHeights[a.lane] = Math.max(laneHeights[a.lane] ?? 0, h);
+  }
 
-  return { weekStart, weekEnd, days, segments, laneCount, overflow };
+  const laneTops: number[] = [];
+  let cursor = 0;
+  for (let i = 0; i < laneHeights.length; i++) {
+    laneTops[i] = cursor;
+    cursor += laneHeights[i] + LANE_GAP;
+  }
+
+  const segments: WeekSegment[] = [];
+  const overflow = new Array<number>(DAYS_PER_WEEK).fill(0);
+  let laneCount = 0;
+
+  for (const a of assigned) {
+    // Cut on the lane's full extent, not the bar's. A 21px event sharing a lane
+    // with a 32px task would otherwise be drawn in a row that has already run
+    // out of budget, overlapping the "+N" chip below it.
+    const hidden = laneTops[a.lane] + laneHeights[a.lane] > budget;
+    if (hidden) {
+      for (let col = a.startCol; col <= a.endCol; col++) overflow[col] += 1;
+    } else {
+      laneCount = Math.max(laneCount, a.lane + 1);
+    }
+
+    segments.push({
+      ...a,
+      hidden,
+      top: laneTops[a.lane],
+      // Its own height, not its lane's: an event beside a task stays 21px and
+      // top-aligns, rather than being stretched to look like something it isn't.
+      height: KIND_HEIGHT[a.occurrence.kind],
+    });
+  }
+
+  return { weekStart, weekEnd, days, segments, laneCount, laneHeights, laneTops, overflow };
 }
 
 function bySpanThenStart(

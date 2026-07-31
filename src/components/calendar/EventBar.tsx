@@ -5,7 +5,7 @@ import { useRef, useState } from 'react';
 import type { WeekSegment } from '@/lib/tempo/layout';
 import type { Occurrence } from '@/lib/tempo/types';
 import { DAYS_PER_WEEK } from '@/lib/tempo/layout';
-import { LANE_H, laneTop } from './constants';
+import { KIND_HEIGHT } from '@/lib/tempo/layout';
 
 interface Props {
   segment: WeekSegment;
@@ -82,6 +82,10 @@ export function EventBar({ segment, color, colWidth, onOpen, onResize }: Props) 
   const glyph = occ.kind === 'assignment' && occ.status ? STATUS_GLYPH[occ.status] : null;
   const done = occ.status === 'done';
 
+  // A task has the room for two lines and the most to say; a mark has neither.
+  const twoLine = occ.kind === 'assignment';
+  const tick = occ.kind === 'milestone';
+
   return (
     <div
       ref={setNodeRef}
@@ -89,8 +93,10 @@ export function EventBar({ segment, color, colWidth, onOpen, onResize }: Props) 
         position: 'absolute',
         left: pct(left),
         width: `calc(${pct(span)} - 3px)`,
-        top: laneTop(segment.lane),
-        height: LANE_H,
+        // Both handed down by `layoutWeek`. Derived here, the bar would have to
+        // know the height of every kind above it in the row to place itself.
+        top: segment.top,
+        height: segment.height,
         transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
         opacity: isDragging ? 0.25 : 1,
         borderLeft: continuesBefore ? undefined : `2px solid ${color}`,
@@ -100,7 +106,8 @@ export function EventBar({ segment, color, colWidth, onOpen, onResize }: Props) 
         // The bars sit in a pointer-events-none overlay so empty day space falls
         // through to the cell underneath; each bar opts itself back in.
         'pointer-events-auto',
-        'group ml-[2px] flex items-center gap-1.5 overflow-hidden bg-raised pr-1 text-[11px]',
+        'group ml-[2px] flex items-center gap-1 overflow-hidden bg-raised pr-1',
+        tick ? 'text-[10px]' : 'text-[11px]',
         'border-y border-r border-hair transition-colors',
         continuesBefore ? 'border-l border-l-hairlit pl-1' : 'pl-1.5',
         occ.readOnly ? 'cursor-default opacity-70' : 'cursor-grab hover:border-hairlit hover:bg-sunken',
@@ -115,15 +122,33 @@ export function EventBar({ segment, color, colWidth, onOpen, onResize }: Props) 
       title={occ.title}
     >
       {continuesBefore && <span className="shrink-0 text-mute">‹</span>}
+      {tick && <span className="shrink-0 text-mute">◆</span>}
 
-      {glyph && <span className="shrink-0 text-mute">{glyph}</span>}
-      {time && <span className="shrink-0 tabular-nums text-mute">{time}</span>}
+      <div className="min-w-0 flex-1">
+        {twoLine ? (
+          <>
+            <div className={`truncate leading-tight ${done ? 'text-mute line-through' : 'text-ink'}`}>
+              {occ.title}
+            </div>
+            {/* The second line is what the extra height was spent on: status and
+                when it is due, which are the two things you check without
+                opening anything. */}
+            <div className="flex items-center gap-1 text-[10px] leading-tight text-mute">
+              {glyph && <span className="shrink-0">{glyph}</span>}
+              <span className="truncate tabular-nums">{time ?? `DUE ${occ.endDate.slice(5)}`}</span>
+            </div>
+          </>
+        ) : (
+          <div className="flex items-center gap-1.5">
+            {time && <span className="shrink-0 tabular-nums text-mute">{time}</span>}
+            <span className={`truncate ${done ? 'text-mute line-through' : 'text-ink'}`}>
+              {occ.title}
+            </span>
+          </div>
+        )}
+      </div>
 
-      <span className={`truncate ${done ? 'text-mute line-through' : 'text-ink'}`}>
-        {occ.title}
-      </span>
-
-      {continuesAfter && <span className="ml-auto shrink-0 text-mute">›</span>}
+      {continuesAfter && <span className="shrink-0 text-mute">›</span>}
 
       {/* Resize handles. Hidden on a clipped edge — you can only lengthen a bar
           from an end that is actually in this row. */}
@@ -149,7 +174,7 @@ export function EventBar({ segment, color, colWidth, onOpen, onResize }: Props) 
 export function DragGhost({ occ, color }: { occ: Occurrence; color: string }) {
   return (
     <div
-      style={{ borderLeft: `2px solid ${color}`, height: LANE_H }}
+      style={{ borderLeft: `2px solid ${color}`, height: KIND_HEIGHT[occ.kind] }}
       className="flex items-center gap-1.5 border-y border-r border-hairlit bg-raised px-1.5 text-[11px] text-ink shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
     >
       <span className="truncate">{occ.title}</span>

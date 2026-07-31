@@ -75,7 +75,9 @@ function relative(d: CivilDate, today: CivilDate): string {
   if (n === 0) return 'TODAY';
   if (n === 1) return 'TOMORROW';
   if (n > 0) return `IN ${n}D`;
-  return `${-n}D AGO`;
+  // The search window starts today, so a start date in the past can only be a
+  // multi-day entry that is currently running — not something overdue.
+  return 'IN PROGRESS';
 }
 
 interface Props {

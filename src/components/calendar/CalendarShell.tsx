@@ -175,6 +175,26 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
     // Never shadow a browser or OS chord.
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
 
+    /**
+     * Space re-centres on today.
+     *
+     * It has to be spelled out separately because Space is not an inert key the
+     * way a letter is: on a focused button or checkbox the browser reads it as
+     * "activate", and stealing it would mean the SETTINGS button in the header
+     * scrolled the calendar instead of opening settings. So it only counts when
+     * nothing that answers to Space holds focus.
+     */
+    if (e.key === ' ' || e.key === 'Spacebar') {
+      const el = document.activeElement;
+      const activates =
+        el instanceof HTMLElement &&
+        (el.tagName === 'BUTTON' || el.tagName === 'A' || el.getAttribute('role') === 'button');
+      if (activates) return;
+      e.preventDefault();
+      goToday();
+      return;
+    }
+
     switch (e.key) {
       case 'n':
       case 'N':
@@ -186,10 +206,10 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
         e.preventDefault();
         openDay(focusedDay);
         break;
-      case 't':
-      case 'T':
+      case 's':
+      case 'S':
         e.preventDefault();
-        goToday();
+        push({ kind: 'settings' });
         break;
       case '1':
         setViewPreference('scroll');

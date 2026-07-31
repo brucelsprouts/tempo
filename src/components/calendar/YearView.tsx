@@ -223,11 +223,17 @@ function MonthGrid({
                 selected ? 'bg-raised' : 'hover:bg-raised',
               ].join(' ')}
             >
+              {/* Every number gets the same box, today's is merely filled.
+                  Padding the highlighted one instead left the digit riding high
+                  in its block — `leading-none` gives a 10px line no room to
+                  centre in — and made today's square a different size from the
+                  other thirty, so the whole grid stepped sideways around it. */}
               <span
                 className={[
+                  'inline-flex h-[13px] min-w-[13px] items-center justify-center px-[3px]',
                   'text-[10px] leading-none tabular-nums',
                   isToday
-                    ? 'bg-bright px-[3px] py-[1px] font-medium text-void'
+                    ? 'bg-bright font-medium text-void'
                     : items
                       ? 'text-ink'
                       : 'text-mute',

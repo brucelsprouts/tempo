@@ -201,6 +201,9 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
           <Field label="[00] TITLE">
             <input
               autoFocus
+              // Selected, not just focused: on an edit the field already holds
+              // a title, and the common reason to open one is to replace it.
+              onFocus={(e) => e.currentTarget.select()}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               className={inputClass}
