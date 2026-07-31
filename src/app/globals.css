@@ -1,26 +1,108 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/**
+ * Monochrome, hairline-ruled, monospace-forward.
+ *
+ * There is exactly one rule about colour here: the interface itself is
+ * achromatic, and category colour is the only hue on screen. A "today" accent
+ * would compete with the one signal that carries meaning, so today is marked by
+ * inversion and weight instead of by hue.
+ */
+
+@theme {
+  --color-void: #08090a;
+  --color-panel: #0b0c0e;
+  --color-raised: #121316;
+  --color-sunken: #0e0f11;
+  --color-hair: #1b1d21;
+  --color-hairlit: #2a2d33;
+  --color-mute: #4e5359;
+  --color-dim: #868b92;
+  --color-ink: #e4e6e9;
+  --color-bright: #ffffff;
+
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+
+  --tempo-row-h: 132px;
+  --tempo-gutter-w: 58px;
+  --tempo-lane-h: 21px;
+  --tempo-lane-gap: 3px;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-void);
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1, "zero" 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Instrument-panel scrollbars: present, but never the loudest thing on screen. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-hairlit) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-hairlit);
+  border: 3px solid var(--color-void);
+  border-radius: 6px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-mute);
+}
+
+@layer utilities {
+  /* Small-caps technical label: `// NAV`, `W31`, `STATUS` */
+  .label {
+    font-size: 10px;
+    line-height: 1;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-mute);
+  }
+
+  .label-dim {
+    color: var(--color-mute);
+  }
+
+  /* Alternating month bands. The month changes are legible without the grid
+     ever breaking into pages — this is what replaces pagination. */
+  .band-even {
+    background: var(--color-void);
+  }
+  .band-odd {
+    background: color-mix(in oklab, var(--color-raised) 55%, var(--color-void));
+  }
+
+  .hairline-t {
+    box-shadow: inset 0 1px 0 var(--color-hair);
+  }
+  .hairline-l {
+    box-shadow: inset 1px 0 0 var(--color-hair);
+  }
+
+  .focus-ring {
+    outline: 1px solid var(--color-dim);
+    outline-offset: 1px;
+  }
+}
+
+/* dnd-kit sets this while a drag is in flight */
+.dragging-active {
+  cursor: grabbing;
+}
+.dragging-active * {
+  cursor: grabbing !important;
 }

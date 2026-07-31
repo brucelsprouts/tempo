@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TEMPO
 
-## Getting Started
+A continuous calendar. Dates and scheduling only — notes stay in Obsidian.
 
-First, run the development server:
+The point of it is that time doesn't paginate. The grid is one unbroken scroll of
+week rows, so the last day of a month and the first day of the next are adjacent
+rows on the same surface, not two views you flip between.
+
+Single user by design: one account, one locked door, no tenancy.
+
+---
+
+## Setup
+
+### 1. Environment
+
+`.env.local` is already populated with the Supabase project URL and publishable
+key. The remaining values are only needed for the Google mirror, which isn't
+wired up yet.
+
+### 2. Create the one account
+
+Account creation is deliberately not in the app — there is no sign-up route, and
+there never will be. Create the single user once, by hand:
+
+1. Supabase dashboard → **Authentication → Users → Add user**
+2. Enter your email and a password, and tick **Auto Confirm User**
+3. Then **Authentication → Sign In / Providers** → disable **Allow new users to
+   sign up**
+
+After that, `/login` is the only way in and only your account can pass it.
+
+### 3. Run
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+---
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run dev      # dev server
+npm run build    # production build
+npm test         # 51 unit tests, no database required
+npm run lint     # eslint
+```
 
-## Learn More
+## Layout
 
-To learn more about Next.js, take a look at the following resources:
+```
+src/lib/tempo/      pure domain logic — no React, no network, fully tested
+  civil.ts          timezone-free calendar dates + the two zone conversions
+  types.ts          TempoEvent, Recurrence, Occurrence
+  recurrence.ts     occurrence expansion (arithmetic seek, not iteration)
+  derive.ts         per-occurrence computed titles ("Mom · 52")
+  layout.ts         week-row lane packing
+  mappers.ts        row <-> domain, JSON validation, portable export shape
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+src/lib/store/      in-memory calendar with optimistic writes + rollback
+src/lib/supabase/   browser / server / service-role clients
+src/components/calendar/
+src/proxy.ts        the auth gate (Next 16's replacement for middleware)
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Notes
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **`/preview`** is a development-only design harness running on fixture data.
+  It 404s outside development and is only exempt from the auth gate in
+  development. Writes there apply optimistically and then roll back, since it
+  has no session — that's expected.
+- **`/api/export`** returns every event as flat JSON whose keys map 1:1 onto
+  Obsidian frontmatter. Recurring events export as their rule, not as expanded
+  occurrences.
+- Google Calendar sync is designed but not built. See `docs/GOOGLE_SETUP.md`.

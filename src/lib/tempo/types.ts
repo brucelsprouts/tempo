@@ -1,0 +1,134 @@
+import type { CivilDate } from './civil';
+
+export type EventKind = 'event' | 'assignment' | 'milestone' | 'birthday';
+export type EventStatus = 'todo' | 'doing' | 'done';
+export type EventSource = 'tempo' | 'google';
+export type Frequency = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
+
+/**
+ * RFC 5545 RRULE semantics in a shape that survives a `git diff` and a chunk of
+ * Obsidian frontmatter. Kept deliberately narrower than the full spec — this is
+ * the subset a personal calendar actually uses, and every field maps 1:1 onto a
+ * real RRULE part so serialising to Google is a rename, not a translation.
+ */
+export interface Recurrence {
+  freq: Frequency;
+  /** Every N periods. Default 1. */
+  interval?: number;
+  /** WEEKLY only. 0 = Sunday … 6 = Saturday. */
+  byWeekday?: number[];
+  /** MONTHLY and YEARLY. Defaults to the day-of-month of the series start. */
+  byMonthDay?: number;
+  /** YEARLY only, 1-12. Defaults to the month of the series start. */
+  byMonth?: number;
+  until?: CivilDate | null;
+  count?: number | null;
+  /** Occurrence dates to suppress, as they would have fallen without the exception. */
+  exdates?: CivilDate[];
+  /**
+   * What to do when a rule lands on a date that doesn't exist — Feb 30, or
+   * Feb 29 in a common year. RFC 5545 says skip, which is right for "the 31st
+   * of every month" but wrong for a leap-day birthday, where the person still
+   * has one. Defaults to 'skip'; the birthday preset uses 'clamp'.
+   */
+  onInvalid?: 'skip' | 'clamp';
+}
+
+/**
+ * The stored definition of something on the calendar. For a recurring event
+ * this is the *whole series* — occurrences are never persisted.
+ */
+export interface TempoEvent {
+  id: string;
+  title: string;
+  notes: string | null;
+  kind: EventKind;
+  categoryId: string | null;
+
+  allDay: boolean;
+  /** Timed events only: ISO instants. */
+  startsAt: string | null;
+  endsAt: string | null;
+  /** All-day events only: bare dates, end inclusive. */
+  startDate: CivilDate | null;
+  endDate: CivilDate | null;
+  timezone: string;
+
+  recurrence: Recurrence | null;
+
+  /** Origin date for derived fields — a birth date, a start-of-employment date. */
+  anchorDate: CivilDate | null;
+  /** Evaluated per occurrence at render time. See `derive.ts`. */
+  displayTemplate: string | null;
+
+  status: EventStatus | null;
+  notify: boolean;
+  source: EventSource;
+  googleEventId: string | null;
+
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A per-instance edit to one occurrence of a series. */
+export interface OccurrenceOverride {
+  id: string;
+  eventId: string;
+  /** The date the occurrence *would* have fallen on. The stable identity key. */
+  occurrenceDate: CivilDate;
+  cancelled: boolean;
+  patch: OccurrencePatch;
+}
+
+export interface OccurrencePatch {
+  title?: string;
+  /** Day-shift applied to this instance only. */
+  startDate?: CivilDate;
+  endDate?: CivilDate;
+  startMinutes?: number;
+  endMinutes?: number;
+  status?: EventStatus;
+}
+
+/**
+ * A materialised instance, produced at render time and thrown away. Nothing
+ * downstream of expansion needs to know whether this came from a recurring
+ * series, a one-off, or Google.
+ */
+export interface Occurrence {
+  /** Stable within a render pass: `${eventId}:${seriesDate}`. */
+  key: string;
+  eventId: string;
+  event: TempoEvent;
+
+  /** Where this instance actually sits, after any override. */
+  date: CivilDate;
+  /** Inclusive. Equal to `date` for single-day items. */
+  endDate: CivilDate;
+  /** The undisplaced date, used to key overrides. */
+  seriesDate: CivilDate;
+
+  /** 1-based position within the series. 1 for one-off events. */
+  index: number;
+  /** Title after the display template resolves — "Mom · 52", not "Mom". */
+  title: string;
+
+  allDay: boolean;
+  /** Minutes past midnight in the event's own timezone. Timed events only. */
+  startMinutes: number | null;
+  endMinutes: number | null;
+
+  kind: EventKind;
+  status: EventStatus | null;
+  categoryId: string | null;
+  isOverride: boolean;
+  /** Google-sourced instances render dimmed and refuse drag. */
+  readOnly: boolean;
+}
+
+export interface Category {
+  id: string;
+  name: string;
+  color: string;
+  sortOrder: number;
+}
