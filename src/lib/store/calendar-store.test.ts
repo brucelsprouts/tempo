@@ -516,3 +516,71 @@ describe('failed writes', () => {
     expect(useCalendar.getState().error).toBe('write rejected');
   });
 });
+
+// ------------------------------------------------------------- editing a draft
+
+describe('saving an edited draft', () => {
+  /**
+   * The form speaks minutes from midnight and a row speaks instants, so an edit
+   * that forwarded the draft straight to `updateEvent` wrote a patch with no
+   * time in it at all — and succeeded, which is why nobody noticed. These assert
+   * the conversion happens, not merely that the write went out.
+   */
+  it('converts a timed draft to instants rather than dropping the time', async () => {
+    const e = event({ id: 'e1', allDay: false, startDate: null, endDate: null });
+    seed([e]);
+
+    await useCalendar.getState().updateEventFromDraft('e1', {
+      title: 'Design review',
+      kind: 'event',
+      allDay: false,
+      startDate: '2026-08-10',
+      endDate: '2026-08-10',
+      startMinutes: 16 * 60 + 45,
+      endMinutes: 17 * 60 + 45,
+    });
+
+    const patch = lastCall('update')?.payload as Record<string, unknown>;
+    // 16:45 in America/Toronto is 20:45Z while EDT is in force.
+    expect(patch.starts_at).toBe('2026-08-10T20:45:00.000Z');
+    expect(patch.ends_at).toBe('2026-08-10T21:45:00.000Z');
+    expect(useCalendar.getState().events[0].startsAt).toBe('2026-08-10T20:45:00.000Z');
+  });
+
+  it('clears the instants when a draft turns all-day, and vice versa', async () => {
+    const e = event({ id: 'e1', allDay: false, startDate: null, endDate: null });
+    seed([e]);
+
+    await useCalendar.getState().updateEventFromDraft('e1', {
+      title: 'Montreal',
+      kind: 'event',
+      allDay: true,
+      startDate: '2026-08-10',
+      endDate: '2026-08-12',
+    });
+
+    const patch = lastCall('update')?.payload as Record<string, unknown>;
+    expect(patch.starts_at).toBeNull();
+    expect(patch.ends_at).toBeNull();
+    expect(patch.start_date).toBe('2026-08-10');
+    expect(patch.end_date).toBe('2026-08-12');
+  });
+
+  it('does not leak the draft-only minute fields into the row', async () => {
+    seed([event({ id: 'e1', allDay: false, startDate: null, endDate: null })]);
+
+    await useCalendar.getState().updateEventFromDraft('e1', {
+      title: 'Standup',
+      kind: 'event',
+      allDay: false,
+      startDate: '2026-08-10',
+      endDate: '2026-08-10',
+      startMinutes: 9 * 60,
+      endMinutes: 9 * 60 + 30,
+    });
+
+    const patch = lastCall('update')?.payload as Record<string, unknown>;
+    expect(patch).not.toHaveProperty('startMinutes');
+    expect(patch).not.toHaveProperty('endMinutes');
+  });
+});

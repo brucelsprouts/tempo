@@ -91,6 +91,8 @@ interface CalendarState {
   load: () => Promise<void>;
   createEvent: (draft: EventDraft) => Promise<void>;
   updateEvent: (id: string, patch: Partial<TempoEvent>) => Promise<void>;
+  /** Editing counterpart to `createEvent`. See `draftTiming`. */
+  updateEventFromDraft: (id: string, draft: EventDraft) => Promise<void>;
   deleteEvent: (id: string) => Promise<void>;
   deleteEvents: (ids: string[]) => Promise<void>;
   restoreDeleted: (eventId: string) => Promise<void>;
@@ -288,28 +290,11 @@ export const useCalendar = create<CalendarState>((set, get) => {
       const tz = get().timezone;
 
       const id = crypto.randomUUID();
-      const timed = !draft.allDay;
-      const startMinutes = draft.startMinutes ?? 9 * 60;
-      const endMinutes = draft.endMinutes ?? startMinutes + 60;
 
       const event: TempoEvent = {
         id,
-        title: draft.title,
-        notes: draft.notes ?? null,
-        kind: draft.kind,
-        categoryId: draft.categoryId ?? null,
-        allDay: draft.allDay,
-        startsAt: timed
-          ? instantFromCivil(draft.startDate, startMinutes, tz).toISOString()
-          : null,
-        endsAt: timed ? instantFromCivil(draft.endDate, endMinutes, tz).toISOString() : null,
-        startDate: draft.allDay ? draft.startDate : null,
-        endDate: draft.allDay ? draft.endDate : null,
+        ...draftFields(draft, tz),
         timezone: tz,
-        recurrence: draft.recurrence ?? null,
-        anchorDate: draft.anchorDate ?? null,
-        displayTemplate: draft.displayTemplate ?? null,
-        status: draft.status ?? (draft.kind === 'assignment' ? 'todo' : null),
         notify: draft.notify ?? false,
         source: 'tempo',
         googleEventId: null,
@@ -326,6 +311,10 @@ export const useCalendar = create<CalendarState>((set, get) => {
           return { error };
         },
       );
+    },
+
+    updateEventFromDraft: async (id, draft) => {
+      await get().updateEvent(id, draftFields(draft, get().timezone));
     },
 
     updateEvent: async (id, patch) => {
@@ -716,6 +705,54 @@ function remember(
     at,
   }));
   return [...taken, ...pool].slice(0, DELETE_POOL_CAP);
+}
+
+/**
+ * What a draft says about an event, as event fields.
+ *
+ * The one translation between the form's vocabulary and a row's, so create and
+ * update cannot disagree about it — and they did. `updateEvent` takes a
+ * `Partial<TempoEvent>`, `startMinutes` is not a field of one, and a spread
+ * widens rather than rejects; so an edit handed its draft straight over, the
+ * patch reached `eventToRow` carrying no time at all, the write succeeded, and
+ * the entry kept whatever hour it already had.
+ *
+ * `notify`, `source` and the identity fields are deliberately absent: they are
+ * not the form's to state, and an edit must not reset them.
+ */
+function draftFields(draft: EventDraft, tz: string) {
+  return {
+    title: draft.title,
+    notes: draft.notes ?? null,
+    kind: draft.kind,
+    categoryId: draft.categoryId ?? null,
+    recurrence: draft.recurrence ?? null,
+    anchorDate: draft.anchorDate ?? null,
+    displayTemplate: draft.displayTemplate ?? null,
+    status: draft.status ?? (draft.kind === 'assignment' ? 'todo' : null),
+    ...draftTiming(draft, tz),
+  };
+}
+
+/**
+ * The date and time fields a draft implies.
+ *
+ * The form speaks minutes from midnight; a row speaks instants, and only the
+ * store knows the zone that converts between them.
+ */
+function draftTiming(draft: EventDraft, tz: string) {
+  const timed = !draft.allDay;
+  const startMinutes = draft.startMinutes ?? 9 * 60;
+  const endMinutes = draft.endMinutes ?? startMinutes + 60;
+  return {
+    allDay: draft.allDay,
+    startsAt: timed ? instantFromCivil(draft.startDate, startMinutes, tz).toISOString() : null,
+    endsAt: timed ? instantFromCivil(draft.endDate, endMinutes, tz).toISOString() : null,
+    // A timed entry's span lives in the instants; an all-day one has no instant
+    // to hold it. Exactly one pair is ever populated.
+    startDate: draft.allDay ? draft.startDate : null,
+    endDate: draft.allDay ? draft.endDate : null,
+  };
 }
 
 /**

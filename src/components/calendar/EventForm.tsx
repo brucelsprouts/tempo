@@ -69,7 +69,7 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
   const timezone = useCalendar((s) => s.timezone);
   const categories = useCalendar((s) => s.categories);
   const createEvent = useCalendar((s) => s.createEvent);
-  const updateEvent = useCalendar((s) => s.updateEvent);
+  const updateEventFromDraft = useCalendar((s) => s.updateEventFromDraft);
   const deleteEvent = useCalendar((s) => s.deleteEvent);
   const cancelOccurrence = useCalendar((s) => s.cancelOccurrence);
 
@@ -197,11 +197,7 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
     if (mode === 'new') {
       await createEvent(shared);
     } else if (occurrence) {
-      await updateEvent(occurrence.eventId, {
-        ...shared,
-        startDate: shared.allDay ? shared.startDate : null,
-        endDate: shared.allDay ? shared.endDate : null,
-      });
+      await updateEventFromDraft(occurrence.eventId, shared);
     }
     onClose();
   }
