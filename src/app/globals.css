@@ -201,3 +201,15 @@ body {
 .dragging-active * {
   cursor: grabbing !important;
 }
+
+/* Year view: fade + slide up when the year changes */
+@keyframes yearFade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -391,10 +391,12 @@ function Categories() {
 
           {draft && (
             <li className="flex items-center gap-2 border-t border-hair px-2 py-1.5">
-              <Swatch
-                color={draft.color}
-                onPick={(color) => setDraft((d) => (d ? { ...d, color } : d))}
-              />
+              <div onMouseDown={(e) => e.preventDefault()}>
+                <Swatch
+                  color={draft.color}
+                  onPick={(color) => setDraft((d) => (d ? { ...d, color } : d))}
+                />
+              </div>
               <input
                 autoFocus
                 value={draft.name}
@@ -405,9 +407,6 @@ function Categories() {
                     e.preventDefault();
                     commitDraft();
                   }
-                  // Escape has to stop here. The shell's keymap would otherwise
-                  // take it and close the whole settings modal, discarding a
-                  // half-typed name and three other decisions with it.
                   if (e.key === 'Escape') {
                     e.stopPropagation();
                     setDraft(null);
@@ -434,9 +433,16 @@ function Categories() {
   );
 }
 
-/** The colour cell, and the eight-swatch grid it opens. */
-function Swatch({ color, onPick }: { color: string; onPick: (color: string) => void }) {
-  const [open, setOpen] = useState(false);
+function Swatch({
+  color,
+  onPick,
+  initialOpen = false,
+}: {
+  color: string;
+  onPick: (color: string) => void;
+  initialOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(initialOpen);
 
   return (
     <div className="relative shrink-0">
@@ -445,7 +451,7 @@ function Swatch({ color, onPick }: { color: string; onPick: (color: string) => v
         onClick={() => setOpen((v) => !v)}
         aria-label="Change colour"
         aria-expanded={open}
-        className="block h-4 w-4 border border-hair transition-colors hover:border-hairlit"
+        className="block h-[18px] w-[18px] border border-hair transition-colors hover:border-hairlit"
         style={{ background: color }}
       />
       {open && (
@@ -453,7 +459,10 @@ function Swatch({ color, onPick }: { color: string; onPick: (color: string) => v
           {/* Catches the dismissing click. A window listener would race the
               button's own onClick and reopen what it just closed. */}
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-5 z-20 grid grid-cols-4 gap-1 border border-hairlit bg-panel p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.7)]">
+          <div
+            className="absolute left-0 top-7 z-20 border border-hairlit bg-panel p-2 shadow-[0_8px_24px_rgba(0,0,0,0.7)]"
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 24px)', gap: 6 }}
+          >
             {CATEGORY_PALETTE.map((c) => (
               <button
                 key={c}
@@ -463,10 +472,10 @@ function Swatch({ color, onPick }: { color: string; onPick: (color: string) => v
                   setOpen(false);
                 }}
                 aria-label={c}
-                className={`h-4 w-4 border transition-colors ${
+                className={`border transition-colors ${
                   c === color ? 'border-bright' : 'border-transparent hover:border-hairlit'
                 }`}
-                style={{ background: c }}
+                style={{ background: c, width: 24, height: 24 }}
               />
             ))}
           </div>

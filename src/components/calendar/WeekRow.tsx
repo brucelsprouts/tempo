@@ -107,7 +107,7 @@ function DayCell({
         )}
         <span
           className={[
-            'text-[12px] tabular-nums leading-none',
+            'text-[13px] tabular-nums leading-none',
             isToday
               ? 'bg-bright px-1 py-0.5 font-medium text-void'
               : past

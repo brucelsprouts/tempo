@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { groupOverrides, useCalendar } from '@/lib/store/calendar-store';
 import {
   addDays,
@@ -87,8 +87,31 @@ export function YearView({ year, onYear, onOpenDay, selectedDay }: Props) {
    */
   const years = useMemo(() => epochYears(thisYear, year), [thisYear, year]);
 
+  // Track whether the year actually changed (not initial render) to gate animation.
+  const prevYear = useRef(year);
+  const yearChanged = prevYear.current !== year;
+  prevYear.current = year;
+
+  const handleWheel = useCallback(
+    (e: React.WheelEvent) => {
+      // Only cycle years when the content area isn't scrollable, or
+      // the scroll has hit the top/bottom edge. This lets the month
+      // grid scroll freely and only captures the gesture at the
+      // boundary.
+      const el = e.currentTarget.querySelector('[data-year-months]') as HTMLElement | null;
+      if (el) {
+        const atTop = el.scrollTop <= 0 && e.deltaY < 0;
+        const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1 && e.deltaY > 0;
+        if (!atTop && !atBottom) return;
+      }
+      if (Math.abs(e.deltaY) < 30) return;
+      onYear(year + (e.deltaY > 0 ? 1 : -1));
+    },
+    [year, onYear],
+  );
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col" onWheel={handleWheel}>
       <div className="flex shrink-0 items-center gap-4 border-b border-hair px-4 py-2.5">
         {/*
           A native select rather than the strip of 16 buttons this replaces. The
@@ -101,20 +124,11 @@ export function YearView({ year, onYear, onOpenDay, selectedDay }: Props) {
         */}
         <div className="flex items-center gap-1">
           <YearStep label="‹" onClick={() => onYear(year - 1)} title="Previous year" />
-          <div className="w-[132px]">
-            {/*
-              The right inset is widened here rather than in `inputClass`,
-              which every field in the app shares. Only a `<select>` has an
-              arrow drawn inside its right edge, and only this one is narrow
-              enough for its value to reach it — the others hold prose across
-              a full column. Widening the shared inset would push text off
-              centre in a dozen text fields to buy clearance in one.
-            */}
-            <select
+          <select
               value={year}
               onChange={(e) => onYear(Number(e.target.value))}
               aria-label="Year"
-              className={`${inputClass} pr-7 tabular-nums`}
+              className={`${inputClass} w-auto cursor-pointer appearance-none tabular-nums`}
             >
               {years.map((y) => (
                 <option key={y} value={y}>
@@ -122,15 +136,18 @@ export function YearView({ year, onYear, onOpenDay, selectedDay }: Props) {
                 </option>
               ))}
             </select>
-          </div>
           <YearStep label="›" onClick={() => onYear(year + 1)} title="Next year" />
         </div>
 
         <span className="label">{total} ENTRIES</span>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-x-5 gap-y-6">
+      <div data-year-months className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <div
+          key={year}
+          className="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-x-5 gap-y-6"
+          style={yearChanged ? { animation: 'yearFade 200ms ease-out' } : undefined}
+        >
           {Array.from({ length: 12 }, (_, m) => (
             <MonthGrid
               key={m}
