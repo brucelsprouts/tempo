@@ -157,5 +157,4 @@ lifted out on its own.
 
 ## License
 
-Not licensed yet — no `LICENSE` file, which by default means all rights
-reserved. Read it, learn from it; ask before reusing it.
+[MIT](LICENSE).
