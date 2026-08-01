@@ -6,11 +6,11 @@ import type { EventKind, Occurrence } from './types';
 // week of Sunday 2026-07-26 … Saturday 2026-08-01
 const WEEK_START = '2026-07-26';
 
-/** ROW_H 146 − DAY_HEADER_H 30 − OVERFLOW_H 13. Mirrors `constants.ts`. */
-const BUDGET = 103;
+/** ROW_H 190 − DAY_HEADER_H 34 − OVERFLOW_H 15. Mirrors `constants.ts`. */
+const BUDGET = 141;
 /** The other two figures the grid is drawn from. Also `constants.ts`. */
-const ROW_H = 146;
-const DAY_HEADER_H = 30;
+const ROW_H = 190;
+const DAY_HEADER_H = 34;
 
 function occ(key: string, date: string, endDate = date): Occurrence {
   return {
@@ -83,8 +83,8 @@ describe('week layout', () => {
     const many = Array.from({ length: 6 }, (_, i) => occ(`e${i}`, '2026-07-29'));
     const { segments, overflow, laneCount } = layoutWeek(WEEK_START, many, BUDGET);
 
-    // 21px events at a 3px gap: lanes start at 0, 24, 48, 72, 96. The fifth
-    // would end at 117, past 103, so four are drawn and two roll up.
+    // 28px events at a 4px gap: lanes start at 0, 32, 64, 96, 128. The fifth
+    // would end at 156, past 141, so four are drawn and two roll up.
     expect(laneCount).toBe(4);
     expect(segments.filter((s) => s.hidden)).toHaveLength(2);
     expect(overflow[3]).toBe(2); // Wednesday column
@@ -104,7 +104,8 @@ describe('week layout', () => {
     // The header offset is added once, by `WeekRow`, when it positions the bar
     // overlay — and the lasso's hit test adds it again for the same reason. If
     // it is ever "fixed" here as well it would be counted twice against the
-    // budget and every bar would be selectable 30px below where it is drawn.
+    // budget and every bar would be selectable a header's height below where it
+    // is drawn.
     const [seg] = layoutWeek(WEEK_START, [occ('a', '2026-07-28')], BUDGET).segments;
     expect(seg.lane).toBe(0);
     expect(seg.top).toBe(0);
@@ -128,25 +129,25 @@ describe('variable bar heights', () => {
 
   const drawn = (segs: { hidden: boolean }[]) => segs.filter((s) => !s.hidden).length;
 
-  it('fits four events — 0, 24, 48, 72, last bottom at 93', () => {
+  it('fits four events — 0, 32, 64, 96, last bottom at 124', () => {
     const { segments, laneTops } = layoutWeek(
       WEEK_START,
       Array.from({ length: 4 }, (_, i) => kinded(`e${i}`, 'event')),
       BUDGET,
     );
-    expect(laneTops.slice(0, 4)).toEqual([0, 24, 48, 72]);
-    expect(72 + KIND_HEIGHT.event).toBe(93);
+    expect(laneTops.slice(0, 4)).toEqual([0, 32, 64, 96]);
+    expect(96 + KIND_HEIGHT.event).toBe(124);
     expect(drawn(segments)).toBe(4);
   });
 
-  it('fits three tasks — 0, 35, 70, last bottom at 102', () => {
+  it('fits three tasks — 0, 46, 92, last bottom at 134', () => {
     const { segments, laneTops } = layoutWeek(
       WEEK_START,
       Array.from({ length: 3 }, (_, i) => kinded(`t${i}`, 'assignment')),
       BUDGET,
     );
-    expect(laneTops.slice(0, 3)).toEqual([0, 35, 70]);
-    expect(70 + KIND_HEIGHT.assignment).toBe(102);
+    expect(laneTops.slice(0, 3)).toEqual([0, 46, 92]);
+    expect(92 + KIND_HEIGHT.assignment).toBe(134);
     expect(drawn(segments)).toBe(3);
   });
 
@@ -161,8 +162,11 @@ describe('variable bar heights', () => {
       ],
       BUDGET,
     );
-    // 32, 32, 21 → lanes at 0, 35, 70; the fourth starts at 94 and would end
-    // at 115. This is the density cost of ranking kinds by height.
+    // Four bars on one day is 28 + 28 + 42 + 42 of bar and three 4px gaps, so
+    // the last lane ends at 152 whichever order they were assigned in — past
+    // 141, and the third ends at 106, so three draw and one counts. This is
+    // the density cost of ranking kinds by height, and it is unchanged: at the
+    // old figures the same four ended at 115 against a 103px budget.
     expect(drawn(segments)).toBe(3);
     expect(segments.filter((s) => s.hidden)).toHaveLength(1);
     expect(overflow[3]).toBe(1);
@@ -208,7 +212,7 @@ describe('variable bar heights', () => {
     expect(laneHeights[task.lane]).toBe(KIND_HEIGHT.assignment);
 
     // The mark packs in beside the event, and their shared lane keeps the
-    // taller one's height — a 14px bar must not shrink the lane under a 21px
+    // taller one's height — a 20px bar must not shrink the lane under a 28px
     // one, or the bar above would overlap it.
     expect(mark.lane).toBe(other.lane);
     expect(laneHeights[other.lane]).toBe(KIND_HEIGHT.event);
@@ -244,8 +248,8 @@ describe('lasso hit-testing', () => {
   /** Content-space y, `offset` px into the given row. */
   const at = (week: number, offset: number) => week * ROW_H + offset;
 
-  // Lanes of 21px events sit at 0 and 24, so in row coordinates the first two
-  // bars occupy [30, 51] and [54, 75].
+  // Lanes of 28px events sit at 0 and 32, so in row coordinates the first two
+  // bars occupy [34, 62] and [66, 94].
   const LANE_0 = DAY_HEADER_H + 5;
   const LANE_1 = DAY_HEADER_H + KIND_HEIGHT.event + LANE_GAP + 5;
 

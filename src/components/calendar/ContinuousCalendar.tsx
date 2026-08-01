@@ -48,7 +48,6 @@ import { Button } from './ui';
 import {
   DAY_HEADER_H,
   DEFAULT_CATEGORY_COLOR,
-  GRID_PAD_R,
   GUTTER_W,
   LANE_BUDGET,
   MONTHS_LONG,
@@ -731,14 +730,12 @@ export function ContinuousCalendar({
 
       <div className="flex shrink-0 border-b border-hairlit bg-panel">
         <div className="shrink-0" style={{ width: GUTTER_W }} />
-        {/* Same right margin the week rows carry, and for the same reason:
-            `colWidth` is this element's `contentRect` divided by seven, so it
-            has to shrink exactly as far as the columns it is measuring. */}
-        <div
-          ref={gridRef}
-          className="grid flex-1 grid-cols-7"
-          style={{ marginRight: GRID_PAD_R }}
-        >
+        {/* Exactly as wide as the week rows' column box, which is what makes
+            `colWidth` — this element's `contentRect` divided by seven — the
+            same number the bars are laid out in percentages of. Neither box
+            carries a margin now; the clearance on the Saturday edge is the
+            bars' own side inset. */}
+        <div ref={gridRef} className="grid flex-1 grid-cols-7">
           {WEEKDAYS.map((d, i) => (
             <div
               key={d}

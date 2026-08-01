@@ -23,16 +23,23 @@ export const WEEKS_AFTER = 100 * 52;
 export const WEEK_COUNT = WEEKS_BEFORE + WEEKS_AFTER;
 
 /**
- * 146, up from 132.
+ * 190, up from 146.
  *
- * Bars are no longer a uniform 21px — see `KIND_HEIGHT` in `layout.ts` — so the
- * row has to hold a taller stack to keep drawing four of them. It stays a
- * compile-time constant, which is the invariant the whole scroll architecture
- * rests on: `TOTAL_H` is known before first paint, jumping to a date is
- * arithmetic rather than a measured scroll, and the entry modal's cut scrim can
- * locate a week row without finding it in the DOM.
+ * A 21px bar carrying an 11px title was readable when you looked straight at it
+ * and invisible when you were scanning, which is the whole of "things get lost
+ * and I feel a little blind". Every bar in `KIND_HEIGHT` grew about 35% and the
+ * row grew 30% to hold the same stack, so the density is *held* rather than
+ * improved — four events still fit, three tasks still fit — and what changed is
+ * that the bars you can see are legible at a glance. It costs about one row per
+ * screen: roughly five in a 720px window where six used to fit.
+ *
+ * It stays a compile-time constant, which is the invariant the whole scroll
+ * architecture rests on: `TOTAL_H` is known before first paint, jumping to a
+ * date is arithmetic rather than a measured scroll, the lasso's hit test
+ * divides by it, and the entry modal's cut scrim can locate a week row without
+ * finding it in the DOM.
  */
-export const ROW_H = 146;
+export const ROW_H = 190;
 
 /**
  * Known statically, because every row is the same height. The scroll container
@@ -44,44 +51,37 @@ export const ROW_H = 146;
 export const TOTAL_H = WEEK_COUNT * ROW_H;
 export const TODAY_OFFSET = WEEKS_BEFORE * ROW_H;
 /**
- * 30 rather than 26. At 26 the day number sat hard against the cell's top
- * hairline, which reads as a clipping artefact rather than as a header — the
- * one number every cell always shows was the worst-set text on screen.
+ * 34 rather than 30. The day number went to 12px and the strip was still sized
+ * for the 11px it used to be, so the one number every cell always shows was
+ * again sitting closer to its hairline than anything else on screen.
  *
- * The extra 4px is taken from the row's unused slack: nothing has ever been
- * drawn below the last lane. All four lanes still fit, 4px lower.
+ * It also has to keep pace with the bars below it. A header that stayed at 30
+ * under a 28px event would read as the smaller of the two things in the cell,
+ * and the number is what you navigate by.
  */
-export const DAY_HEADER_H = 30;
-/** Room for the "+N" chip at the foot of a cell. */
-export const OVERFLOW_H = 13;
+export const DAY_HEADER_H = 34;
+/**
+ * Room for the "+N" chip at the foot of a cell: 10px of text sitting 4px off
+ * the bottom edge, with a pixel of slack. At 13 the chip's own box was flush
+ * with the last lane's budget line.
+ */
+export const OVERFLOW_H = 15;
 
 /**
  * What a row will spend on bars, in pixels rather than in lanes.
  *
- * Four events still fit: lanes at 0, 24, 48, 72, last bottom at 93. Three tasks
- * fit: 0, 35, 70, last bottom at 102. A day with two tasks and two events draws
- * three and a "+1" — the fourth lane would start at 94 and end at 115. That day
- * stays fully readable in the day modal's task pane, and the "+1" chip is the
- * link to it.
+ * Four events still fit: lanes at 0, 32, 64, 96, last bottom at 124. Three
+ * tasks fit: 0, 46, 92, last bottom at 134. A day with two tasks and two events
+ * still draws three and a "+1" — the fourth lane would end at 152. Those are
+ * the same three cases the old 103px budget was chosen against and they resolve
+ * the same way: the row and everything in it grew together, so the week that
+ * overflowed before overflows now. Trading lanes away for size would have been
+ * a different decision. That day stays fully readable in the day modal's task
+ * pane, and the "+1" chip is the link to it.
  */
 export const LANE_BUDGET = ROW_H - DAY_HEADER_H - OVERFLOW_H;
 
 export const GUTTER_W = 58;
-
-/**
- * A gutter on the right edge of the grid, so the Saturday column stops butting
- * the window. Scrollbars are hidden, so without it there is no margin at all on
- * that side and the last bar's resize handle lives in the final six pixels of
- * the screen.
- *
- * Applied as a **margin** on the two boxes that have to stay the same width —
- * the weekday header's column grid and each week row's column box — never as
- * padding. `colWidth` is measured from the header grid's own `contentRect` and
- * bars are positioned in percentages of the row's column box; padding would
- * shrink the inside of one box and not the other, putting every bar 8px out of
- * step with the column it belongs to. A margin shrinks both identically.
- */
-export const GRID_PAD_R = 8;
 
 /**
  * The epoch expressed in years, and the one place that answers "which years

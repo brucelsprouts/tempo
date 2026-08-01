@@ -16,7 +16,7 @@ import {
 import { DAYS_PER_WEEK, KIND_HEIGHT, LANE_GAP, type WeekLayout } from '@/lib/tempo/layout';
 import type { Occurrence } from '@/lib/tempo/types';
 import { EventBar } from './EventBar';
-import { DAY_HEADER_H, GRID_PAD_R, GUTTER_W, LANE_BUDGET, MONTHS, ROW_H } from './constants';
+import { DAY_HEADER_H, GUTTER_W, LANE_BUDGET, MONTHS, ROW_H } from './constants';
 
 interface Props {
   layout: WeekLayout;
@@ -211,13 +211,12 @@ function WeekRowImpl({
         )}
       </div>
 
-      {/* The right gutter is a margin on this box and not padding on the row,
-          so the columns, the bars laid out in percentages of them, and the
-          `colWidth` measured off the header grid all keep describing the same
-          width. The `border-b` stays on the row outside it, so the hairline
-          still runs edge to edge and the gutter reads as a margin rather than
-          as a gap in the rule. */}
-      <div className="relative flex-1" style={{ marginRight: GRID_PAD_R }}>
+      {/* The columns run to the window's edge. Holding the Saturday column off
+          it was a grid-wide right margin for one section; the bars inset
+          themselves 4px per side now, which buys the same clearance in every
+          column instead of in one, and keeps this box exactly as wide as the
+          header grid `colWidth` is measured from. */}
+      <div className="relative flex-1">
         <div className="grid h-full grid-cols-7">
           {days.map((date, i) => (
             <DayCell
@@ -275,11 +274,14 @@ function WeekRowImpl({
                 style={{
                   position: 'absolute',
                   left: `${(draft.startCol / DAYS_PER_WEEK) * 100}%`,
-                  width: `calc(${((draft.endCol - draft.startCol + 1) / DAYS_PER_WEEK) * 100}% - 3px)`,
+                  // The same 4px-per-side inset a real bar takes. Mid-move this
+                  // band is drawn under the bar it is previewing, so any
+                  // disagreement here shows up as a rim of the wrong footprint.
+                  width: `calc(${((draft.endCol - draft.startCol + 1) / DAYS_PER_WEEK) * 100}% - 8px)`,
                   top: draft.top,
                   height: draft.height,
                 }}
-                className="ml-[2px] border border-dashed border-mute bg-raised/40"
+                className="ml-[4px] border border-dashed border-mute bg-raised/40"
               />
             )}
           </div>

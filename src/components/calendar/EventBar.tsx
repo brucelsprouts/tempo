@@ -89,7 +89,12 @@ export function EventBar({
       style={{
         position: 'absolute',
         left: pct(left),
-        width: `calc(${pct(span)} - 3px)`,
+        // 8px off the span against 4px of `ml`, so the bar is inset the same
+        // distance from both edges of the columns it covers. This is the whole
+        // of the right-hand gutter now: the grid-wide margin that used to hold
+        // the Saturday column off the window is gone, and every column is
+        // padded instead of one being special.
+        width: `calc(${pct(span)} - 8px)`,
         // Both handed down by `layoutWeek`. Derived here, the bar would have to
         // know the height of every kind above it in the row to place itself.
         top: segment.top,
@@ -106,8 +111,8 @@ export function EventBar({
         // The bars sit in a pointer-events-none overlay so empty day space falls
         // through to the cell underneath; each bar opts itself back in.
         'pointer-events-auto',
-        'group ml-[2px] flex items-center gap-1 overflow-hidden bg-raised pr-1',
-        tick ? 'text-[10px]' : 'text-[11px]',
+        'group ml-[4px] flex items-center gap-1 overflow-hidden bg-raised pr-1',
+        tick ? 'text-[11px]' : 'text-[12px]',
         'border-y border-r border-hair transition-colors',
         continuesBefore ? 'border-l border-l-hairlit pl-1' : 'pl-1.5',
         occ.readOnly ? 'cursor-default opacity-70' : 'cursor-grab hover:border-hairlit hover:bg-sunken',
@@ -154,7 +159,7 @@ export function EventBar({
             {/* The second line is what the extra height was spent on: status and
                 when it is due, which are the two things you check without
                 opening anything. */}
-            <div className="flex items-center gap-1 text-[10px] leading-tight text-mute">
+            <div className="flex items-center gap-1 text-[11px] leading-tight text-mute">
               {glyph && <span className="shrink-0">{glyph}</span>}
               <span className="truncate tabular-nums">{time ?? `DUE ${occ.endDate.slice(5)}`}</span>
             </div>
@@ -204,7 +209,7 @@ export function DragGhost({ occ, color }: { occ: Occurrence; color: string }) {
   return (
     <div
       style={{ borderLeft: `2px solid ${color}`, height: KIND_HEIGHT[occ.kind] }}
-      className="flex items-center gap-1.5 border-y border-r border-hairlit bg-raised px-1.5 text-[11px] text-ink shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+      className="flex items-center gap-1.5 border-y border-r border-hairlit bg-raised px-1.5 text-[12px] text-ink shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
     >
       <span className="truncate">{occ.title}</span>
     </div>

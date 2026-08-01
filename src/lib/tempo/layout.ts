@@ -27,15 +27,21 @@ export const DAYS_PER_WEEK = 7;
  * A mark is a tick because a mark is a moment rather than a span: there is no
  * duration to draw and no second line to write. A birthday gets the extra room
  * its derived age needs; a task gets two lines, title and status.
+ *
+ * Every figure here is about 35% larger than it was, which leaves the ordering
+ * — and therefore the meaning — untouched while raising the floor. The smallest
+ * bar was 14px and a 14px bar is something you find by looking for it; the
+ * complaint that prompted this was that entries got lost while scanning, and
+ * the ratios were never what was wrong.
  */
 export const KIND_HEIGHT: Record<EventKind, number> = {
-  milestone: 14,
-  event: 21,
-  birthday: 27,
-  assignment: 32,
+  milestone: 20,
+  event: 28,
+  birthday: 34,
+  assignment: 42,
 };
 
-export const LANE_GAP = 3;
+export const LANE_GAP = 4;
 
 export interface WeekSegment {
   occurrence: Occurrence;
@@ -73,8 +79,13 @@ export interface WeekLayout {
  * Default pixel budget for the lane area, in case a caller doesn't state one.
  * `constants.ts` derives the real figure from `ROW_H` and passes it in, the way
  * it used to pass `maxLanes`.
+ *
+ * Kept equal to that figure by hand rather than imported: `constants.ts` is a
+ * component-layer module and this one is not, so the dependency would run the
+ * wrong way. A default that disagreed with the grid would only ever be seen by
+ * a test that forgot to pass a budget, which is the worst place to hide it.
  */
-export const DEFAULT_LANE_BUDGET = 103;
+export const DEFAULT_LANE_BUDGET = 141;
 
 export function weekDays(weekStart: CivilDate): CivilDate[] {
   return Array.from({ length: DAYS_PER_WEEK }, (_, i) => addDays(weekStart, i));
@@ -156,8 +167,8 @@ export function layoutWeek(
   let laneCount = 0;
 
   for (const a of assigned) {
-    // Cut on the lane's full extent, not the bar's. A 21px event sharing a lane
-    // with a 32px task would otherwise be drawn in a row that has already run
+    // Cut on the lane's full extent, not the bar's. A 28px event sharing a lane
+    // with a 42px task would otherwise be drawn in a row that has already run
     // out of budget, overlapping the "+N" chip below it.
     const hidden = laneTops[a.lane] + laneHeights[a.lane] > budget;
     if (hidden) {
@@ -170,7 +181,7 @@ export function layoutWeek(
       ...a,
       hidden,
       top: laneTops[a.lane],
-      // Its own height, not its lane's: an event beside a task stays 21px and
+      // Its own height, not its lane's: an event beside a task stays 28px and
       // top-aligns, rather than being stretched to look like something it isn't.
       height: KIND_HEIGHT[a.occurrence.kind],
     });
