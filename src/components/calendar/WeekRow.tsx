@@ -16,7 +16,24 @@ import {
 import { DAYS_PER_WEEK, KIND_HEIGHT, LANE_GAP, type WeekLayout } from '@/lib/tempo/layout';
 import type { Occurrence } from '@/lib/tempo/types';
 import { EventBar } from './EventBar';
-import { DAY_HEADER_H, GUTTER_W, LANE_BUDGET, MONTHS, ROW_H } from './constants';
+import { DAY_HEADER_H, GUTTER_W, LANE_BUDGET, MONTHS, ROW_H, UNTITLED } from './constants';
+
+/**
+ * A footprint in a row that no entry occupies yet.
+ *
+ * `label` is what separates the two things this draws, and they are genuinely
+ * different claims. Unlabelled is a move in flight — an entry that already
+ * exists somewhere else, previewing where it would land — so it is dashed and
+ * empty, because the thing itself is still under the cursor. Labelled is the
+ * entry form's draft, which exists nowhere else at all: the form is the only
+ * copy, so the band has to *be* it, drawn like a real bar and reading what the
+ * title field reads.
+ */
+export interface GhostBand {
+  start: CivilDate;
+  end: CivilDate;
+  label?: string;
+}
 
 interface Props {
   layout: WeekLayout;
@@ -25,13 +42,13 @@ interface Props {
   today: CivilDate;
   colorFor: (categoryId: string | null) => string;
   /**
-   * Footprints about to exist in this row, dashed. Two callers: the entry form's
-   * draft, which is always one, and a move in flight, which is one per entry
-   * being carried — dragging a lit bar moves the whole selection, and a preview
-   * that drew only the grabbed one made the other three look like they had been
-   * left behind.
+   * Footprints about to exist in this row. Two callers: the entry form's draft,
+   * which is always one, and a move in flight, which is one per entry being
+   * carried — dragging a lit bar moves the whole selection, and a preview that
+   * drew only the grabbed one made the other three look like they had been left
+   * behind.
    */
-  ghost: readonly { start: CivilDate; end: CivilDate }[];
+  ghost: readonly GhostBand[];
   /** Occurrence keys drawn with a lit outline. */
   selection: ReadonlySet<string>;
   onOpen: (occ: Occurrence) => void;
@@ -182,6 +199,11 @@ function WeekRowImpl({
       laneCount === 0 ? 0 : (laneTops[laneCount - 1] ?? 0) + (laneHeights[laneCount - 1] ?? 0) + LANE_GAP;
 
     return touching.map((g, i) => ({
+      label: g.label,
+      // A draft that starts before this row is continued *into* it, and the bar
+      // it is standing in for would say so with a ‹. Its title belongs on the
+      // row the entry begins in, not repeated on every row it crosses.
+      clipped: g.start < weekStart,
       startCol: diffDays(maxDate(g.start, weekStart), weekStart),
       endCol: diffDays(minDate(g.end, weekEnd), weekStart),
       // Stacked below one another, then clamped rather than allowed to run past
@@ -273,23 +295,44 @@ function WeekRowImpl({
                 />
               ))}
 
-            {drafts.map((draft, i) => (
-              <div
-                key={i}
-                aria-hidden
-                style={{
-                  position: 'absolute',
-                  left: `${(draft.startCol / DAYS_PER_WEEK) * 100}%`,
-                  // The same 4px-per-side inset a real bar takes. Mid-move this
-                  // band is drawn under the bar it is previewing, so any
-                  // disagreement here shows up as a rim of the wrong footprint.
-                  width: `calc(${((draft.endCol - draft.startCol + 1) / DAYS_PER_WEEK) * 100}% - 8px)`,
-                  top: draft.top,
-                  height: draft.height,
-                }}
-                className="ml-[4px] border border-dashed border-mute bg-raised/40"
-              />
-            ))}
+            {drafts.map((draft, i) => {
+              const written = draft.label !== undefined;
+              return (
+                <div
+                  key={i}
+                  aria-hidden
+                  style={{
+                    position: 'absolute',
+                    left: `${(draft.startCol / DAYS_PER_WEEK) * 100}%`,
+                    // The same 4px-per-side inset a real bar takes. Mid-move this
+                    // band is drawn under the bar it is previewing, so any
+                    // disagreement here shows up as a rim of the wrong footprint.
+                    width: `calc(${((draft.endCol - draft.startCol + 1) / DAYS_PER_WEEK) * 100}% - 8px)`,
+                    top: draft.top,
+                    height: draft.height,
+                    // The lit outline a selected bar wears. A draft is the one
+                    // thing on the grid you are currently acting on, which is
+                    // what that outline has always meant.
+                    outline: written ? '1px solid var(--color-hairlit)' : undefined,
+                  }}
+                  className={
+                    written
+                      ? 'ml-[4px] flex items-center overflow-hidden border-y border-r border-hair border-l-2 border-l-dim bg-raised pl-1.5 pr-1 text-[12px]'
+                      : 'ml-[4px] border border-dashed border-mute bg-raised/40'
+                  }
+                >
+                  {written && !draft.clipped && (
+                    // Empty until a title is typed, and saying so in the colour
+                    // the rest of the app uses for absent text — the same name
+                    // the entry will be filed under if you click away now, so
+                    // committing an untitled draft renames nothing.
+                    <span className={`truncate ${draft.label ? 'text-ink' : 'text-mute'}`}>
+                      {draft.label || UNTITLED}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

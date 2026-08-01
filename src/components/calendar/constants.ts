@@ -126,6 +126,17 @@ function yearsFrom(first: number, last: number, include?: number): number[] {
   return [...years, include].sort((a, b) => a - b);
 }
 
+/**
+ * What an entry saved without a title is called.
+ *
+ * Shared rather than written twice, because it is shown before it is stored:
+ * the draft bar on the grid says it in `text-mute` while the title field is
+ * still empty, and the form commits it verbatim if you click away without
+ * filling one in. Two spellings would mean the placeholder renamed itself the
+ * moment it became real.
+ */
+export const UNTITLED = 'UNTITLED';
+
 export const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'] as const;
 
 export const MONTHS = [

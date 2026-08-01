@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useImperativeHandle, useMemo, useState, type Ref } from 'react';
 import { useCalendar, type EventDraft } from '@/lib/store/calendar-store';
 import { civil, parts, todayIn, yearsBetween, type CivilDate } from '@/lib/tempo/civil';
 import {
@@ -10,8 +10,10 @@ import {
 } from '@/lib/tempo/derive';
 import type { EventKind, Frequency, Occurrence, Recurrence } from '@/lib/tempo/types';
 import type { EntrySeed } from './CalendarShell';
+import { UNTITLED } from './constants';
 import { DatePicker } from './DatePicker';
-import { TimePicker } from './TimePicker';
+import { WhenField } from './WhenField';
+import { LAST_MINUTE, normalizeWhen, type WhenValue } from './when';
 import { Button, Field, inputClass, SegmentedControl } from './ui';
 
 /**
@@ -24,6 +26,28 @@ import { Button, Field, inputClass, SegmentedControl } from './ui';
  * ways to dismiss it three inches apart.
  */
 
+/**
+ * What the shell can ask a live form to do.
+ *
+ * One method, and it exists because the two halves of "click off and it saves"
+ * live in different components: the backdrop belongs to the modal, the draft
+ * belongs to the form. The shell mediates. Same shape as `CalendarHandle` for
+ * the same reason — an imperative verb that only the parent's event handlers
+ * need is cheaper than lifting the entire form state to reach it.
+ */
+export interface EntryFormHandle {
+  /** Save what is in the fields and close, exactly as submitting would. */
+  commit: () => void;
+}
+
+/** The live shape of a draft, as the calendar behind needs to draw it. */
+export interface DraftPreview {
+  start: CivilDate;
+  end: CivilDate;
+  /** Empty until one is typed; the bar shows the placeholder in its place. */
+  title: string;
+}
+
 interface Props {
   mode: 'new' | 'edit';
   /** `new` only: what the entry is pre-filled with. */
@@ -32,11 +56,13 @@ interface Props {
   occurrence?: Occurrence;
   onClose: () => void;
   /**
-   * `new` only. Drives the ghost bar on the calendar behind — with the form at
+   * `new` only. Drives the draft bar on the calendar behind — with the form at
    * the centre of the screen rather than under the cursor, this is the only
-   * thing that says where the entry is going to land.
+   * thing that says where the entry is going to land, and what it will say when
+   * it gets there.
    */
-  onDraftDatesChange?: (start: CivilDate, end: CivilDate) => void;
+  onDraftChange?: (draft: DraftPreview) => void;
+  ref?: Ref<EntryFormHandle>;
 }
 
 const KINDS = [
@@ -62,10 +88,7 @@ const TEMPLATES = [
   { value: 'yearTagged', label: 'YEAR', template: TEMPLATE_PRESETS.yearTagged },
 ] as const;
 
-/** The last minute a day holds, and the ceiling on a nudged end time. */
-const LAST_MINUTE = 23 * 60 + 59;
-
-export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange }: Props) {
+export function EventForm({ mode, seed, occurrence, onClose, onDraftChange, ref }: Props) {
   const timezone = useCalendar((s) => s.timezone);
   const categories = useCalendar((s) => s.categories);
   const createEvent = useCalendar((s) => s.createEvent);
@@ -79,24 +102,35 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
 
   const [title, setTitle] = useState(existing?.title ?? '');
   const [kind, setKind] = useState<EventKind>(existing?.kind ?? 'event');
-  // Starting from an hour row states a time, so the form opens timed rather
-  // than making you undo an all-day default you never asked for.
-  const [allDay, setAllDay] = useState(existing?.allDay ?? seed?.startMinutes == null);
-  const [startDate, setStartDate] = useState<CivilDate>(
-    existing?.startDate ?? occurrence?.date ?? from,
-  );
-  const [endDate, setEndDate] = useState<CivilDate>(
-    existing?.endDate ?? occurrence?.endDate ?? seed?.end ?? from,
-  );
-  // Minutes from midnight, all the way through. It is what the store, the
-  // expander and the bars already speak, so the form no longer parses a string
-  // back into the number it was handed.
+  /**
+   * When it happens — five values that were five `useState`s.
+   *
+   * They were never independent: three of the four `onChange` handlers existed
+   * only to stop one of them contradicting another, and `commit` held a fourth
+   * copy of the same rule. `normalizeWhen` is that rule, once, and `WhenField`
+   * is allowed to hand back any combination its controls can produce.
+   *
+   * Minutes from midnight, all the way through. It is what the store, the
+   * expander and the bars already speak, so the form no longer parses a string
+   * back into the number it was handed.
+   */
   const seedStart = occurrence?.startMinutes ?? seed?.startMinutes ?? null;
-  const [startMinutes, setStartMinutes] = useState(seedStart ?? 9 * 60);
-  const [endMinutes, setEndMinutes] = useState(
-    occurrence?.endMinutes ??
-      (seedStart != null ? Math.min(LAST_MINUTE, seedStart + 60) : 10 * 60),
+  const [when, setWhen] = useState<WhenValue>(() =>
+    normalizeWhen({
+      startDate: existing?.startDate ?? occurrence?.date ?? from,
+      endDate: existing?.endDate ?? occurrence?.endDate ?? seed?.end ?? from,
+      // Starting from an hour row states a time, so the form opens timed rather
+      // than making you undo an all-day default you never asked for.
+      allDay: existing?.allDay ?? seed?.startMinutes == null,
+      startMinutes: seedStart ?? 9 * 60,
+      endMinutes:
+        occurrence?.endMinutes ??
+        (seedStart != null ? Math.min(LAST_MINUTE, seedStart + 60) : 10 * 60),
+    }),
   );
+  // The times are not pulled out: nothing outside `WhenField` reads them any more.
+  const { startDate, endDate, allDay } = when;
+
   const [categoryId, setCategoryId] = useState<string | null>(existing?.categoryId ?? null);
   const [freq, setFreq] = useState<'NONE' | Frequency>(existing?.recurrence?.freq ?? 'NONE');
   const [templateKey, setTemplateKey] = useState<string>(
@@ -118,22 +152,13 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
   const recurs = effectiveFreq !== 'NONE';
   const needsAnchor = templateNeedsAnchor(effectiveTemplate);
 
-  /**
-   * Whether the end time is on the same day as the start, and therefore whether
-   * it has to come after it. An entry running Friday 22:00 → Saturday 02:00 is
-   * ordinary, so the floor cannot simply be "always the start time".
-   *
-   * `<=` rather than `===` because `save` normalises an inverted range down to
-   * a single day; a form showing an end date before its start is already
-   * describing one day, whatever the two fields say.
-   */
-  const sameDay = endDate <= startDate;
-
-  // Reported on every change, including the first render, so the ghost appears
-  // with the form rather than only once a date is touched.
+  // Reported on every change, including the first render, so the bar appears
+  // with the form rather than only once a field is touched. The title rides
+  // along, which is what makes it fill in under the cursor as you type. No
+  // clamping on the way out any more — `when` cannot hold a backwards range.
   useEffect(() => {
-    onDraftDatesChange?.(startDate, endDate < startDate ? startDate : endDate);
-  }, [startDate, endDate, onDraftDatesChange]);
+    onDraftChange?.({ start: startDate, end: endDate, title });
+  }, [startDate, endDate, title, onDraftChange]);
 
   /** What the title will actually read as, this year. */
   const preview = useMemo(() => {
@@ -164,25 +189,40 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
     };
   }
 
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    if (!title.trim()) return;
+  /**
+   * Save and close, whatever asked.
+   *
+   * Not a submit handler: the form submits into it, and so does clicking away
+   * from the modal, which is a mousedown on a backdrop this component cannot
+   * see. Both mean the same thing, so both arrive here.
+   *
+   * It closes *before* awaiting the write rather than after. Every store
+   * mutation is optimistic — the entry is already on the grid by the time the
+   * request leaves, and a rejection rolls it back and raises the error banner —
+   * so holding the modal open for a round-trip buys nothing and makes clicking
+   * away feel like it didn't take.
+   */
+  function commit() {
+    // An empty title is not a reason to refuse. Clicking away from a form you
+    // filled in should not silently throw it out, and a draft with nothing in
+    // it at all is still a block of time you deliberately marked — it just gets
+    // called something until you say otherwise. Escape is how you say no.
+    const named = title.trim() || UNTITLED;
 
-    // The end picker's `min` only holds while the two dates agree, and the
-    // dates can be pulled together after the times were set — a Friday 22:00 →
-    // Saturday 02:00 entry dragged back onto one day. Normalised here, beside
-    // the inverted-date case, because this is already the place that decides
-    // what a backwards range means.
-    const end = sameDay ? Math.max(startMinutes, endMinutes) : endMinutes;
+    // A birthday is one all-day date whatever the WHEN field last held, and
+    // `normalizeWhen` is what decides that an end pulled back before its start
+    // means a single day. Both were open-coded here in four lines that had to
+    // agree with the four in the form above them.
+    const w = normalizeWhen({ ...when, allDay: isBirthday ? true : allDay });
 
     const shared = {
-      title: title.trim(),
+      title: named,
       kind,
-      allDay: isBirthday ? true : allDay,
-      startDate,
-      endDate: endDate < startDate ? startDate : endDate,
-      startMinutes: allDay ? undefined : startMinutes,
-      endMinutes: allDay ? undefined : end,
+      allDay: w.allDay,
+      startDate: w.startDate,
+      endDate: isBirthday ? w.startDate : w.endDate,
+      startMinutes: w.allDay ? undefined : w.startMinutes,
+      endMinutes: w.allDay ? undefined : w.endMinutes,
       categoryId,
       recurrence: buildRecurrence(),
       anchorDate: effectiveTemplate ? effectiveAnchor : null,
@@ -194,16 +234,24 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
       notes: notes.trim() || null,
     } satisfies EventDraft;
 
-    if (mode === 'new') {
-      await createEvent(shared);
-    } else if (occurrence) {
-      await updateEventFromDraft(occurrence.eventId, shared);
-    }
     onClose();
+    if (mode === 'new') {
+      void createEvent(shared);
+    } else if (occurrence) {
+      void updateEventFromDraft(occurrence.eventId, shared);
+    }
   }
 
+  useImperativeHandle(ref, () => ({ commit }));
+
   return (
-    <form onSubmit={save} className="flex h-full flex-col">
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        commit();
+      }}
+      className="flex h-full flex-col"
+    >
       {/* Two columns, and fields that want the width say so. Enter submits from
           anywhere by virtue of being a real form with a real submit button —
           the notes field is the one exception, handled at the textarea. */}
@@ -212,6 +260,11 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
           <Field label="[00] TITLE">
             <input
               autoFocus
+              // Both, and they are not redundant. `autoFocus` is React's, and
+              // it wins when the modal was opened from the keyboard; the
+              // attribute is what `Modal` looks for when it did not, which is
+              // every time + NEW is clicked with a mouse.
+              data-autofocus
               // Selected, not just focused: on an edit the field already holds
               // a title, and the common reason to open one is to replace it.
               onFocus={(e) => e.currentTarget.select()}
@@ -237,79 +290,36 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
               options={KINDS}
               onChange={(k) => {
                 setKind(k);
-                if (k === 'birthday') setAllDay(true);
+                if (k === 'birthday') setWhen((w) => ({ ...w, allDay: true }));
               }}
             />
           </Field>
         </div>
 
-        {!isBirthday && (
-          <Field label="[02] SPAN">
-            <SegmentedControl
-              value={allDay ? 'ALLDAY' : 'TIMED'}
-              options={[
-                { value: 'ALLDAY', label: 'ALL DAY' },
-                { value: 'TIMED', label: 'TIMED' },
-              ]}
-              onChange={(v) => setAllDay(v === 'ALLDAY')}
+        {/* A birthday has one date, no end and no time — the whole apparatus
+            would be four switched-off controls around the only field it needs,
+            so it keeps the plain picker. */}
+        {isBirthday ? (
+          <Field label="[02] BIRTH DATE">
+            <DatePicker
+              label="Birth date"
+              value={startDate}
+              timezone={timezone}
+              onChange={(d) => setWhen((w) => normalizeWhen({ ...w, startDate: d, endDate: d }))}
             />
           </Field>
+        ) : (
+          <div className="col-span-2">
+            <Field label="[02] WHEN">
+              <WhenField value={when} onChange={setWhen} timezone={timezone} />
+            </Field>
+          </div>
         )}
 
         {!isBirthday && (
           <Field label="[03] REPEATS">
             <SegmentedControl value={freq} options={FREQS} onChange={setFreq} />
           </Field>
-        )}
-
-        <Field label={isBirthday ? 'BIRTH DATE' : 'START'}>
-          <DatePicker
-            label={isBirthday ? 'Birth date' : 'Start date'}
-            value={startDate}
-            timezone={timezone}
-            onChange={(d) => {
-              setStartDate(d);
-              if (endDate < d) setEndDate(d);
-            }}
-          />
-        </Field>
-
-        {!isBirthday && (
-          <Field label="END">
-            <DatePicker
-              label="End date"
-              value={endDate}
-              min={startDate}
-              timezone={timezone}
-              onChange={setEndDate}
-            />
-          </Field>
-        )}
-
-        {!allDay && !isBirthday && (
-          <>
-            <Field label="FROM">
-              <TimePicker
-                label="Start time"
-                value={startMinutes}
-                onChange={(m) => {
-                  setStartMinutes(m);
-                  // The same push the date pair makes, for the same reason: a
-                  // start that overtakes the end leaves a range that reads
-                  // backwards, and correcting it here beats rejecting it later.
-                  if (sameDay && endMinutes < m) setEndMinutes(m);
-                }}
-              />
-            </Field>
-            <Field label="TO">
-              <TimePicker
-                label="End time"
-                value={endMinutes}
-                min={sameDay ? startMinutes : undefined}
-                onChange={setEndMinutes}
-              />
-            </Field>
-          </>
         )}
 
         {recurs && !isBirthday && (

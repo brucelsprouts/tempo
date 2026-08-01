@@ -277,6 +277,175 @@ describe('moving a selection', () => {
   });
 });
 
+/**
+ * Dropping a lasso'd selection on a day.
+ *
+ * The distinction from `moveOccurrences` is the whole point: that one shifts a
+ * group by a shared delta and preserves the spacing between entries, this one
+ * collapses them onto one date and destroys it. Both are wanted — the arrow keys
+ * mean the first, a drag onto a day means the second — so the property to hold
+ * is that each entry gets its *own* delta, computed from where it starts.
+ */
+describe('gathering a selection onto one date', () => {
+  it('puts every entry on the drop date and keeps each length', async () => {
+    const one = event({ id: 'e1', startDate: '2026-08-10', endDate: '2026-08-10' });
+    const two = event({ id: 'e2', startDate: '2026-08-12', endDate: '2026-08-14' });
+    seed([one, two]);
+
+    await useCalendar
+      .getState()
+      .gatherOccurrences(
+        [occurrenceOf(one, '2026-08-10'), occurrenceOf(two, '2026-08-12', '2026-08-14')],
+        '2026-08-20',
+        'occurrence',
+      );
+
+    const after = new Map(useCalendar.getState().events.map((e) => [e.id, e]));
+    expect(after.get('e1')!.startDate).toBe('2026-08-20');
+    expect(after.get('e1')!.endDate).toBe('2026-08-20');
+    // Three days long before, three days long after — the entry moved, it was
+    // not reshaped to fit the day it landed on.
+    expect(after.get('e2')!.startDate).toBe('2026-08-20');
+    expect(after.get('e2')!.endDate).toBe('2026-08-22');
+  });
+
+  /**
+   * The case a shared delta cannot express, and the one that prompted this.
+   *
+   * Dropping on a date the grabbed entry already sits on is a delta of zero,
+   * which `moveOccurrences` correctly refuses as a no-op. Here it is the whole
+   * request: the others still have to come to it.
+   */
+  it('accepts a drop on a date one of the entries already occupies', async () => {
+    const here = event({ id: 'e1', startDate: '2026-08-10', endDate: '2026-08-10' });
+    const there = event({ id: 'e2', startDate: '2026-08-15', endDate: '2026-08-15' });
+    seed([here, there]);
+
+    await useCalendar
+      .getState()
+      .gatherOccurrences(
+        [occurrenceOf(here, '2026-08-10'), occurrenceOf(there, '2026-08-15')],
+        '2026-08-10',
+        'occurrence',
+      );
+
+    const after = new Map(useCalendar.getState().events.map((e) => [e.id, e]));
+    expect(after.get('e1')!.startDate).toBe('2026-08-10');
+    expect(after.get('e2')!.startDate).toBe('2026-08-10');
+  });
+
+  it('excepts a recurring instance rather than dragging its series along', async () => {
+    const series = event({ id: 'e1', recurrence: { freq: 'WEEKLY' } });
+    seed([series]);
+
+    await useCalendar
+      .getState()
+      .gatherOccurrences([occurrenceOf(series, '2026-08-17')], '2026-08-20', 'occurrence');
+
+    expect(useCalendar.getState().events[0].startDate).toBe('2026-08-10');
+    const [override] = useCalendar.getState().overrides;
+    expect(override.occurrenceDate).toBe('2026-08-17');
+    expect(override.patch.startDate).toBe('2026-08-20');
+  });
+
+  it('leaves read-only instances where they are', async () => {
+    const mine = event({ id: 'e1' });
+    const theirs = event({ id: 'e2', source: 'google' });
+    seed([mine, theirs]);
+
+    await useCalendar
+      .getState()
+      .gatherOccurrences(
+        [occurrenceOf(mine, '2026-08-10'), occurrenceOf(theirs, '2026-08-10')],
+        '2026-08-20',
+        'occurrence',
+      );
+
+    const after = new Map(useCalendar.getState().events.map((e) => [e.id, e]));
+    expect(after.get('e1')!.startDate).toBe('2026-08-20');
+    expect(after.get('e2')!.startDate).toBe('2026-08-10');
+  });
+
+  /**
+   * Two instances of one series, gathered under Shift, describe one row with two
+   * destinations — genuinely contradictory, since a weekly series cannot have
+   * every instance on a single day. There is no right answer, only a predictable
+   * one: the earliest instance sets where the series lands.
+   */
+  it('resolves a series with two instances selected to a single row', async () => {
+    const e = event({ id: 'e1', recurrence: { freq: 'WEEKLY' } });
+    seed([e]);
+
+    await useCalendar
+      .getState()
+      .gatherOccurrences(
+        [occurrenceOf(e, '2026-08-17'), occurrenceOf(e, '2026-08-10')],
+        '2026-08-20',
+        'series',
+      );
+
+    expect(lastCall('upsert')!.payload).toHaveLength(1);
+    // Driven by 2026-08-10, the earlier of the two, whatever order they arrived in.
+    expect(useCalendar.getState().events[0].startDate).toBe('2026-08-20');
+  });
+
+  it('writes nothing when everything already starts there', async () => {
+    const one = event({ id: 'e1', startDate: '2026-08-10', endDate: '2026-08-10' });
+    const two = event({ id: 'e2', startDate: '2026-08-10', endDate: '2026-08-11' });
+    seed([one, two]);
+
+    await useCalendar
+      .getState()
+      .gatherOccurrences(
+        [occurrenceOf(one, '2026-08-10'), occurrenceOf(two, '2026-08-10', '2026-08-11')],
+        '2026-08-10',
+        'occurrence',
+      );
+
+    expect(recorded).toHaveLength(0);
+  });
+
+  it('keeps wall-clock time when an entry is gathered across a DST boundary', async () => {
+    // 09:00 EDT, gathered onto a date after the fall-back
+    const e = event({
+      id: 'e1',
+      allDay: false,
+      startDate: null,
+      endDate: null,
+      startsAt: '2026-10-30T13:00:00Z',
+      endsAt: '2026-10-30T14:00:00Z',
+    });
+    seed([e]);
+
+    await useCalendar
+      .getState()
+      .gatherOccurrences([occurrenceOf(e, '2026-10-30')], '2026-11-02', 'series');
+
+    expect(useCalendar.getState().events[0].startsAt).toBe('2026-11-02T14:00:00.000Z');
+  });
+
+  it('rolls the whole group back together', async () => {
+    const one = event({ id: 'e1', startDate: '2026-08-10', endDate: '2026-08-10' });
+    const two = event({ id: 'e2', startDate: '2026-08-12', endDate: '2026-08-12' });
+    seed([one, two]);
+    shouldFail = true;
+
+    await useCalendar
+      .getState()
+      .gatherOccurrences(
+        [occurrenceOf(one, '2026-08-10'), occurrenceOf(two, '2026-08-12')],
+        '2026-08-20',
+        'occurrence',
+      );
+
+    expect(useCalendar.getState().events.map((e) => e.startDate)).toEqual([
+      '2026-08-10',
+      '2026-08-12',
+    ]);
+    expect(useCalendar.getState().error).toBe('write rejected');
+  });
+});
+
 describe('deleting a selection', () => {
   it('takes the rows and their exceptions in one statement', async () => {
     seed([event({ id: 'e1' }), event({ id: 'e2' }), event({ id: 'e3' })]);

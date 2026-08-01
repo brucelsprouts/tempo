@@ -48,13 +48,44 @@ describe('parseTimeInput', () => {
     expect(parseTimeInput('25:00')).toBeNull();
   });
 
+  it('reads am and pm, in the forms people actually type them', () => {
+    expect(parseTimeInput('9am')).toBe(540);
+    expect(parseTimeInput('9 am')).toBe(540);
+    expect(parseTimeInput('9AM')).toBe(540);
+    expect(parseTimeInput('9a')).toBe(540);
+    expect(parseTimeInput('9 a.m.')).toBe(540);
+    expect(parseTimeInput('9pm')).toBe(1260);
+    expect(parseTimeInput('9:30 PM')).toBe(1290);
+    expect(parseTimeInput('930pm')).toBe(1290);
+    expect(parseTimeInput('12:15am')).toBe(15);
+  });
+
+  it('puts noon and midnight on the right side of 12', () => {
+    // The two the 12-hour clock gets wrong often enough to be worth naming.
+    expect(parseTimeInput('12am')).toBe(0);
+    expect(parseTimeInput('12pm')).toBe(720);
+    expect(parseTimeInput('midnight')).toBe(0);
+    expect(parseTimeInput('noon')).toBe(720);
+    expect(parseTimeInput('NOON')).toBe(720);
+  });
+
+  it('rejects hours a 12-hour clock does not have', () => {
+    // Not wrapped: `13pm` is a typo, and `13` on its own is right there for anyone
+    // who meant it.
+    expect(parseTimeInput('0am')).toBeNull();
+    expect(parseTimeInput('13pm')).toBeNull();
+    expect(parseTimeInput('24pm')).toBeNull();
+    expect(parseTimeInput('9:60pm')).toBeNull();
+  });
+
   it('rejects garbage', () => {
     for (const junk of [
       '',
       '   ',
       'abc',
-      '9pm',
-      '9:30 PM',
+      'am',
+      'pm',
+      'noonish',
       'nine',
       '-1',
       '-930',

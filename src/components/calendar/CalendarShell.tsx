@@ -12,12 +12,12 @@ import { parts, todayIn, type CivilDate } from '@/lib/tempo/civil';
 import type { Occurrence } from '@/lib/tempo/types';
 import { ContinuousCalendar, type CalendarHandle } from './ContinuousCalendar';
 import { DayModal } from './DayModal';
-import { EventForm } from './EventForm';
+import { EventForm, type DraftPreview, type EntryFormHandle } from './EventForm';
 import { ListView } from './ListView';
 import { Settings } from './Settings';
 import { Toast } from './Toast';
 import { YearView } from './YearView';
-import { Modal, type ScrimCutout } from './ui';
+import { Modal } from './ui';
 
 /**
  * The app chrome: one top bar, one keymap, one place that decides what a view
@@ -80,8 +80,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   const [overlays, setOverlays] = useState<Overlay[]>([]);
   const [focusedDay, setFocusedDay] = useState<CivilDate>(today);
   const [year, setYear] = useState<number | null>(null);
-  const [ghost, setGhost] = useState<{ start: CivilDate; end: CivilDate } | null>(null);
-  const [band, setBand] = useState<ScrimCutout | null>(null);
+  const [draft, setDraft] = useState<DraftPreview | null>(null);
   const [toast, setToast] = useState<{ at: number; entries: DeletedEntry[] } | null>(null);
   /** The batch stamp already shown, so a shrinking pool doesn't re-announce. */
   const announced = useRef(0);
@@ -91,17 +90,33 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
 
   const calendarRef = useRef<CalendarHandle>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  /** The live entry form, when one is open. See `dismissEntry`. */
+  const formRef = useRef<EntryFormHandle>(null);
 
   const push = (o: Overlay) => setOverlays((s) => [...s, o]);
   const pop = () => setOverlays((s) => s.slice(0, -1));
   /** Same layer, different contents — the day modal's ‹ › steppers. */
   const replaceTop = (o: Overlay) => setOverlays((s) => [...s.slice(0, -1), o]);
 
+  /**
+   * Clicking away from the entry form keeps what you typed.
+   *
+   * The two ways out of the form mean opposite things, which is the whole of
+   * this feature: clicking off is "yes, that one" and Escape is "no, forget
+   * it". Escape stays on `pop` and never comes through here. A brand-new entry
+   * with nothing typed into it still commits — under `UNTITLED`, which the
+   * draft bar has been calling it the whole time.
+   */
+  function dismissEntry() {
+    if (formRef.current) formRef.current.commit();
+    else pop();
+  }
+
   function newEntry(seed?: Partial<EntrySeed>) {
     const start = seed?.start ?? focusedDay;
     // Dropped here rather than left to the form's first report, which lands an
-    // effect later — one frame with the *previous* draft's ghost still drawn.
-    setGhost(null);
+    // effect later — one frame with the *previous* draft's bar still drawn.
+    setDraft(null);
     push({
       kind: 'entry',
       mode: 'new',
@@ -121,29 +136,31 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   }
 
   /**
-   * The ghost only exists while a *new* entry is being drafted. On an edit the
-   * real bar is already on the calendar, and a dashed copy of it beside itself
-   * would be a second answer to "where is this".
+   * The draft bar only exists while a *new* entry is being written. On an edit
+   * the real bar is already on the calendar, and a second copy of it beside
+   * itself would be a second answer to "where is this".
    *
    * Derived at render rather than cleared in an effect. An effect that nulled
-   * the state would render one frame with the stale ghost still up before
+   * the state would render one frame with the stale bar still up before
    * correcting itself, and it is a write during render's own commit for a value
    * that was never independent of `drafting` in the first place.
    */
   const drafting = top?.kind === 'entry' && top.mode === 'new';
-  const liveGhost = drafting ? ghost : null;
+  const liveDraft = drafting ? draft : null;
 
   /**
-   * Stable identity, and a no-op when the dates haven't moved.
+   * Stable identity, and a no-op when nothing the bar draws has moved.
    *
-   * The form reports its dates from an effect. Handed a fresh arrow each render
-   * it would re-run every render, and storing a fresh `{start, end}` object each
-   * time would re-render the shell — which hands down another fresh arrow. The
+   * The form reports itself from an effect. Handed a fresh arrow each render it
+   * would re-run every render, and storing a fresh object each time would
+   * re-render the shell — which hands down another fresh arrow. The
    * `useCallback` breaks the first half of that loop and returning the previous
    * object unchanged lets React bail out of the second.
    */
-  const handleDraftDates = useCallback((start: CivilDate, end: CivilDate) => {
-    setGhost((g) => (g && g.start === start && g.end === end ? g : { start, end }));
+  const handleDraftChange = useCallback((next: DraftPreview) => {
+    setDraft((d) =>
+      d && d.start === next.start && d.end === next.end && d.title === next.title ? d : next,
+    );
   }, []);
 
   /**
@@ -221,9 +238,9 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
       if (overlays.length > 0) {
         pop();
       } else if (!calendarRef.current?.unwind() && typing) {
-        // The grid's own layers sit under the stack: a pending bulk-delete
-        // confirmation, then the selection. Blurring is last because it is not
-        // a layer — in the scroll view there is nothing to be typing into.
+        // The grid's own layer sits under the stack: the selection. Blurring is
+        // last because it is not a layer — in the scroll view there is nothing
+        // to be typing into.
         target.blur();
       }
       return;
@@ -357,7 +374,24 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex shrink-0 items-center gap-3 border-b border-hair px-4 py-2">
-        <span className="text-[12px] tracking-[0.3em] text-bright">TEMPO</span>
+        <div className="flex items-center gap-2">
+          <svg viewBox="0 0 64 64" className="h-4 w-4 shrink-0" aria-hidden="true">
+            <defs>
+              <clipPath id="tile">
+                <rect width="64" height="64" rx="13" />
+              </clipPath>
+            </defs>
+            <g clipPath="url(#tile)">
+              <rect width="64" height="64" fill="#08090a" />
+              <rect width="64" height="14" fill="#2a2d33" />
+              <g fill="#ffffff">
+                <rect x="28" y="25" width="36" height="9" />
+                <rect y="42" width="36" height="9" />
+              </g>
+            </g>
+          </svg>
+          <span className="text-[12px] tracking-[0.3em] text-bright">TEMPO</span>
+        </div>
         <span className="text-hair">│</span>
 
         <nav className="flex border border-hair" aria-label="View">
@@ -407,8 +441,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
             onOpenDay={openDay}
             onNewOnDay={(date) => newEntry({ start: date })}
             selectedDay={focusedDay}
-            ghost={liveGhost}
-            onGhostBand={setBand}
+            draft={liveDraft}
           />
         )}
 
@@ -484,19 +517,21 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
               : undefined
           }
           onClose={pop}
-          cutout={view === 'scroll' ? band : null}
+          onDismiss={dismissEntry}
         >
           {top.mode === 'new' ? (
             <EventForm
               key={`new-${top.seed.start}-${top.seed.end}-${top.seed.startMinutes ?? 'allday'}`}
+              ref={formRef}
               mode="new"
               seed={top.seed}
               onClose={pop}
-              onDraftDatesChange={handleDraftDates}
+              onDraftChange={handleDraftChange}
             />
           ) : (
             <EventForm
               key={top.occurrence.key}
+              ref={formRef}
               mode="edit"
               occurrence={top.occurrence}
               onClose={pop}

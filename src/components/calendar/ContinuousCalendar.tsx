@@ -43,8 +43,8 @@ import {
 import { expandAll } from '@/lib/tempo/recurrence';
 import type { Occurrence } from '@/lib/tempo/types';
 import { DragGhost } from './EventBar';
-import { WeekRow } from './WeekRow';
-import { Button } from './ui';
+import type { DraftPreview } from './EventForm';
+import { WeekRow, type GhostBand } from './WeekRow';
 import {
   DAY_HEADER_H,
   DEFAULT_CATEGORY_COLOR,
@@ -85,7 +85,7 @@ const AUTOSCROLL_SPEED = 22;
 const NOTHING: ReadonlySet<string> = new Set();
 
 /** Same reason, for the rows: `WeekRow` is memoised on its props. */
-const EMPTY_GHOSTS: readonly { start: CivilDate; end: CivilDate }[] = [];
+const EMPTY_GHOSTS: readonly GhostBand[] = [];
 
 /**
  * The one primitive every grid gesture is built on: where the pointer is, as a
@@ -155,10 +155,9 @@ export interface CalendarHandle {
   jumpToToday: () => void;
   jumpTo: (date: CivilDate) => void;
   /**
-   * The grid's own Escape layers, innermost first: a pending bulk-delete
-   * confirmation, then the selection. Reports whether one was actually there,
-   * so the shell — which owns the unwind order — can fall through to whatever
-   * Escape means next.
+   * The grid's own Escape layer: the selection. Reports whether there was one
+   * to clear, so the shell — which owns the unwind order — can fall through to
+   * whatever Escape means next.
    */
   unwind: () => boolean;
   /** Both report whether there was a selection to act on. */
@@ -171,13 +170,12 @@ interface Props {
   onOpenDay: (date: CivilDate) => void;
   onNewOnDay: (date: CivilDate) => void;
   selectedDay: CivilDate | null;
-  /** Where a draft entry would land. Drawn dashed; never affects layout. */
-  ghost?: { start: CivilDate; end: CivilDate } | null;
   /**
-   * The viewport band the ghost occupies, so the entry modal's scrim can leave
-   * it undimmed. `null` when there is no ghost or it is scrolled out of view.
+   * The entry being written in the form, drawn where it will land and reading
+   * what it will say. A real-looking bar rather than an outline: it is the
+   * entry, a few seconds early. Never affects layout.
    */
-  onGhostBand?: (band: { top: number; bottom: number } | null) => void;
+  draft?: DraftPreview | null;
   ref?: Ref<CalendarHandle>;
 }
 
@@ -186,8 +184,7 @@ export function ContinuousCalendar({
   onOpenDay,
   onNewOnDay,
   selectedDay,
-  ghost,
-  onGhostBand,
+  draft,
   ref,
 }: Props) {
   const events = useCalendar((s) => s.events);
@@ -196,6 +193,7 @@ export function ContinuousCalendar({
   const timezone = useCalendar((s) => s.timezone);
   const moveOccurrence = useCalendar((s) => s.moveOccurrence);
   const moveOccurrences = useCalendar((s) => s.moveOccurrences);
+  const gatherOccurrences = useCalendar((s) => s.gatherOccurrences);
   const resizeOccurrence = useCalendar((s) => s.resizeOccurrence);
   const deleteEvents = useCalendar((s) => s.deleteEvents);
 
@@ -217,7 +215,6 @@ export function ContinuousCalendar({
   const [resizeTo, setResizeTo] = useState<CivilDate | null>(null);
   const [marquee, setMarquee] = useState<MarqueeRect | null>(null);
   const [selection, setSelection] = useState<ReadonlySet<string>>(NOTHING);
-  const [confirming, setConfirming] = useState<string[] | null>(null);
 
   /** Live pointer position, so the autoscroll loop can act between moves. */
   const pointer = useRef({ x: 0, y: 0 });
@@ -386,6 +383,23 @@ export function ContinuousCalendar({
     [occurrences, selection],
   );
 
+  /**
+   * Whether dragging this bar carries the whole selection with it.
+   *
+   * Dragging a lit bar gathers every lit bar; dragging an unlit one is a single
+   * move and leaves the selection alone — otherwise there would be no way to
+   * move one entry out of a group you had selected. One entry lit is not a
+   * group, so it drags as itself and keeps the grab offset a direct
+   * manipulation should have.
+   *
+   * Shared by the commit and the preview on purpose: they answered this
+   * separately before, which is exactly the sort of pair that drifts.
+   */
+  const carriesSelection = useCallback(
+    (occ: Occurrence) => selection.has(occ.key) && selected.length > 1,
+    [selection, selected],
+  );
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: GESTURE_SLOP } }),
   );
@@ -414,18 +428,29 @@ export function ContinuousCalendar({
     setDropDate(null);
     if (!occ || !dropOn || !grab) return;
 
+    const scope = seriesMode.current ? 'series' : 'occurrence';
+
+    /**
+     * A lasso'd group lands *on* the day, rather than being shifted by however
+     * far the grabbed bar travelled.
+     *
+     * "Put these here" is a different request from "push these forward three
+     * days", and the grabbed bar's own offset — all a shared delta can be
+     * computed from — belongs to neither. It is also why there is no zero-delta
+     * guard on this path: dropping on a date one of the entries already
+     * occupies is a real instruction, because the rest still have to come to it.
+     * The shared-delta shift is still available on the arrow keys.
+     */
+    if (carriesSelection(occ)) {
+      void gatherOccurrences(selected, dropOn, scope);
+      return;
+    }
+
+    // A single bar keeps the grab offset, so a five-day bar picked up by its
+    // middle slides under the cursor rather than jumping its start to the day.
     const delta = diffDays(dropOn, grab);
     if (delta === 0) return;
-
-    const scope = seriesMode.current ? 'series' : 'occurrence';
-    // Dragging one lit bar moves every lit bar by the same delta. Dragging an
-    // unlit one is a single move and leaves the selection alone — otherwise
-    // there would be no way to move one entry out of a group you had selected.
-    if (selection.has(occ.key) && selected.length > 1) {
-      void moveOccurrences(selected, delta, scope);
-    } else {
-      void moveOccurrence(occ, delta, scope);
-    }
+    void moveOccurrence(occ, delta, scope);
   }
 
   /**
@@ -437,18 +462,34 @@ export function ContinuousCalendar({
    */
   const dragGhosts = useMemo(() => {
     if (!drag || !dropDate) return null;
+
+    // The same branch `handleDragEnd` takes, off the same predicate, so what is
+    // previewed and what is written cannot disagree.
+    if (carriesSelection(drag.occ)) {
+      // Every footprint starts on the drop date and keeps its own length, which
+      // is what `gatherOccurrences` is about to write. They pile up in one
+      // column; `WeekRow` stacks and clamps them, so a large selection reads as
+      // "and more" rather than running off the row.
+      return selected.map((occ) => ({
+        start: dropDate,
+        end: addDays(dropDate, diffDays(occ.endDate, occ.date)),
+      }));
+    }
+
     const delta = diffDays(dropDate, drag.grab);
     if (delta === 0) return null;
-    // Everything the drop will actually move, which is the whole selection when
-    // the grabbed bar is part of it — the same test `handleDragEnd` applies, so
-    // what is previewed and what is written cannot disagree.
-    const carried =
-      selection.has(drag.occ.key) && selected.length > 1 ? selected : [drag.occ];
-    return carried.map((occ) => ({
-      start: addDays(occ.date, delta),
-      end: addDays(occ.endDate, delta),
-    }));
-  }, [drag, dropDate, selection, selected]);
+    return [{ start: addDays(drag.occ.date, delta), end: addDays(drag.occ.endDate, delta) }];
+  }, [drag, dropDate, selected, carriesSelection]);
+
+  /**
+   * The draft as the rows want it: a one-element list, memoised so the rows
+   * only re-render when it actually changes. Its `label` is what tells `WeekRow`
+   * to draw a solid bar rather than the dashed footprint a move preview gets.
+   */
+  const draftBand = useMemo(
+    () => (draft ? [{ start: draft.start, end: draft.end, label: draft.title }] : EMPTY_GHOSTS),
+    [draft],
+  );
 
   // ------------------------------------------------------- resize and lasso
 
@@ -608,25 +649,25 @@ export function ContinuousCalendar({
   }, []);
 
   const unwind = useCallback(() => {
-    if (confirming) {
-      setConfirming(null);
-      return true;
-    }
     if (selection.size === 0) return false;
     setSelection(NOTHING);
     return true;
-  }, [confirming, selection]);
+  }, [selection]);
 
+  /**
+   * Delete, at any size, with no question asked first.
+   *
+   * There used to be a confirmation strip for more than one entry, on the
+   * grounds that a bulk delete could not be undone. That stopped being true
+   * when the undo pool arrived: everything one delete removes shares a stamp,
+   * so a single UNDO on the toast puts all of it back, and settings keeps a
+   * RESTORE beside each entry after the toast is gone. Asking first is now the
+   * more expensive of the two — it costs a keystroke every time to insure
+   * against a mistake that already has a cheaper remedy.
+   */
   const deleteSelection = useCallback(() => {
     const ids = [...new Set(selected.map((o) => o.eventId))];
     if (ids.length === 0) return false;
-
-    // One is a mistake you can see; several is a mistake you cannot reconstruct.
-    // A move is undone by dragging back, a bulk delete by nothing at all.
-    if (ids.length > 1) {
-      setConfirming(ids);
-      return true;
-    }
     setSelection(NOTHING);
     void deleteEvents(ids);
     return true;
@@ -675,49 +716,6 @@ export function ContinuousCalendar({
     () => ({ jumpToToday, jumpTo, unwind, deleteSelection, moveSelection }),
     [jumpToToday, jumpTo, unwind, deleteSelection, moveSelection],
   );
-
-  /**
-   * Where the ghost sits on screen, in viewport pixels.
-   *
-   * Arithmetic, not measurement. Every row is exactly `ROW_H` tall, so the top
-   * of week *n* is `n * ROW_H` into the scrolled content and no row has to be
-   * found in the DOM — which matters because the rows that matter here are
-   * virtualised and the ones off screen do not exist to be measured. This is
-   * the same identity `jumpTo` and the lasso's hit test are built on.
-   *
-   * Reads the prop rather than the drag ghost beside it: this exists to keep
-   * the entry modal's scrim off a draft, and there is no modal open mid-drag.
-   *
-   * Reported through a callback and only when it actually changes: the consumer
-   * stores it in state, so echoing an equal value back every render would spin.
-   */
-  const lastBand = useRef<string>('');
-  useEffect(() => {
-    if (!onGhostBand) return;
-
-    const el = scrollRef.current;
-    let band: { top: number; bottom: number } | null = null;
-
-    if (ghost && el) {
-      const gridTop = el.getBoundingClientRect().top;
-      const firstWeek = Math.floor(diffDays(startOfWeek(ghost.start), epochStart) / 7);
-      const lastWeek = Math.floor(diffDays(startOfWeek(ghost.end), epochStart) / 7);
-      const top = gridTop + firstWeek * ROW_H - scrollOffset;
-      const bottom = gridTop + (lastWeek + 1) * ROW_H - scrollOffset;
-
-      // Fully above or below the scroll viewport: there is nothing to keep lit,
-      // and a band clamped to a zero-height sliver at the edge would read as a
-      // rendering fault rather than as "your draft is somewhere else".
-      const visibleTop = Math.max(top, gridTop);
-      const visibleBottom = Math.min(bottom, gridTop + el.clientHeight);
-      if (visibleBottom > visibleTop) band = { top: visibleTop, bottom: visibleBottom };
-    }
-
-    const key = band ? `${band.top}:${band.bottom}` : '';
-    if (key === lastBand.current) return;
-    lastBand.current = key;
-    onGhostBand(band);
-  }, [ghost, scrollOffset, epochStart, onGhostBand]);
 
   // Which month the viewport is currently sitting in. There is no "current
   // page" here, so the readout is derived from what you can actually see.
@@ -796,7 +794,7 @@ export function ContinuousCalendar({
                     weekIndex={item.index}
                     today={today}
                     colorFor={colorFor}
-                    ghost={dragGhosts ?? (ghost ? [ghost] : EMPTY_GHOSTS)}
+                    ghost={dragGhosts ?? draftBand}
                     selection={selection}
                     onOpen={onOpenOccurrence}
                     onToggleSelect={toggleSelect}
@@ -830,34 +828,6 @@ export function ContinuousCalendar({
           {drag && <DragGhost occ={drag.occ} color={colorFor(drag.occ.categoryId)} />}
         </DragOverlay>
       </DndContext>
-
-      {/* Inline, the way the category delete asks, rather than as a fourth
-          overlay: the thing being confirmed is still lit on the grid behind it,
-          and a scrim would dim the only answer to "which ones". */}
-      {confirming && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-4 z-40 flex justify-center">
-          <div className="pointer-events-auto flex items-center gap-3 border border-hairlit bg-panel px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.7)]">
-            <span className="text-[11px] text-dim">
-              Delete {confirming.length} entries?
-            </span>
-            <Button
-              type="button"
-              variant="primary"
-              onClick={() => {
-                const ids = confirming;
-                setConfirming(null);
-                setSelection(NOTHING);
-                void deleteEvents(ids);
-              }}
-            >
-              DELETE
-            </Button>
-            <Button type="button" variant="quiet" onClick={() => setConfirming(null)}>
-              KEEP
-            </Button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

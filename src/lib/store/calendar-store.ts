@@ -20,7 +20,7 @@ import {
   overrideFromRow,
   overrideKey,
 } from '@/lib/tempo/mappers';
-import { addDays, instantFromCivil, type CivilDate } from '@/lib/tempo/civil';
+import { addDays, diffDays, instantFromCivil, type CivilDate } from '@/lib/tempo/civil';
 import { eventSpan } from '@/lib/tempo/recurrence';
 import type {
   Category,
@@ -99,7 +99,10 @@ interface CalendarState {
   /** Drop one entry, or the whole pool when called with nothing. */
   purgeDeleted: (eventId?: string) => void;
   moveOccurrence: (occ: Occurrence, deltaDays: number, scope: EditScope) => Promise<void>;
+  /** A selection shifted by one shared delta, keeping the spacing between entries. */
   moveOccurrences: (occs: Occurrence[], deltaDays: number, scope: EditScope) => Promise<void>;
+  /** A selection collapsed onto one date, each entry keeping its own length. */
+  gatherOccurrences: (occs: Occurrence[], toDate: CivilDate, scope: EditScope) => Promise<void>;
   resizeOccurrence: (
     occ: Occurrence,
     deltaDays: number,
@@ -216,6 +219,131 @@ export const useCalendar = create<CalendarState>((set, get) => {
           { onConflict: 'event_id,occurrence_date' },
         );
         return { error };
+      },
+    );
+  }
+
+  /**
+   * A whole selection moved as one unit, each entry by its own delta.
+   *
+   * Not a loop over `moveOccurrence`. Each call is its own snapshot, so a
+   * failure partway through a loop of six leaves four entries moved, one rolled
+   * back and one never attempted — a state the single-snapshot rollback has no
+   * way to describe, let alone undo. So the group is resolved first, applied in
+   * one `set`, and written as at most one statement per table.
+   *
+   * The delta is a function of the occurrence rather than a number, which is the
+   * one difference between the two gestures built on this: the arrow keys pass a
+   * constant and preserve the spacing between entries, a drop onto a day passes
+   * `toDate - occ.date` and destroys it. Everything downstream is identical, so
+   * the two cannot drift apart in how they treat series, exceptions or failure.
+   *
+   * The remaining seam is honest and narrow: with both a series rewrite and an
+   * override in the same selection, the events write can land and the overrides
+   * write fail, leaving the server ahead of the rolled-back client until the
+   * next load. Closing that needs a transaction, which means an RPC, which is a
+   * server-side surface this app does not otherwise have.
+   */
+  async function shiftBy(
+    occs: Occurrence[],
+    deltaFor: (occ: Occurrence) => number,
+    scope: EditScope,
+  ) {
+    const ownerId = get().ownerId;
+    if (!ownerId) return;
+
+    const tz = get().timezone;
+    const byId = new Map(get().events.map((e) => [e.id, e]));
+
+    const patches = new Map<string, Partial<TempoEvent>>();
+    const overrides = new Map<string, OccurrenceOverride>();
+    /**
+     * Event ids a whole-series shift has already spoken for.
+     *
+     * Separate from `patches` because a claim and a patch are different facts: a
+     * selection holding two instances of one series describes one row with two
+     * destinations, and the earliest instance settles it — including when the
+     * earliest one is not moving at all. Keyed off `patches` instead, an earliest
+     * instance with a zero delta would write no patch, leave the id unclaimed,
+     * and hand the row to whichever later instance came next.
+     */
+    const claimed = new Set<string>();
+
+    // Earliest first, so "the first occurrence of a series wins" is a rule about
+    // the calendar rather than about the order a selection happened to arrive in.
+    // Irrelevant to a shared delta, where every instance of a row agrees anyway.
+    for (const occ of [...occs].sort((a, b) => a.date.localeCompare(b.date))) {
+      if (occ.readOnly) continue;
+      const ev = byId.get(occ.eventId);
+      if (!ev) continue;
+      const deltaDays = deltaFor(occ);
+
+      // A one-off has no series to distinguish itself from, so it moves whole
+      // whatever the scope says — the same rule `moveOccurrence` applies.
+      if (scope === 'series' || !ev.recurrence) {
+        if (claimed.has(ev.id)) continue;
+        claimed.add(ev.id);
+        if (deltaDays !== 0) patches.set(ev.id, shiftEvent(ev, deltaDays, deltaDays, tz));
+        continue;
+      }
+
+      if (deltaDays === 0) continue;
+      const key = overrideKey(occ);
+      if (overrides.has(key)) continue;
+      const existing = findOverride(occ.eventId, occ.seriesDate);
+      overrides.set(key, {
+        id: existing?.id ?? crypto.randomUUID(),
+        eventId: occ.eventId,
+        occurrenceDate: occ.seriesDate,
+        cancelled: false,
+        patch: {
+          ...(existing?.patch ?? {}),
+          startDate: addDays(occ.date, deltaDays),
+          endDate: addDays(occ.endDate, deltaDays),
+        },
+      });
+    }
+
+    if (patches.size === 0 && overrides.size === 0) return;
+    const rewritten = [...overrides.values()];
+
+    await optimistic(
+      () =>
+        set((s) => ({
+          events: s.events.map((e) => {
+            const patch = patches.get(e.id);
+            return patch ? { ...e, ...patch } : e;
+          }),
+          overrides: mergeOverrides(s.overrides, rewritten),
+        })),
+      async () => {
+        if (patches.size > 0) {
+          // Read back out of the store rather than rebuilt here: `apply` has
+          // already run, so these are the rows the calendar is showing, and
+          // the write and the optimistic state cannot drift apart.
+          const rows = get()
+            .events.filter((e) => patches.has(e.id))
+            .map((e) => ({ id: e.id, owner_id: ownerId, title: e.title, ...eventToRow(e) }));
+          const { error } = await supabase.from('events').upsert(rows);
+          if (error) return { error };
+        }
+
+        if (rewritten.length > 0) {
+          const { error } = await supabase.from('occurrence_overrides').upsert(
+            rewritten.map((o) => ({
+              id: o.id,
+              owner_id: ownerId,
+              event_id: o.eventId,
+              occurrence_date: o.occurrenceDate,
+              cancelled: o.cancelled,
+              patch: o.patch as never,
+            })),
+            { onConflict: 'event_id,occurrence_date' },
+          );
+          if (error) return { error };
+        }
+
+        return { error: null };
       },
     );
   }
@@ -444,106 +572,24 @@ export const useCalendar = create<CalendarState>((set, get) => {
       await get().updateEvent(ev.id, shiftEvent(ev, deltaDays, deltaDays, get().timezone));
     },
 
-    /**
-     * A whole selection moved as one unit.
-     *
-     * Not a loop over `moveOccurrence`. Each call is its own snapshot, so a
-     * failure partway through a loop of six leaves four entries moved, one
-     * rolled back and one never attempted — a state the single-snapshot
-     * rollback has no way to describe, let alone undo. So the group is resolved
-     * first, applied in one `set`, and written as at most one statement per
-     * table.
-     *
-     * The remaining seam is honest and narrow: with both a series rewrite and
-     * an override in the same selection, the events write can land and the
-     * overrides write fail, leaving the server ahead of the rolled-back client
-     * until the next load. Closing that needs a transaction, which means an
-     * RPC, which is a server-side surface this app does not otherwise have.
-     */
+    /** Every entry by the same number of days, so the spacing survives. */
     moveOccurrences: async (occs, deltaDays, scope) => {
       if (deltaDays === 0) return;
-      const ownerId = get().ownerId;
-      if (!ownerId) return;
+      await shiftBy(occs, () => deltaDays, scope);
+    },
 
-      const tz = get().timezone;
-      const byId = new Map(get().events.map((e) => [e.id, e]));
-
-      const patches = new Map<string, Partial<TempoEvent>>();
-      const overrides = new Map<string, OccurrenceOverride>();
-
-      for (const occ of occs) {
-        if (occ.readOnly) continue;
-        const ev = byId.get(occ.eventId);
-        if (!ev) continue;
-
-        // A one-off has no series to distinguish itself from, so it moves whole
-        // whatever the scope says — the same rule `moveOccurrence` applies.
-        if (scope === 'series' || !ev.recurrence) {
-          // Keyed by event id, because two occurrences of one series shifted by
-          // the same delta describe one row, and a single upsert statement
-          // cannot touch the same row twice.
-          if (!patches.has(ev.id)) patches.set(ev.id, shiftEvent(ev, deltaDays, deltaDays, tz));
-          continue;
-        }
-
-        const key = overrideKey(occ);
-        if (overrides.has(key)) continue;
-        const existing = findOverride(occ.eventId, occ.seriesDate);
-        overrides.set(key, {
-          id: existing?.id ?? crypto.randomUUID(),
-          eventId: occ.eventId,
-          occurrenceDate: occ.seriesDate,
-          cancelled: false,
-          patch: {
-            ...(existing?.patch ?? {}),
-            startDate: addDays(occ.date, deltaDays),
-            endDate: addDays(occ.endDate, deltaDays),
-          },
-        });
-      }
-
-      if (patches.size === 0 && overrides.size === 0) return;
-      const rewritten = [...overrides.values()];
-
-      await optimistic(
-        () =>
-          set((s) => ({
-            events: s.events.map((e) => {
-              const patch = patches.get(e.id);
-              return patch ? { ...e, ...patch } : e;
-            }),
-            overrides: mergeOverrides(s.overrides, rewritten),
-          })),
-        async () => {
-          if (patches.size > 0) {
-            // Read back out of the store rather than rebuilt here: `apply` has
-            // already run, so these are the rows the calendar is showing, and
-            // the write and the optimistic state cannot drift apart.
-            const rows = get()
-              .events.filter((e) => patches.has(e.id))
-              .map((e) => ({ id: e.id, owner_id: ownerId, title: e.title, ...eventToRow(e) }));
-            const { error } = await supabase.from('events').upsert(rows);
-            if (error) return { error };
-          }
-
-          if (rewritten.length > 0) {
-            const { error } = await supabase.from('occurrence_overrides').upsert(
-              rewritten.map((o) => ({
-                id: o.id,
-                owner_id: ownerId,
-                event_id: o.eventId,
-                occurrence_date: o.occurrenceDate,
-                cancelled: o.cancelled,
-                patch: o.patch as never,
-              })),
-              { onConflict: 'event_id,occurrence_date' },
-            );
-            if (error) return { error };
-          }
-
-          return { error: null };
-        },
-      );
+    /**
+     * Every entry onto one date, each keeping its own length.
+     *
+     * What dropping a lasso'd selection on a day means. Deliberately not a
+     * shared delta: "put these here" is a different request from "push these
+     * forward three days", and the grabbed bar's own offset — which is all a
+     * shared delta can be computed from — is not part of either one. That also
+     * makes a drop onto a date one of the entries already occupies meaningful
+     * rather than a no-op: the others still have to come to it.
+     */
+    gatherOccurrences: async (occs, toDate, scope) => {
+      await shiftBy(occs, (occ) => diffDays(toDate, occ.date), scope);
     },
 
     resizeOccurrence: async (occ, deltaDays, edge, scope) => {

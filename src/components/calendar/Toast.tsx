@@ -18,11 +18,11 @@ const LIFETIME_MS = 8000;
 /**
  * How far the toast floats above the footer.
  *
- * Not taste. The grid keeps its own bulk-delete confirmation strip 16px off the
- * same edge and it stands 51px tall, and the two can be up at once — confirm a
- * bulk delete while an earlier one's toast is still counting down and a toast at
- * the strip's height would put the older UNDO underneath the newer DELETE. So:
- * clear of that band, plus a hairline of air.
+ * Inherited. The grid used to keep a bulk-delete confirmation strip 16px off
+ * the same edge, and the two could be up at once, so the toast had to sit clear
+ * of that band. The strip is gone — a bulk delete is undone from here now
+ * rather than confirmed beforehand — and the figure stayed, because a toast
+ * flush against the footer reads as part of it.
  */
 const LIFT_PX = 76;
 

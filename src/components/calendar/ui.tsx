@@ -1,8 +1,124 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 /** Shared form primitives, so every control in the app is the same object. */
+
+/**
+ * A panel that hangs off a field and is not clipped by anything.
+ *
+ * Both pickers used to draw their own: `absolute` under the trigger, with a
+ * `fixed inset-0` sibling to catch the dismissing click. Inside the entry form that
+ * arrangement fails twice over. The form's field area scrolls, and an `absolute`
+ * child of a scroll container is clipped by it — so the calendar came off the bottom
+ * of the form with its switches cut away entirely. And the click-catcher is a
+ * viewport-sized element parked over the modal, so the first click anywhere went into
+ * dismissing the popup rather than into whatever was clicked, which reads as a form
+ * that will not let go of you until you pick a date.
+ *
+ * So: `fixed`, measured from the trigger, which no ancestor's `overflow` can crop —
+ * none of them establish a containing block, which is the condition that would break
+ * it. And dismissal is a capture-phase `pointerdown` on the document instead of an
+ * overlay, so a click on another field both closes this and lands on that field.
+ */
+export function Popover({
+  anchorRef,
+  onDismiss,
+  width,
+  label,
+  onKeyDown,
+  children,
+}: {
+  /** The trigger. Clicks inside it are the trigger's own business, not a dismissal. */
+  anchorRef: React.RefObject<HTMLElement | null>;
+  onDismiss: () => void;
+  width: number;
+  label: string;
+  onKeyDown?: (e: React.KeyboardEvent) => void;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const place = () => {
+      const a = anchorRef.current?.getBoundingClientRect();
+      const el = ref.current;
+      if (!a || !el) return;
+
+      const EDGE = 8;
+      const GAP = 4;
+      const wanted = el.scrollHeight;
+      const below = window.innerHeight - a.bottom - GAP - EDGE;
+      const above = a.top - GAP - EDGE;
+
+      // Below by default, and above only when below cannot hold it *and* above is
+      // the roomier side. Flipping on the first pixel of overflow would move the
+      // panel across the field for a case that scrolling handles better.
+      const flip = wanted > below && above > below;
+      const maxHeight = Math.max(160, flip ? above : below);
+
+      setBox({
+        left: Math.max(EDGE, Math.min(a.left, window.innerWidth - EDGE - width)),
+        top: flip ? Math.max(EDGE, a.top - GAP - Math.min(wanted, maxHeight)) : a.bottom + GAP,
+        maxHeight,
+      });
+    };
+
+    place();
+    // Capture, so a scroll in any ancestor counts and not just the window's.
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [anchorRef, width]);
+
+  // Held in a ref so the listener below is registered once rather than torn down and
+  // rebuilt on every render of a parent that rebuilds the callback. Written in an
+  // effect rather than during render: a ref assigned mid-render is a write that
+  // Strict Mode's double invocation and a discarded concurrent render can both make
+  // happen more than once, for a value the render itself never reads.
+  const dismiss = useRef(onDismiss);
+  useEffect(() => {
+    dismiss.current = onDismiss;
+  });
+
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node | null;
+      if (!t || ref.current?.contains(t) || anchorRef.current?.contains(t)) return;
+      dismiss.current();
+    };
+    // Capture, and `pointerdown` rather than `click`: the modal behind dismisses on
+    // mousedown, and a listener that waited for the click would let that fire first
+    // and take the whole form with it.
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [anchorRef]);
+
+  return (
+    <div
+      ref={ref}
+      role="dialog"
+      aria-label={label}
+      onKeyDown={onKeyDown}
+      style={{
+        position: 'fixed',
+        width,
+        left: box?.left ?? 0,
+        top: box?.top ?? 0,
+        maxHeight: box?.maxHeight,
+        // Laid out before it is placed, because placing it requires measuring it.
+        visibility: box ? 'visible' : 'hidden',
+      }}
+      className="z-50 overflow-y-auto border border-hairlit bg-panel p-2 shadow-[0_8px_24px_rgba(0,0,0,0.7)]"
+    >
+      {children}
+    </div>
+  );
+}
 
 export const inputClass =
   'w-full border border-hair bg-panel px-2.5 py-2 text-[12px] text-ink outline-none transition-colors placeholder:text-mute focus:border-hairlit';
@@ -56,6 +172,50 @@ export function SegmentedControl<T extends string>({
         </button>
       ))}
     </div>
+  );
+}
+
+/**
+ * A switch, for a setting that reveals or hides other controls.
+ *
+ * `SegmentedControl` is the app's usual answer to a two-way choice and stays that way
+ * for choices *between* things — ALL DAY against TIMED reads as two options because it
+ * is two options. This is for the other shape: a row that names a thing and says
+ * whether it is on, where the off state has no label of its own because the absence of
+ * the fields below it is the label. That is what `END DATE` and `INCLUDE TIME` are, and
+ * drawing them as two-cell segmented controls would have invented a word for "no end
+ * date" that the form does not otherwise need.
+ *
+ * Rounded, alone in a square interface, because that is what a switch is — the shape is
+ * carrying the affordance, and a rectangular one reads as a very small segmented
+ * control, which is the thing it is not.
+ */
+export function Toggle({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={() => onChange(!checked)}
+      className={`relative h-[16px] w-[28px] shrink-0 rounded-full border transition-colors ${
+        checked ? 'border-dim bg-dim' : 'border-hairlit bg-sunken hover:border-dim'
+      }`}
+    >
+      <span
+        className={`absolute top-[2px] h-[10px] w-[10px] rounded-full transition-all ${
+          checked ? 'left-[15px] bg-void' : 'left-[2px] bg-mute'
+        }`}
+      />
+    </button>
   );
 }
 
@@ -114,15 +274,6 @@ const MODAL_WIDTH = {
 } as const;
 
 /**
- * A horizontal band of the viewport, in CSS pixels, that the scrim must not
- * cover. See `Modal`.
- */
-export interface ScrimCutout {
-  top: number;
-  bottom: number;
-}
-
-/**
  * Centred overlay, and the only one in the app.
  *
  * Escape is deliberately not bound here — the shell owns one keymap, so there
@@ -138,24 +289,22 @@ export function Modal({
   title,
   meta,
   onClose,
+  onDismiss,
   size = 'settings',
-  cutout,
   children,
 }: {
   title: string;
   meta?: string;
   onClose: () => void;
-  size?: keyof typeof MODAL_WIDTH;
   /**
-   * Leaves this band of the viewport undimmed.
-   *
-   * The entry form draws a ghost bar on the calendar showing where the draft
-   * will land, which a solid scrim would dim along with everything else —
-   * defeating the one thing that tells you where you are. So the scrim is cut
-   * into two rects with a gap instead. `Modal` knows nothing about calendars;
-   * it just takes a band.
+   * Clicking away, when that has to mean something other than the header's
+   * button. The entry form commits a draft on click-off and throws it away on
+   * Escape, and the header button is labelled ESC — so it answers to `onClose`
+   * with the key, and only the backdrop comes through here. Defaults to
+   * `onClose`, which is what every other surface wants.
    */
-  cutout?: ScrimCutout | null;
+  onDismiss?: () => void;
+  size?: keyof typeof MODAL_WIDTH;
   children: React.ReactNode;
 }) {
   const frame = useRef<HTMLDivElement>(null);
@@ -181,12 +330,23 @@ export function Modal({
     const el = frame.current;
     if (!el) return;
 
-    // A child that asked for focus has already been given it. Overriding that
-    // put the caret on the header's dismiss button every time the entry form
-    // opened, so typing a title meant reaching for the mouse first.
+    /**
+     * A child that asked for focus has already been given it, and overriding
+     * that would put the caret on the header's dismiss button.
+     *
+     * `[data-autofocus]` rather than `[autofocus]`, which is what this looked
+     * for and is a selector that cannot match: React applies `autoFocus` by
+     * calling `.focus()` at commit and never writes the attribute, so the query
+     * always fell through to "first focusable" — the ESC button. It went
+     * unnoticed because opening the form from the keyboard leaves focus on
+     * `<body>` and React's own commit wins the race; a real mouse click on
+     * + NEW loses it, which is exactly the case that was broken. An explicit
+     * data attribute is a fact about the DOM either way.
+     */
     if (!el.contains(document.activeElement)) {
       const wanted =
-        el.querySelector<HTMLElement>('[autofocus]') ?? el.querySelector<HTMLElement>(FOCUSABLE);
+        el.querySelector<HTMLElement>('[data-autofocus]') ??
+        el.querySelector<HTMLElement>(FOCUSABLE);
       (wanted ?? el).focus();
     }
 
@@ -211,8 +371,8 @@ export function Modal({
     (e.shiftKey ? stops[stops.length - 1] : stops[0]).focus();
   }
 
-  /** Mousedown anywhere on the backdrop dismisses, cut or not. */
-  const backdrop = { onMouseDown: onClose, 'aria-hidden': true } as const;
+  /** Mousedown anywhere on the backdrop dismisses. */
+  const backdrop = { onMouseDown: onDismiss ?? onClose, 'aria-hidden': true } as const;
 
   return (
     <div
@@ -222,24 +382,14 @@ export function Modal({
       aria-label={title}
       onKeyDown={trapTab}
     >
-      {cutout ? (
-        <>
-          <div
-            {...backdrop}
-            className="absolute inset-x-0 top-0 bg-void/85"
-            style={{ height: Math.max(0, cutout.top) }}
-          />
-          {/* The lit band. Still dismisses, just isn't dimmed. */}
-          <div
-            {...backdrop}
-            className="absolute inset-x-0"
-            style={{ top: cutout.top, height: Math.max(0, cutout.bottom - cutout.top) }}
-          />
-          <div {...backdrop} className="absolute inset-x-0 bottom-0 bg-void/85" style={{ top: cutout.bottom }} />
-        </>
-      ) : (
-        <div {...backdrop} className="absolute inset-0 bg-void/85" />
-      )}
+      {/* One rect, evenly. The entry modal used to cut a lit band out of this to
+          keep the week its draft was landing in undimmed, which meant three
+          rects, a measured viewport band reported up from the grid, and one row
+          of the calendar looking spotlit for reasons that were not obvious
+          unless you already knew what to look for. Dimming everything says the
+          same thing — the grid is not what you are talking to — without
+          singling out a week. */}
+      <div {...backdrop} className="absolute inset-0 bg-void/85" />
 
       {/* Inert wrapper: it spans the viewport for centring, so it must not eat
           the backdrop clicks passing underneath it. The frame opts back in. */}
