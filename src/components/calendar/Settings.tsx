@@ -2,9 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import { useCalendar } from '@/lib/store/calendar-store';
-import { minutesInZone, todayIn } from '@/lib/tempo/civil';
-import type { EventKind, EventStatus, TempoEvent } from '@/lib/tempo/types';
+import { todayIn } from '@/lib/tempo/civil';
 import { CATEGORY_PALETTE } from './constants';
+import { Notifications } from './Notifications';
 import { Button, inputClass, Modal, Section } from './ui';
 
 /**
@@ -30,10 +30,13 @@ export const SHORTCUTS: ReadonlyArray<{
   joiner?: string;
   meaning: string;
 }> = [
-  { keys: ['SPACE'], meaning: 'Centre on today' },
+  // W A S D first, and in that order, because that is where the hand sits —
+  // reading them as a block is the point, so the list is not alphabetical.
+  { keys: ['W'], meaning: 'History — trash and versions' },
   { keys: ['A'], meaning: 'New entry' },
   { keys: ['S'], meaning: 'Settings' },
   { keys: ['D'], meaning: 'Open the focused day' },
+  { keys: ['SPACE'], meaning: 'Centre on today' },
   { keys: ['1', '2', '3'], joiner: '/', meaning: 'Scroll · List · Year' },
   { keys: ['/'], meaning: 'Filter, in list view' },
   { keys: ['ESC'], meaning: 'Unwind one layer' },
@@ -143,7 +146,7 @@ export function Settings({ email, onClose, onSignOut, readOnly }: Props) {
         </a>
       </Section>
 
-      <RecentlyDeleted />
+      <Notifications />
 
       <Section label="KEYS">
         {/* Two pairs per row rather than one long ladder. The list roughly
@@ -188,107 +191,6 @@ function Keycap({ children }: { children: React.ReactNode }) {
       {children}
     </kbd>
   );
-}
-
-/**
- * The deletion pool, described as what it is.
- *
- * It is a few minutes of second thoughts, not an archive — there is no
- * `deleted_at` column behind it and nothing here survives a reload. Both the
- * header and the empty state say so outright, because a section called
- * RECENTLY DELETED is otherwise read as a trash can, and finding out it was not
- * one costs you the entry you were counting on it for.
- */
-function RecentlyDeleted() {
-  const pool = useCalendar((s) => s.recentlyDeleted);
-  const restoreDeleted = useCalendar((s) => s.restoreDeleted);
-  const purgeDeleted = useCalendar((s) => s.purgeDeleted);
-  const timezone = useCalendar((s) => s.timezone);
-
-  return (
-    <Section
-      label="RECENTLY DELETED"
-      meta={pool.length > 0 ? `${pool.length} · THIS SESSION ONLY` : 'THIS SESSION ONLY'}
-    >
-      {pool.length === 0 ? (
-        <p className="text-[11px] leading-relaxed text-mute">
-          Nothing deleted yet. Anything you delete lands here until the tab
-          closes — a reload empties it. This is an undo, not a backup.
-        </p>
-      ) : (
-        <>
-          <ul className="border border-hair">
-            {pool.map((entry) => (
-              <li
-                key={entry.event.id}
-                className="flex items-center gap-2 border-b border-hair px-2 py-1.5 last:border-b-0"
-              >
-                <span className="w-4 shrink-0 text-center text-[11px] text-mute">
-                  {glyphFor(entry.event)}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-[11px] text-ink">
-                  {entry.event.title}
-                </span>
-                {/* Exceptions are the part of a delete you can't reconstruct by
-                    retyping, so the count is worth saying out loud. */}
-                {entry.overrides.length > 0 && (
-                  <span className="label shrink-0">{entry.overrides.length} EXC</span>
-                )}
-                <span className="label shrink-0 tabular-nums">{clock(entry.at, timezone)}</span>
-                <Button type="button" variant="quiet" onClick={() => restoreDeleted(entry.event.id)}>
-                  RESTORE
-                </Button>
-              </li>
-            ))}
-          </ul>
-
-          <button
-            type="button"
-            onClick={() => purgeDeleted()}
-            className="label mt-2 border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-dim"
-          >
-            CLEAR
-          </button>
-        </>
-      )}
-    </Section>
-  );
-}
-
-/**
- * The mark the bar was wearing when it was deleted.
- *
- * A task is drawn by its status everywhere else in the app, so a done one that
- * came back in this list as an empty box would be the only place `[x]` turns
- * into `[ ]` without anyone unticking it.
- */
-function glyphFor(e: TempoEvent): string {
-  if (e.kind === 'assignment') return e.status ? STATUS_GLYPH[e.status] : '[ ]';
-  return KIND_GLYPH[e.kind];
-}
-
-const STATUS_GLYPH: Record<EventStatus, string> = { todo: '[ ]', doing: '[~]', done: '[x]' };
-
-const KIND_GLYPH: Record<EventKind, string> = {
-  event: '·',
-  assignment: '[ ]',
-  birthday: '✳',
-  milestone: '◆',
-};
-
-/**
- * When it went, as a clock reading rather than an age.
- *
- * "4M AGO" would be the friendlier phrasing and is the wrong one here: it is
- * only true at the instant it renders, so it needs either a ticking timer or a
- * clock read during render, and both are a lot of machinery for a line nobody
- * reads twice. A time is still true five minutes later. 24-hour and zero-padded,
- * the same as every other time in the app, in the zone the calendar is set to.
- */
-function clock(at: number, timezone: string): string {
-  const minutes = minutesInZone(new Date(at), timezone);
-  const h = Math.floor(minutes / 60);
-  return `${String(h).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
 
 /**

@@ -1,3 +1,6 @@
+import { civilInZone, minutesInZone, type CivilDate } from '@/lib/tempo/civil';
+import type { EventKind, EventStatus, TempoEvent } from '@/lib/tempo/types';
+
 /**
  * The epoch is a large fixed range rather than true unbounded infinity.
  *
@@ -166,4 +169,57 @@ export const CATEGORY_PALETTE = [
 ] as const;
 
 export const DEFAULT_CATEGORY_COLOR = '#8a9096';
+
+/**
+ * The mark a bar wears, outside the grid.
+ *
+ * Shared rather than local to one panel: the history surface and the deleted
+ * list draw entries that are not on the calendar, and an entry that looked like
+ * one thing on the grid and another in a list would be two entries as far as
+ * anyone reading is concerned. A task is drawn by its status everywhere, so a
+ * done one must not come back as an empty box without anyone unticking it.
+ */
+export function glyphFor(e: Pick<TempoEvent, 'kind' | 'status'>): string {
+  if (e.kind === 'assignment') return e.status ? STATUS_GLYPH[e.status] : '[ ]';
+  return KIND_GLYPH[e.kind];
+}
+
+export const STATUS_GLYPH: Record<EventStatus, string> = {
+  todo: '[ ]',
+  doing: '[~]',
+  done: '[x]',
+};
+
+export const KIND_GLYPH: Record<EventKind, string> = {
+  event: '·',
+  assignment: '[ ]',
+  birthday: '✳',
+  milestone: '◆',
+};
+
+/**
+ * When something happened, as a clock reading rather than an age.
+ *
+ * "4M AGO" would be the friendlier phrasing and is the wrong one here: it is
+ * only true at the instant it renders, so it needs either a ticking timer or a
+ * clock read during render, and both are a lot of machinery for a line nobody
+ * reads twice. A time is still true five minutes later. 24-hour and zero-padded,
+ * the same as every other time in the app, in the zone the calendar is set to.
+ */
+export function clock(at: string | number, timezone: string): string {
+  const minutes = minutesInZone(new Date(at), timezone);
+  const h = Math.floor(minutes / 60);
+  return `${String(h).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+/**
+ * The same instant, with the date said out loud.
+ *
+ * The trash spans thirty days, so a bare clock reading in it is ambiguous by
+ * design — 09:14 on which of them? Anything older than today gets its date.
+ */
+export function stamp(at: string, timezone: string, today: CivilDate): string {
+  const day = civilInZone(new Date(at), timezone);
+  return day === today ? clock(at, timezone) : `${day} ${clock(at, timezone)}`;
+}
 

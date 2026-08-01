@@ -15,6 +15,17 @@ const PUBLIC_PREFIXES = [
   '/login',
   '/auth',
   '/api/auth',
+  // The install surface. The browser fetches all three with no session — often
+  // before anyone has signed in at all — and the matcher below only exempts
+  // paths ending in an image extension, so without these the manifest and the
+  // worker both 307 to /login. The symptom is that the install prompt never
+  // appears and nothing reports an error. None of them expose any data.
+  '/manifest.webmanifest',
+  '/sw.js',
+  '/offline',
+  // Called by pg_cron from inside Supabase, which has no cookie and never will.
+  // Its gate is the CRON_SECRET bearer the route checks itself.
+  '/api/push/dispatch',
   // Design harness for the calendar grid, running on fixture data. The page
   // itself also returns notFound() outside development, so this is guarded on
   // both sides and cannot become a hole in production.

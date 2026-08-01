@@ -47,12 +47,42 @@ export type Database = {
         }
         Relationships: []
       }
+      event_versions: {
+        Row: {
+          created_at: string
+          event_id: string
+          id: string
+          owner_id: string
+          reason: string
+          snapshot: Json
+        }
+        Insert: {
+          created_at?: string
+          event_id: string
+          id?: string
+          owner_id: string
+          reason: string
+          snapshot: Json
+        }
+        Update: {
+          created_at?: string
+          event_id?: string
+          id?: string
+          owner_id?: string
+          reason?: string
+          snapshot?: Json
+        }
+        // Deliberately none: `event_id` is not a foreign key, so a version
+        // outlives the row it describes. See the migration.
+        Relationships: []
+      }
       events: {
         Row: {
           all_day: boolean
           anchor_date: string | null
           category_id: string | null
           created_at: string
+          deleted_at: string | null
           display_template: string | null
           end_date: string | null
           ends_at: string | null
@@ -80,6 +110,7 @@ export type Database = {
           anchor_date?: string | null
           category_id?: string | null
           created_at?: string
+          deleted_at?: string | null
           display_template?: string | null
           end_date?: string | null
           ends_at?: string | null
@@ -107,6 +138,7 @@ export type Database = {
           anchor_date?: string | null
           category_id?: string | null
           created_at?: string
+          deleted_at?: string | null
           display_template?: string | null
           end_date?: string | null
           ends_at?: string | null
@@ -270,6 +302,74 @@ export type Database = {
           },
         ]
       }
+      push_subscriptions: {
+        Row: {
+          auth: string
+          created_at: string
+          endpoint: string
+          failure_count: number
+          id: string
+          last_seen_at: string
+          owner_id: string
+          p256dh: string
+          user_agent: string | null
+        }
+        Insert: {
+          auth: string
+          created_at?: string
+          endpoint: string
+          failure_count?: number
+          id?: string
+          last_seen_at?: string
+          owner_id: string
+          p256dh: string
+          user_agent?: string | null
+        }
+        Update: {
+          auth?: string
+          created_at?: string
+          endpoint?: string
+          failure_count?: number
+          id?: string
+          last_seen_at?: string
+          owner_id?: string
+          p256dh?: string
+          user_agent?: string | null
+        }
+        Relationships: []
+      }
+      reminder_deliveries: {
+        Row: {
+          event_id: string
+          fire_at: string
+          id: string
+          minutes: number
+          occurrence_date: string
+          owner_id: string
+          sent_at: string
+        }
+        Insert: {
+          event_id: string
+          fire_at: string
+          id?: string
+          minutes: number
+          occurrence_date: string
+          owner_id: string
+          sent_at?: string
+        }
+        Update: {
+          event_id?: string
+          fire_at?: string
+          id?: string
+          minutes?: number
+          occurrence_date?: string
+          owner_id?: string
+          sent_at?: string
+        }
+        // Deliberately none, like `event_versions`: a delivery record has to
+        // outlive a hard-deleted event. See the migration.
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -295,8 +395,11 @@ export type EventInsert = PublicSchema['Tables']['events']['Insert']
 export type EventUpdate = PublicSchema['Tables']['events']['Update']
 export type CategoryRow = PublicSchema['Tables']['categories']['Row']
 export type OccurrenceOverrideRow = PublicSchema['Tables']['occurrence_overrides']['Row']
+export type EventVersionRow = PublicSchema['Tables']['event_versions']['Row']
+export type EventVersionInsert = PublicSchema['Tables']['event_versions']['Insert']
 export type GoogleEventCacheRow = PublicSchema['Tables']['google_events_cache']['Row']
 export type IntegrationRow = PublicSchema['Tables']['integrations']['Row']
+export type PushSubscriptionRow = PublicSchema['Tables']['push_subscriptions']['Row']
 
 export type EventKindDb = PublicSchema['Enums']['event_kind']
 export type EventStatusDb = PublicSchema['Enums']['event_status']

@@ -8,7 +8,12 @@ import {
   renderTemplate,
   TEMPLATE_PRESETS,
 } from '@/lib/tempo/derive';
-import type { EventKind, Frequency, Occurrence, Recurrence } from '@/lib/tempo/types';
+import {
+  ALL_DAY_PRESETS,
+  defaultReminders,
+  TIMED_PRESETS,
+} from '@/lib/tempo/reminders';
+import type { EventKind, Frequency, Occurrence, Recurrence, Reminder } from '@/lib/tempo/types';
 import type { EntrySeed } from './CalendarShell';
 import { UNTITLED } from './constants';
 import { DatePicker } from './DatePicker';
@@ -62,6 +67,12 @@ interface Props {
    * it gets there.
    */
   onDraftChange?: (draft: DraftPreview) => void;
+  /**
+   * `edit` only. Opens HISTORY on this entry — the only way to reach the
+   * versions of something that was never deleted, since the panel's own list is
+   * the trash.
+   */
+  onHistory?: () => void;
   ref?: Ref<EntryFormHandle>;
 }
 
@@ -88,7 +99,15 @@ const TEMPLATES = [
   { value: 'yearTagged', label: 'YEAR', template: TEMPLATE_PRESETS.yearTagged },
 ] as const;
 
-export function EventForm({ mode, seed, occurrence, onClose, onDraftChange, ref }: Props) {
+export function EventForm({
+  mode,
+  seed,
+  occurrence,
+  onClose,
+  onDraftChange,
+  onHistory,
+  ref,
+}: Props) {
   const timezone = useCalendar((s) => s.timezone);
   const categories = useCalendar((s) => s.categories);
   const createEvent = useCalendar((s) => s.createEvent);
@@ -140,6 +159,48 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftChange, ref 
     existing?.anchorDate ?? occurrence?.date ?? from,
   );
   const [notes, setNotes] = useState(existing?.notes ?? '');
+
+  /**
+   * Reminders, and whether the user has taken them over.
+   *
+   * A new entry follows its kind — an assignment wants a day's warning and a
+   * two-hour one, a dentist appointment wants half an hour — and keeps
+   * following it while `kind` and the all-day switch are still being changed.
+   * The moment a chip is clicked that stops: `touched` is what makes the
+   * defaults a starting point rather than something that keeps overwriting a
+   * deliberate choice.
+   *
+   * An edit starts touched, because every value on an existing row was already
+   * a decision, including the decision to have none.
+   */
+  const [chosenReminders, setChosenReminders] = useState<Reminder[]>(
+    () => existing?.reminders ?? [],
+  );
+  const [remindersTouched, setRemindersTouched] = useState(mode === 'edit');
+
+  // Derived, not synchronised. Following `kind` and the all-day switch with an
+  // effect would mean a second render on every change to either, and this is
+  // the same fact stated once: until you pick, the defaults *are* the value.
+  const reminders = remindersTouched ? chosenReminders : defaultReminders(kind, allDay);
+
+  const presets = allDay ? ALL_DAY_PRESETS : TIMED_PRESETS;
+
+  function toggleReminder(minutes: number) {
+    // Built from what is on screen, which before the first click is the
+    // defaults — so the first chip you click adds to them rather than
+    // replacing them with a list of one.
+    const without = reminders.filter((r) => r.minutes !== minutes);
+    const deselecting = without.length !== reminders.length;
+
+    setRemindersTouched(true);
+    // Five is the parse ceiling, enforced by disabling the remaining chips
+    // rather than dropping one here: a click that silently removes an earlier
+    // choice to make room reads as the button being broken.
+    if (deselecting) setChosenReminders(without);
+    else if (reminders.length < 5) {
+      setChosenReminders([...reminders, { minutes }].sort((a, b) => b.minutes - a.minutes));
+    } else setChosenReminders(reminders);
+  }
 
   // A birthday is the general machinery with the dials pre-set, not a special
   // case: yearly recurrence, an anchor on the birth date, and an age template.
@@ -225,6 +286,10 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftChange, ref 
       endMinutes: w.allDay ? undefined : w.endMinutes,
       categoryId,
       recurrence: buildRecurrence(),
+      // Always sent, including when empty. Unlike `notify` this field is the
+      // form's to state, so an omitted value would mean "unchanged" when the
+      // user meant "I turned them all off".
+      reminders,
       anchorDate: effectiveTemplate ? effectiveAnchor : null,
       displayTemplate: effectiveTemplate,
       // `notify` is deliberately absent. It is the Google mirror flag, and the
@@ -365,7 +430,41 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftChange, ref 
         </Field>
 
         <div className="col-span-2">
-          <Field label="[06] NOTES">
+          <Field label="[06] REMIND ME">
+            {/* Chips rather than a select: reminders are a set, not a choice,
+                and the pairing people actually want — one to start, one to
+                turn up — is two clicks here and a nested multi-select in any
+                other control. */}
+            <div className="flex flex-wrap gap-1.5">
+              {presets.map(({ minutes, label }) => {
+                const on = reminders.some((r) => r.minutes === minutes);
+                const full = !on && reminders.length >= 5;
+                return (
+                  <button
+                    key={minutes}
+                    type="button"
+                    disabled={full}
+                    aria-pressed={on}
+                    onClick={() => toggleReminder(minutes)}
+                    className={`border px-2 py-1 text-[10px] tracking-[0.1em] transition-colors disabled:opacity-30 ${
+                      on
+                        ? 'border-hairlit bg-raised text-bright'
+                        : 'border-hair text-mute hover:border-hairlit hover:text-dim'
+                    }`}
+                  >
+                    {label.toUpperCase()}
+                  </button>
+                );
+              })}
+            </div>
+            {reminders.length === 0 && (
+              <p className="label mt-2">SILENT — NOTHING WILL BE SENT FOR THIS ENTRY.</p>
+            )}
+          </Field>
+        </div>
+
+        <div className="col-span-2">
+          <Field label="[07] NOTES">
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -395,6 +494,11 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftChange, ref 
 
           {mode === 'edit' && occurrence && (
             <>
+              {onHistory && (
+                <Button type="button" variant="quiet" onClick={onHistory}>
+                  HISTORY
+                </Button>
+              )}
               {occurrence.event.recurrence && (
                 <Button
                   type="button"

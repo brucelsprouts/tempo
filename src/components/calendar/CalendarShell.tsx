@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { useCalendar, type DeletedEntry } from '@/lib/store/calendar-store';
+import { useCalendar } from '@/lib/store/calendar-store';
 import {
   getServerViewSnapshot,
   getViewSnapshot,
@@ -9,10 +9,11 @@ import {
   subscribeView,
 } from '@/lib/store/view-preference';
 import { parts, todayIn, type CivilDate } from '@/lib/tempo/civil';
-import type { Occurrence } from '@/lib/tempo/types';
+import type { Occurrence, TempoEvent } from '@/lib/tempo/types';
 import { ContinuousCalendar, type CalendarHandle } from './ContinuousCalendar';
 import { DayModal } from './DayModal';
 import { EventForm, type DraftPreview, type EntryFormHandle } from './EventForm';
+import { History } from './History';
 import { ListView } from './ListView';
 import { Settings } from './Settings';
 import { Toast } from './Toast';
@@ -56,7 +57,9 @@ type Overlay =
   | { kind: 'day'; date: CivilDate }
   | { kind: 'entry'; mode: 'new'; seed: EntrySeed }
   | { kind: 'entry'; mode: 'edit'; occurrence: Occurrence }
-  | { kind: 'settings' };
+  | { kind: 'settings' }
+  /** `focus` opens the version list on one entry, which is how a form reaches it. */
+  | { kind: 'history'; focus?: string };
 
 interface Props {
   email: string;
@@ -71,7 +74,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   const dismissError = useCalendar((s) => s.dismissError);
   const timezone = useCalendar((s) => s.timezone);
   const eventCount = useCalendar((s) => s.events.length);
-  const recentlyDeleted = useCalendar((s) => s.recentlyDeleted);
+  const deleted = useCalendar((s) => s.deleted);
   const restoreDeleted = useCalendar((s) => s.restoreDeleted);
 
   const view = useSyncExternalStore(subscribeView, getViewSnapshot, getServerViewSnapshot);
@@ -81,9 +84,15 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   const [focusedDay, setFocusedDay] = useState<CivilDate>(today);
   const [year, setYear] = useState<number | null>(null);
   const [draft, setDraft] = useState<DraftPreview | null>(null);
-  const [toast, setToast] = useState<{ at: number; entries: DeletedEntry[] } | null>(null);
-  /** The batch stamp already shown, so a shrinking pool doesn't re-announce. */
-  const announced = useRef(0);
+  const [toast, setToast] = useState<{ at: string; entries: TempoEvent[] } | null>(null);
+  /**
+   * The batch stamp already shown, so a shrinking trash doesn't re-announce.
+   *
+   * Seeded on the first pass rather than starting empty: the trash is durable
+   * now, so it arrives from `load()` already full, and an empty seed would put
+   * a toast up for whatever you deleted yesterday every time the app opened.
+   */
+  const announced = useRef<string | null>(null);
 
   const activeYear = year ?? parts(today).year;
   const top = overlays[overlays.length - 1] ?? null;
@@ -164,28 +173,36 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   }, []);
 
   /**
-   * The toast follows the pool, not the delete.
+   * The toast follows the trash, not the delete.
    *
    * Two things delete — the entry form and the grid's selection — and neither
-   * reports back up here. The pool is the one place both of them land, so this
+   * reports back up here. The trash is the one place both of them land, so this
    * watches for a batch newer than the last one announced rather than asking to
    * be told. Entries share a stamp with everything their delete removed, which
    * is what makes a single UNDO cover exactly one delete.
+   *
+   * The first pass only records where the trash already stood. Everything in it
+   * on load was deleted in some earlier session, and offering to undo it is
+   * offering to undo something you have long since stopped thinking about.
    */
   useEffect(() => {
-    const newest = recentlyDeleted[0];
-    if (!newest || newest.at <= announced.current) return;
-    announced.current = newest.at;
-    setToast({ at: newest.at, entries: recentlyDeleted.filter((d) => d.at === newest.at) });
-  }, [recentlyDeleted]);
+    const newest = deleted[0]?.deletedAt ?? null;
+    if (announced.current === null) {
+      announced.current = newest ?? '';
+      return;
+    }
+    if (!newest || newest <= announced.current) return;
+    announced.current = newest;
+    setToast({ at: newest, entries: deleted.filter((d) => d.deletedAt === newest) });
+  }, [deleted]);
 
   /**
-   * A rejected delete rolls the pool back with everything else, which would
+   * A rejected delete rolls the trash back with everything else, which would
    * otherwise strand a toast offering to undo something that never left.
    * Derived rather than cleared in an effect, so it cannot disagree with the
-   * pool for a frame.
+   * trash for a frame.
    */
-  const liveToast = toast && recentlyDeleted.some((d) => d.at === toast.at) ? toast : null;
+  const liveToast = toast && deleted.some((d) => d.deletedAt === toast.at) ? toast : null;
 
   const dismissToast = useCallback(() => setToast(null), []);
 
@@ -197,11 +214,11 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
      *
      * Not batched the way a group move is: each restore is its own row, and a
      * failure partway leaves a state you can describe and finish by hand —
-     * whatever failed is still in the pool and still has a RESTORE beside it in
-     * settings. Sequential because two optimistic writes in flight would
+     * whatever failed is still in the trash and still has a RESTORE beside it
+     * in HISTORY. Sequential because two optimistic writes in flight would
      * snapshot each other half-applied.
      */
-    for (const entry of toast.entries) await restoreDeleted(entry.event.id);
+    for (const entry of toast.entries) await restoreDeleted(entry.id);
   }, [toast, restoreDeleted]);
 
   /**
@@ -319,13 +336,29 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
     }
 
     switch (e.key) {
-      // A rather than N. The letters that matter are A, S and D — new entry,
-      // settings, day — so the hand that drives the calendar never leaves home
-      // row, and N was the one reach in the set.
+      /**
+       * W A S D, and nothing outside it.
+       *
+       * Every action key the app claims sits under one resting left hand —
+       * new entry, settings, day, history — which is the shape a hand already
+       * takes on this keyboard whether it got there from gaming or from home
+       * row. It is deliberately not mnemonic: A is not "add" and W is not
+       * anything, because the alternative was N, H and comma scattered across
+       * three rows, and a letter you have to aim for is slower than a position
+       * you already hold. Only D and S happen to say what they do.
+       *
+       * The arrows stay separate and keep meaning "move the selection" — WASD
+       * as movement *and* as commands would be one key doing two jobs.
+       */
       case 'a':
       case 'A':
         e.preventDefault();
         newEntry();
+        break;
+      case 'w':
+      case 'W':
+        e.preventDefault();
+        push({ kind: 'history' });
         break;
       case 'd':
       case 'D':
@@ -421,6 +454,15 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
             className="label border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink"
           >
             + NEW
+          </button>
+          {/* Beside SETTINGS rather than inside it. The recovery pool lived in
+              settings once and was not found, which is the whole reason this
+              has a door of its own. */}
+          <button
+            onClick={() => push({ kind: 'history' })}
+            className="label border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink"
+          >
+            HISTORY
           </button>
           <button
             onClick={() => push({ kind: 'settings' })}
@@ -535,10 +577,13 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
               mode="edit"
               occurrence={top.occurrence}
               onClose={pop}
+              onHistory={() => push({ kind: 'history', focus: top.occurrence.eventId })}
             />
           )}
         </Modal>
       )}
+
+      {top?.kind === 'history' && <History focus={top.focus} onClose={pop} />}
 
       {top?.kind === 'settings' && (
         <Settings

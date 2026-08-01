@@ -111,6 +111,32 @@ npm install
 npm run dev
 ```
 
+### 5. Reminders
+
+Optional, and only worth doing once the app is deployed over HTTPS — iOS will
+not grant notification permission to anything else.
+
+Generate a VAPID key pair:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+Put the public key in `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, the private one in
+`VAPID_PRIVATE_KEY`, set `VAPID_SUBJECT` to a `mailto:` address, and invent a
+`CRON_SECRET`. Run `supabase/migrations/20260801_push.sql`, then schedule the
+ticker with the `cron.schedule` block at the bottom of that file — it needs your
+deployed URL and the same `CRON_SECRET`, so it cannot be committed filled in.
+
+On the phone: open the site in Safari, **Share → Add to Home Screen**, open it
+from the icon, then **Settings → Notifications → Enable**. It has to be done in
+that order. In a browser tab iOS refuses to even ask, and Tempo says so rather
+than showing a button that cannot work.
+
+Each entry then carries its own lead times — a day before *and* two hours before
+for assignments, half an hour for a timed event, the morning before for a
+birthday. The defaults follow the entry's type and are one click to change.
+
 ## Scripts
 
 ```bash
@@ -118,6 +144,8 @@ npm run dev      # dev server
 npm run build    # production build
 npm test         # unit tests — pure domain logic, no database required
 npm run lint     # eslint
+
+node scripts/generate-icons.mjs   # regenerate home-screen icons from logo.svg
 ```
 
 ## Layout
@@ -128,6 +156,7 @@ src/lib/tempo/      pure domain logic — no React, no network, fully tested
   types.ts          TempoEvent, Recurrence, Occurrence
   recurrence.ts     occurrence expansion (arithmetic seek, not iteration)
   derive.ts         per-occurrence computed titles ("Mom · 52")
+  reminders.ts      which reminders came due in a window — no queue, recomputed
   layout.ts         week-row lane packing
   mappers.ts        row <-> domain, JSON validation, portable export shape
 
@@ -150,6 +179,9 @@ lifted out on its own.
 - **`/api/export`** returns every event as flat JSON whose keys map 1:1 onto
   Obsidian frontmatter. Recurring events export as their rule, not as expanded
   occurrences — the export is the same size as the database.
+- **Installable, with push reminders.** Add it to your Home Screen and entries
+  notify you at their own lead times. Setup is three env vars and one migration —
+  see [Reminders](#reminders) below.
 - **Google Calendar sync** is designed but not built. See
   [`docs/GOOGLE_SETUP.md`](docs/GOOGLE_SETUP.md).
 - **[`docs/DESIGN.md`](docs/DESIGN.md)** is the design record: why the system is

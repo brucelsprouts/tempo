@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import type { DeletedEntry } from '@/lib/store/calendar-store';
+import type { TempoEvent } from '@/lib/tempo/types';
 import { Button } from './ui';
 
 /**
@@ -28,7 +28,7 @@ const LIFT_PX = 76;
 
 interface Props {
   /** Everything a single delete took; one UNDO puts all of it back. */
-  entries: DeletedEntry[];
+  entries: TempoEvent[];
   onUndo: () => void;
   onDismiss: () => void;
 }
@@ -58,7 +58,7 @@ export function Toast({ entries, onUndo, onDismiss }: Props) {
         <span className="min-w-0 truncate text-[11px] text-dim">
           {entries.length === 1 ? (
             <>
-              Deleted “<span className="text-ink">{entries[0].event.title}</span>”
+              Deleted “<span className="text-ink">{entries[0].title}</span>”
             </>
           ) : (
             `Deleted ${entries.length} entries`

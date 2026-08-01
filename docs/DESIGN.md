@@ -194,6 +194,64 @@ what protects the data. `integrations` (Google refresh tokens) has RLS enabled
 and **no policies at all**, making it reachable only by the service role from
 server routes.
 
+## 12. Reminders are recomputed, never queued
+
+Occurrences are derived rather than stored, so there is nowhere to put a pending
+notification — no row to mark as scheduled, nothing to update when the series
+changes underneath it. A queue would immediately be able to disagree with the
+calendar it was built from.
+
+So there isn't one. `pg_cron` calls `/api/push/dispatch` every minute, and the
+route asks `reminders.ts` what came due since it last looked, expanding the same
+rules the grid renders from. That single choice is what makes the obvious bugs
+impossible: a deleted event cannot notify, a cancelled occurrence cannot notify,
+a rescheduled one notifies off its new time, and none of it needs cleanup.
+
+**The delivery table is a claim, not a log.** `reminder_deliveries` has a unique
+constraint on `(event_id, occurrence_date, minutes)`, and the dispatcher inserts
+*before* it sends, forwarding only the rows the insert actually returned. Two
+overlapping ticks split the work instead of both sending it. Sending first and
+recording after would double-notify on any retry.
+
+That in turn makes the tick cadence a performance question rather than a
+correctness one, which is what buys the **60-minute catch-up window**: if the
+ticker dies for half an hour the reminders it missed still arrive, late. Past an
+hour they are dropped, because a reminder that arrives after the thing it was
+about is worse than no reminder.
+
+The identity is the **series date**, not the displaced one — the same key
+overrides use. Keyed on where an occurrence actually sits, dragging it would
+make its reminder eligible all over again.
+
+**Offsets are durations, in minutes, matching Google's `{ method, minutes }`.**
+The cost is the RFC 5545 wart that a lead time spanning a DST transition lands
+an hour off; `reminders.test.ts` asserts that rather than hiding it. Negative
+offsets are the one divergence — an all-day entry has no time of day, so "09:00
+on the morning of" can only be said as -540.
+
+## 13. The PWA installs; it does not pretend to work offline
+
+The service worker caches the app shell and an offline page, and deliberately
+caches no calendar data. A stale schedule is worse than a blank one: the failure
+being prevented is turning up to something that moved.
+
+It is hand-written for the same reason. `next-pwa` and Serwist both want webpack
+config against a Turbopack build, and what they would add is precaching of the
+whole bundle — stale JavaScript against a live database.
+
+Almost everything awkward here is iOS being iOS: push requires the app to be on
+the Home Screen and the manifest to say `standalone`; permission must be asked
+inside a real tap, and asking in Safari *throws* rather than returning a refusal;
+and the subscription is silently retired when the app sits unused, so the client
+re-subscribes on every launch. `Notifications.tsx` has four states because those
+are four genuinely different situations, and a single toggle would misreport
+three of them.
+
+The manifest and `sw.js` are public prefixes in `proxy.ts`. Both are fetched
+with no session, often before anyone signs in, and the matcher only exempts
+paths ending in an image extension — so without that the install prompt simply
+never appears and nothing reports why.
+
 ---
 
 ## Not built

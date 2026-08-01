@@ -17,6 +17,11 @@ const csp = [
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
   "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+  // Without these two the policy above blocks the PWA outright: `default-src`
+  // covers workers and manifests, and a blocked service worker means no
+  // install and no push, reported only as a console error nobody is watching.
+  "worker-src 'self'",
+  "manifest-src 'self'",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -44,6 +49,16 @@ const nextConfig: NextConfig = {
             key: 'Strict-Transport-Security',
             value: 'max-age=63072000; includeSubDomains; preload',
           },
+        ],
+      },
+      {
+        // The worker must never be served stale. A cached `sw.js` is one that
+        // cannot be replaced by deploying a new one — the browser keeps
+        // handing back the old file and the fix never ships.
+        source: '/sw.js',
+        headers: [
+          { key: 'Content-Type', value: 'application/javascript; charset=utf-8' },
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
         ],
       },
     ];

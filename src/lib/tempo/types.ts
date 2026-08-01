@@ -35,6 +35,30 @@ export interface Recurrence {
 }
 
 /**
+ * How long before an occurrence starts to be told about it.
+ *
+ * Minutes, and only minutes, for the same reason `Recurrence` is RRULE-shaped:
+ * Google's API takes `{ method, minutes }`, so this serialises as a rename
+ * rather than a translation. An ISO-8601 VALARM trigger (`-P1DT9H`) would read
+ * better in a diff and cost that.
+ *
+ * Measured back from the occurrence's *start*, where an all-day occurrence
+ * starts at 00:00 in the event's own timezone. So "the day before at 09:00" on
+ * a birthday is 900 — fifteen hours back from midnight. Nobody types that;
+ * `TIMED_PRESETS` and `ALL_DAY_PRESETS` name the ones people actually pick.
+ *
+ * **Negative means after.** An all-day entry has no time of day, so the only
+ * way to say "09:00 on the morning of" is -540. Google has no equivalent — its
+ * range is 0…40320 — so a negative reminder is the one field that would clamp
+ * rather than rename if the mirror is ever built. Worth the divergence: an
+ * exam you are told about at midnight is an exam you are told about in your
+ * sleep, and the alternative is having no same-day option at all.
+ */
+export interface Reminder {
+  minutes: number;
+}
+
+/**
  * The stored definition of something on the calendar. For a recurring event
  * this is the *whole series* — occurrences are never persisted.
  */
@@ -56,6 +80,15 @@ export interface TempoEvent {
 
   recurrence: Recurrence | null;
 
+  /**
+   * Applies to every occurrence of the series. Empty means silent.
+   *
+   * Deliberately not patchable per occurrence: `OccurrencePatch` can move an
+   * instance, and its reminders move with it, but "quiet just this once" is a
+   * separate feature that would need its own suppression record.
+   */
+  reminders: Reminder[];
+
   /** Origin date for derived fields — a birth date, a start-of-employment date. */
   anchorDate: CivilDate | null;
   /** Evaluated per occurrence at render time. See `derive.ts`. */
@@ -65,6 +98,16 @@ export interface TempoEvent {
   notify: boolean;
   source: EventSource;
   googleEventId: string | null;
+
+  /**
+   * Set means deleted. The row stays, so a delete is reversible and a version
+   * log written against it still has something to point at.
+   *
+   * Everything that renders the calendar reads the store's `events`, which
+   * holds only live rows — this field is what the store partitions on, not
+   * something the views are expected to check.
+   */
+  deletedAt: string | null;
 
   createdAt: string;
   updatedAt: string;
@@ -131,4 +174,23 @@ export interface Category {
   name: string;
   color: string;
   sortOrder: number;
+}
+
+/** What produced a version. Ordered roughly by how much it changed. */
+export type VersionReason = 'edit' | 'move' | 'resize' | 'status' | 'delete';
+
+/**
+ * One recorded shape of an entry, from before a change landed.
+ *
+ * The snapshot carries the event *and its exceptions together*. Versioning the
+ * row alone would miss every per-occurrence edit — moving one instance of a
+ * series writes an override and leaves the event untouched — and those are
+ * exactly the edits most worth being able to take back.
+ */
+export interface EventVersion {
+  id: string;
+  eventId: string;
+  snapshot: { event: TempoEvent; overrides: OccurrenceOverride[] };
+  reason: VersionReason;
+  createdAt: string;
 }

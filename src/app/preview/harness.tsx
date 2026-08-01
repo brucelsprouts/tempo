@@ -29,12 +29,14 @@ function base(id: string, title: string, over: Partial<TempoEvent>): TempoEvent 
     endDate: null,
     timezone: TZ,
     recurrence: null,
+    reminders: [],
     anchorDate: null,
     displayTemplate: null,
     status: null,
     notify: false,
     source: 'tempo',
     googleEventId: null,
+    deletedAt: null,
     createdAt: '',
     updatedAt: '',
     ...over,
@@ -160,6 +162,34 @@ useCalendar.setState({
   events: fixtures(todayIn(TZ)),
   overrides: [],
   categories: CATEGORIES,
+  /**
+   * Two entries already in the trash, so HISTORY has something to draw.
+   *
+   * Without them the whole recovery surface renders as an empty state here and
+   * the harness cannot catch a bug in the part of it that matters — the rows,
+   * their stamps, and the two confirmations. Stamped an hour and a day back so
+   * the list exercises both of `stamp()`'s branches: a bare clock reading for
+   * today, and a dated one for anything older.
+   */
+  deleted: [
+    base('d1', 'Cancelled dentist', {
+      allDay: false,
+      startDate: null,
+      endDate: null,
+      startsAt: instantFromCivil(todayIn(TZ), 11 * 60, TZ).toISOString(),
+      endsAt: instantFromCivil(todayIn(TZ), 12 * 60, TZ).toISOString(),
+      categoryId: 'c4',
+      deletedAt: new Date(Date.now() - 3_600_000).toISOString(),
+    }),
+    base('d2', 'Old reading response', {
+      kind: 'assignment',
+      status: 'todo',
+      startDate: todayIn(TZ),
+      endDate: todayIn(TZ),
+      categoryId: 'c3',
+      deletedAt: new Date(Date.now() - 86_400_000).toISOString(),
+    }),
+  ],
   status: 'ready',
   error: null,
 });

@@ -13,12 +13,18 @@
 
 import { create } from 'zustand';
 import { createClient } from '@/lib/supabase/client';
+import type {
+  CategoryRow,
+  EventRow,
+  OccurrenceOverrideRow,
+} from '@/lib/db/database.types';
 import {
   categoryFromRow,
   eventFromRow,
   eventToRow,
   overrideFromRow,
   overrideKey,
+  versionFromRow,
 } from '@/lib/tempo/mappers';
 import { addDays, diffDays, instantFromCivil, type CivilDate } from '@/lib/tempo/civil';
 import { eventSpan } from '@/lib/tempo/recurrence';
@@ -26,30 +32,18 @@ import type {
   Category,
   EventKind,
   EventStatus,
+  EventVersion,
   Occurrence,
   OccurrenceOverride,
   OccurrencePatch,
   Recurrence,
+  Reminder,
   TempoEvent,
+  VersionReason,
 } from '@/lib/tempo/types';
 
 /** Whether an edit applies to one instance or rewrites the whole series. */
 export type EditScope = 'occurrence' | 'series';
-
-/**
- * An entry the recovery pool is holding, with everything the delete took.
- *
- * The overrides matter as much as the row. Deleting an event drops its
- * exceptions here and cascades them on the server, so an entry restored without
- * them comes back having forgotten which instances were moved or cancelled —
- * silently, and only visibly wrong to whoever moved them.
- */
-export interface DeletedEntry {
-  event: TempoEvent;
-  overrides: OccurrenceOverride[];
-  /** When it went, and the key for the whole batch one delete removed. */
-  at: number;
-}
 
 export interface EventDraft {
   title: string;
@@ -61,6 +55,7 @@ export interface EventDraft {
   endMinutes?: number;
   categoryId?: string | null;
   recurrence?: Recurrence | null;
+  reminders?: Reminder[];
   anchorDate?: CivilDate | null;
   displayTemplate?: string | null;
   notify?: boolean;
@@ -78,15 +73,23 @@ interface CalendarState {
   error: string | null;
 
   /**
-   * What was deleted this session, newest first.
+   * The trash: rows whose `deleted_at` is set, newest first.
    *
-   * In memory and nowhere else: `events` has no `deleted_at` and adding one is a
-   * migration. The failure this catches — "I deleted that by accident" — is
-   * noticed in seconds, so a pool that lives as long as the tab covers it. Every
-   * surface that shows the pool has to say that plainly rather than implying an
-   * archive.
+   * A separate list rather than a flag every view has to remember to check.
+   * `events` still means "live", so the grid, the year view and the list all
+   * kept working untouched when deletion stopped being permanent.
    */
-  recentlyDeleted: DeletedEntry[];
+  deleted: TempoEvent[];
+
+  /**
+   * The versions of one entry, and which entry they belong to.
+   *
+   * Loaded on demand rather than with the calendar: history is a surface you
+   * open, and fetching every version of every entry at startup would be paying
+   * for it on every load instead.
+   */
+  versions: EventVersion[];
+  versionsFor: string | null;
 
   load: () => Promise<void>;
   createEvent: (draft: EventDraft) => Promise<void>;
@@ -96,8 +99,26 @@ interface CalendarState {
   deleteEvent: (id: string) => Promise<void>;
   deleteEvents: (ids: string[]) => Promise<void>;
   restoreDeleted: (eventId: string) => Promise<void>;
-  /** Drop one entry, or the whole pool when called with nothing. */
-  purgeDeleted: (eventId?: string) => void;
+  /**
+   * The one hard delete in the app. One entry, or the whole trash.
+   *
+   * Irreversible, and it takes the entry's exceptions with it by cascade — so
+   * every caller asks first.
+   */
+  purgeDeleted: (eventId?: string) => Promise<void>;
+  /**
+   * Start and stop listening for changes made elsewhere.
+   *
+   * Separate from `load()` because they answer different questions — one is
+   * "what is there", the other is "what changed since" — and because the
+   * subscription needs an owner, which only exists once the load has resolved.
+   */
+  connect: () => void;
+  disconnect: () => void;
+  /** Fill `versions` with one entry's history. */
+  loadVersions: (eventId: string) => Promise<void>;
+  /** Put a recorded shape back. Itself an edit, and itself recorded. */
+  rollbackTo: (versionId: string) => Promise<void>;
   moveOccurrence: (occ: Occurrence, deltaDays: number, scope: EditScope) => Promise<void>;
   /** A selection shifted by one shared delta, keeping the spacing between entries. */
   moveOccurrences: (occs: Occurrence[], deltaDays: number, scope: EditScope) => Promise<void>;
@@ -134,8 +155,14 @@ const DEFAULT_CATEGORIES = [
 
 const DEFAULT_TZ = process.env.NEXT_PUBLIC_TEMPO_TIMEZONE || 'America/Toronto';
 
-/** A safety net, not a log. The twenty-first delete pushes the oldest off. */
-const DELETE_POOL_CAP = 20;
+/**
+ * How long the trash holds an entry.
+ *
+ * Stated in the empty state of the history panel, so it has to be true. Without
+ * it the trash is a second copy of the calendar that grows forever and nobody
+ * ever reads.
+ */
+const TRASH_DAYS = 30;
 
 /**
  * The zone lives in localStorage, not in a table.
@@ -158,6 +185,15 @@ function storedTimezone(): string | null {
 export const useCalendar = create<CalendarState>((set, get) => {
   const supabase = createClient();
 
+  /**
+   * The realtime channel, held outside the store's state.
+   *
+   * It is a socket, not data: nothing renders from it, and putting it in state
+   * would make every subscribe and unsubscribe a re-render of the whole
+   * calendar for a value no component reads.
+   */
+  let channel: ReturnType<typeof supabase.channel> | null = null;
+
   /** Apply optimistically, persist, restore the snapshot if the write fails. */
   async function optimistic(
     apply: () => void,
@@ -167,16 +203,190 @@ export const useCalendar = create<CalendarState>((set, get) => {
       events: get().events,
       overrides: get().overrides,
       categories: get().categories,
-      // The pool is local state like any other. A delete the server refused has
-      // to take its own undo offer back with it — an entry that never actually
-      // left has nothing to restore, and inserting it would collide with itself.
-      recentlyDeleted: get().recentlyDeleted,
+      // The trash is local state like any other. A delete the server refused
+      // has to take its own undo offer back with it — an entry that never
+      // actually left has nothing to restore.
+      deleted: get().deleted,
     };
     apply();
     const { error } = await persist();
     if (error) {
       set({ ...snapshot, error: error.message });
     }
+  }
+
+  /**
+   * Write down the shape an entry has right now, before something changes it.
+   *
+   * Deliberately not awaited and deliberately outside `optimistic()`. A version
+   * is bookkeeping, not the thing the user asked for, and two failures make
+   * that non-negotiable: the migration may not have been run, in which case
+   * awaiting this would make every edit in the app appear to fail; and a
+   * history table that is full or unreachable must degrade to "no history"
+   * rather than to "the calendar is broken". Awaiting it would also put a
+   * round-trip in front of every optimistic update, which is the one thing the
+   * whole store is arranged to avoid.
+   *
+   * It reads state rather than taking a snapshot argument, so "before" is a
+   * fact about when it is called — every call site is the first line of its
+   * mutation, ahead of the `set`.
+   */
+  function captureVersion(eventId: string, reason: VersionReason) {
+    const { ownerId, events, deleted, overrides } = get();
+    if (!ownerId) return;
+
+    // The trash as well as the live list: a version can be captured for an
+    // entry that is already deleted, which is what makes rolling one back to
+    // an older shape possible without restoring it first.
+    const event = events.find((e) => e.id === eventId) ?? deleted.find((e) => e.id === eventId);
+    if (!event) return;
+
+    void supabase
+      .from('event_versions')
+      .insert({
+        owner_id: ownerId,
+        event_id: eventId,
+        reason,
+        snapshot: {
+          event,
+          overrides: overrides.filter((o) => o.eventId === eventId),
+        } as never,
+      })
+      .then(({ error }) => {
+        if (error) warnOnce(error.message);
+      });
+  }
+
+  /**
+   * The stamp a delete writes, and the key for everything it took.
+   *
+   * Chosen here rather than left to the server's `now()` so the row the
+   * calendar is holding and the row on the server agree — an optimistic update
+   * that guesses a different timestamp would show one thing until the next
+   * load and another after it. Forced strictly past the newest entry already in
+   * the trash, which makes it a batch key as well as a time: "what did the last
+   * delete take" has an exact answer, which is what a single UNDO has to cover.
+   */
+  function deleteStamp(): string {
+    const now = new Date().toISOString();
+    const newest = get().deleted[0]?.deletedAt;
+    return newest && newest >= now ? new Date(Date.parse(newest) + 1).toISOString() : now;
+  }
+
+  /**
+   * An entry changed somewhere else.
+   *
+   * Merged by id in every case, never appended: an UPDATE can be the first this
+   * device has heard of a row — it may have been created while this tab was
+   * closed, or the INSERT may simply have been missed — so "update what I have"
+   * and "add what I don't" are the same operation.
+   *
+   * A soft delete crosses the wire as an UPDATE, which is the case a handler
+   * written before Section G would have got wrong: it would have applied the
+   * new `deleted_at` as an ordinary field change and left a deleted entry
+   * sitting on the grid.
+   */
+  function applyRemoteEvent(payload: RemotePayload<EventRow>) {
+    if (payload.eventType === 'DELETE') {
+      const id = payload.old?.id;
+      if (!id) return;
+      set((s) => ({
+        events: s.events.filter((e) => e.id !== id),
+        deleted: s.deleted.filter((e) => e.id !== id),
+        // The server cascaded these; keeping them would leave exceptions
+        // pointing at a row that is gone.
+        overrides: s.overrides.filter((o) => o.eventId !== id),
+      }));
+      return;
+    }
+
+    if (!payload.new) return;
+    const incoming = eventFromRow(payload.new);
+    set((s) => ({
+      events:
+        incoming.deletedAt === null
+          ? replaceById(s.events, incoming)
+          : s.events.filter((e) => e.id !== incoming.id),
+      deleted:
+        incoming.deletedAt === null
+          ? s.deleted.filter((e) => e.id !== incoming.id)
+          : replaceById(s.deleted, incoming),
+    }));
+  }
+
+  function applyRemoteOverride(payload: RemotePayload<OccurrenceOverrideRow>) {
+    if (payload.eventType === 'DELETE') {
+      const id = payload.old?.id;
+      if (!id) return;
+      set((s) => ({ overrides: s.overrides.filter((o) => o.id !== id) }));
+      return;
+    }
+    if (!payload.new) return;
+    const incoming = overrideFromRow(payload.new);
+    set((s) => ({ overrides: replaceById(s.overrides, incoming) }));
+  }
+
+  function applyRemoteCategory(payload: RemotePayload<CategoryRow>) {
+    if (payload.eventType === 'DELETE') {
+      const id = payload.old?.id;
+      if (!id) return;
+      set((s) => ({
+        categories: s.categories.filter((c) => c.id !== id),
+        // Mirrors what `deleteCategory` does locally, and what the column's
+        // own `ON DELETE` will have done on the server.
+        events: s.events.map((e) => (e.categoryId === id ? { ...e, categoryId: null } : e)),
+      }));
+      return;
+    }
+    if (!payload.new) return;
+    const incoming = categoryFromRow(payload.new);
+    set((s) => ({
+      categories: [...s.categories.filter((c) => c.id !== incoming.id), incoming].sort(
+        (a, b) => a.sortOrder - b.sortOrder,
+      ),
+    }));
+  }
+
+  /** The write half of `updateEvent`, without the version capture. */
+  async function writeEvent(id: string, patch: Partial<TempoEvent>) {
+    await optimistic(
+      () =>
+        set((s) => ({
+          events: s.events.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+        })),
+      async () => {
+        const { error } = await supabase.from('events').update(eventToRow(patch)).eq('id', id);
+        return { error };
+      },
+    );
+  }
+
+  /** Move rows into the trash under one shared stamp. */
+  async function softDelete(ids: string[], match: (id: string) => boolean) {
+    if (ids.length === 0) return;
+    // Ahead of the write, so the version records the entry as it stood. A
+    // delete the server then refuses leaves one unused version behind, which
+    // the retention trigger reclaims.
+    for (const id of ids) captureVersion(id, 'delete');
+
+    const at = deleteStamp();
+    await optimistic(
+      () =>
+        set((s) => ({
+          events: s.events.filter((e) => !match(e.id)),
+          // Read off `s` rather than captured beforehand, so the rows the trash
+          // receives and the rows the filter drops are the same rows.
+          deleted: [
+            ...s.events.filter((e) => match(e.id)).map((e) => ({ ...e, deletedAt: at })),
+            ...s.deleted,
+          ],
+        })),
+      async () => {
+        const q = supabase.from('events').update({ deleted_at: at });
+        const { error } = ids.length === 1 ? await q.eq('id', ids[0]) : await q.in('id', ids);
+        return { error };
+      },
+    );
   }
 
   function findOverride(eventId: string, date: CivilDate) {
@@ -307,6 +517,12 @@ export const useCalendar = create<CalendarState>((set, get) => {
     if (patches.size === 0 && overrides.size === 0) return;
     const rewritten = [...overrides.values()];
 
+    // One version per entry actually being touched, and only once the group has
+    // resolved — an occurrence that turned out to be a no-op is not an edit.
+    for (const id of new Set([...patches.keys(), ...rewritten.map((o) => o.eventId)])) {
+      captureVersion(id, 'move');
+    }
+
     await optimistic(
       () =>
         set((s) => ({
@@ -354,7 +570,9 @@ export const useCalendar = create<CalendarState>((set, get) => {
     events: [],
     overrides: [],
     categories: [],
-    recentlyDeleted: [],
+    deleted: [],
+    versions: [],
+    versionsFor: null,
     status: 'idle',
     error: null,
 
@@ -403,13 +621,45 @@ export const useCalendar = create<CalendarState>((set, get) => {
         if (seeded.data) categoryRows = seeded.data;
       }
 
+      /**
+       * One query, partitioned here.
+       *
+       * Two queries — one for live rows, one for the trash — would be two
+       * round-trips for a split this side of the wire can do for nothing, and
+       * they could disagree if a delete landed between them.
+       */
+      const all = (events.data ?? []).map(eventFromRow);
+      const cutoff = new Date(Date.now() - TRASH_DAYS * 86_400_000).toISOString();
+      const expired = all.filter((e) => e.deletedAt !== null && e.deletedAt < cutoff);
+
       set({
         ownerId: user.id,
-        events: (events.data ?? []).map(eventFromRow),
+        events: all.filter((e) => e.deletedAt === null),
+        deleted: all
+          .filter((e) => e.deletedAt !== null && e.deletedAt >= cutoff)
+          .sort((a, b) => (a.deletedAt! < b.deletedAt! ? 1 : -1)),
         overrides: (overrides.data ?? []).map(overrideFromRow),
         categories: categoryRows.map(categoryFromRow),
         status: 'ready',
       });
+
+      /**
+       * Retention, run on the way past.
+       *
+       * Not awaited: nothing on screen is waiting for it, and a calendar that
+       * refused to finish loading because a cleanup failed would be trading a
+       * working app for a tidy table. `lt` on the stamp cannot touch a live
+       * row — its `deleted_at` is null, and null compares to nothing.
+       */
+      if (expired.length > 0) {
+        void supabase
+          .from('events')
+          .delete()
+          .lt('deleted_at', cutoff)
+          .then(({ error }) => {
+            if (error) warnOnce(error.message);
+          });
+      }
     },
 
     createEvent: async (draft) => {
@@ -426,6 +676,7 @@ export const useCalendar = create<CalendarState>((set, get) => {
         notify: draft.notify ?? false,
         source: 'tempo',
         googleEventId: null,
+        deletedAt: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -446,90 +697,184 @@ export const useCalendar = create<CalendarState>((set, get) => {
     },
 
     updateEvent: async (id, patch) => {
-      await optimistic(
-        () =>
-          set((s) => ({
-            events: s.events.map((e) => (e.id === id ? { ...e, ...patch } : e)),
-          })),
-        async () => {
-          const { error } = await supabase.from('events').update(eventToRow(patch)).eq('id', id);
-          return { error };
-        },
-      );
+      captureVersion(id, 'edit');
+      await writeEvent(id, patch);
     },
 
     deleteEvent: async (id) => {
-      await optimistic(
-        () =>
-          set((s) => ({
-            events: s.events.filter((e) => e.id !== id),
-            overrides: s.overrides.filter((o) => o.eventId !== id),
-            // Read off `s` rather than captured beforehand, so the rows the pool
-            // keeps and the rows the two filters above drop are the same rows.
-            recentlyDeleted: remember(
-              s.recentlyDeleted,
-              s.events.filter((e) => e.id === id),
-              s.overrides,
-            ),
-          })),
-        async () => {
-          const { error } = await supabase.from('events').delete().eq('id', id);
-          return { error };
-        },
-      );
+      await softDelete([id], (candidate) => candidate === id);
     },
 
     deleteEvents: async (ids) => {
       const doomed = new Set(ids);
-      if (doomed.size === 0) return;
+      await softDelete([...doomed], (candidate) => doomed.has(candidate));
+    },
+
+    /**
+     * Put one back by clearing the stamp.
+     *
+     * The row never left, so this is an ordinary update — and the exceptions
+     * were never deleted either, which is the whole reason the trash moved into
+     * the database. A restore used to have to remember and re-insert them, and
+     * a series that came back having forgotten which instances were cancelled
+     * was wrong in a way only the person who cancelled them would ever notice.
+     */
+    restoreDeleted: async (eventId) => {
+      const entry = get().deleted.find((e) => e.id === eventId);
+      if (!entry) return;
 
       await optimistic(
         () =>
           set((s) => ({
-            events: s.events.filter((e) => !doomed.has(e.id)),
-            overrides: s.overrides.filter((o) => !doomed.has(o.eventId)),
-            recentlyDeleted: remember(
-              s.recentlyDeleted,
-              s.events.filter((e) => doomed.has(e.id)),
-              s.overrides,
-            ),
+            events: [...s.events, { ...entry, deletedAt: null }],
+            deleted: s.deleted.filter((e) => e.id !== eventId),
           })),
         async () => {
-          const { error } = await supabase.from('events').delete().in('id', [...doomed]);
+          const { error } = await supabase
+            .from('events')
+            .update({ deleted_at: null })
+            .eq('id', eventId);
+          return { error };
+        },
+      );
+    },
+
+    purgeDeleted: async (eventId) => {
+      const ids = eventId ? [eventId] : get().deleted.map((e) => e.id);
+      if (ids.length === 0) return;
+      const doomed = new Set(ids);
+
+      await optimistic(
+        () =>
+          set((s) => ({
+            deleted: s.deleted.filter((e) => !doomed.has(e.id)),
+            // The exceptions go with it, as the cascade will do on the server.
+            // A rollback can only restore a snapshot, not reconstruct one.
+            overrides: s.overrides.filter((o) => !doomed.has(o.eventId)),
+          })),
+        async () => {
+          const { error } = await supabase.from('events').delete().in('id', ids);
           return { error };
         },
       );
     },
 
     /**
-     * Put one back, as an insert.
+     * Listen for what the other tabs and devices are doing.
      *
-     * Not `updateEvent`: the row is gone from the server, so an update would
-     * match nothing, change nothing and report success — the calendar would show
-     * the entry again and lose it on the next load. The exceptions go back the
-     * same way and in the same call, because a series that returns without them
-     * has quietly forgotten which instances were moved or cancelled.
+     * Filtered to this owner server-side rather than sorted out here: RLS
+     * already limits what may be sent, and a filter keeps the socket quiet
+     * instead of waking every client on every write.
+     *
+     * The merge is deliberately blunt — an incoming row wins for the fields it
+     * carries. The one race it does not close is an edit in flight from *this*
+     * device when a slightly older row arrives from the server: the remote row
+     * lands, and this device's own write echoes back a moment later and
+     * restores it. That flickers, briefly, and settles correct. Closing it
+     * properly needs per-row versioning the schema does not have, which is a
+     * larger change than the flicker justifies.
      */
-    restoreDeleted: async (eventId) => {
+    connect: () => {
+      const ownerId = get().ownerId;
+      if (!ownerId || channel) return;
+
+      const filter = `owner_id=eq.${ownerId}`;
+      const on = { event: '*', schema: 'public' } as const;
+
+      channel = supabase
+        .channel('tempo-sync')
+        /**
+         * Through `unknown`, deliberately. The client types a payload's `new`
+         * as `{}` on a delete and as a loose index signature otherwise, so
+         * there is no assignability either way — the row shape is a fact about
+         * our schema that the generic channel type cannot know. The handlers
+         * treat every field as possibly absent, which is what makes this safe
+         * rather than merely quiet.
+         */
+        .on('postgres_changes', { ...on, table: 'events', filter }, (payload) =>
+          applyRemoteEvent(payload as unknown as RemotePayload<EventRow>),
+        )
+        .on('postgres_changes', { ...on, table: 'occurrence_overrides', filter }, (payload) =>
+          applyRemoteOverride(payload as unknown as RemotePayload<OccurrenceOverrideRow>),
+        )
+        .on('postgres_changes', { ...on, table: 'categories', filter }, (payload) =>
+          applyRemoteCategory(payload as unknown as RemotePayload<CategoryRow>),
+        )
+        .subscribe();
+    },
+
+    disconnect: () => {
+      if (!channel) return;
+      supabase.removeChannel(channel);
+      channel = null;
+    },
+
+    loadVersions: async (eventId) => {
+      const { data, error } = await supabase
+        .from('event_versions')
+        .select('*')
+        .eq('event_id', eventId)
+        .order('created_at', { ascending: false });
+
+      // No history is a state this surface has to render anyway — the table may
+      // not exist yet — so a failed read is an empty list, not an error banner
+      // over a calendar that is working fine.
+      if (error) {
+        warnOnce(error.message);
+        set({ versions: [], versionsFor: eventId });
+        return;
+      }
+
+      set({
+        versions: (data ?? [])
+          .map(versionFromRow)
+          .filter((v): v is EventVersion => v !== null),
+        versionsFor: eventId,
+      });
+    },
+
+    /**
+     * Write a recorded shape back over the current one.
+     *
+     * The exceptions are replaced rather than merged: an override created
+     * *after* the version has to go, or the series returns to its old shape
+     * still carrying an instance it never had. And a version of a shape that
+     * was alive restores the entry, because applying an edit to something in
+     * the trash would be an edit nobody can see.
+     */
+    rollbackTo: async (versionId) => {
       const ownerId = get().ownerId;
       if (!ownerId) return;
 
-      const entry = get().recentlyDeleted.find((d) => d.event.id === eventId);
-      if (!entry) return;
-      const { event, overrides } = entry;
+      const version = get().versions.find((v) => v.id === versionId);
+      if (!version) return;
+      const { event, overrides } = version.snapshot;
+
+      // Rolling back is an edit like any other, so it is recorded like one.
+      // Undoing an undo is therefore possible.
+      captureVersion(event.id, 'edit');
+
+      const restored: TempoEvent = { ...event, deletedAt: null };
 
       await optimistic(
         () =>
           set((s) => ({
-            events: [...s.events, event],
-            overrides: [...s.overrides, ...overrides],
-            recentlyDeleted: s.recentlyDeleted.filter((d) => d.event.id !== eventId),
+            events: [...s.events.filter((e) => e.id !== event.id), restored],
+            deleted: s.deleted.filter((e) => e.id !== event.id),
+            overrides: [...s.overrides.filter((o) => o.eventId !== event.id), ...overrides],
           })),
         async () => {
-          const restored = await supabase
+          const written = await supabase
             .from('events')
-            .insert({ id: event.id, owner_id: ownerId, title: event.title, ...eventToRow(event) });
-          if (restored.error) return { error: restored.error };
+            .update({ ...eventToRow(restored), deleted_at: null })
+            .eq('id', event.id);
+          if (written.error) return { error: written.error };
+
+          const cleared = await supabase
+            .from('occurrence_overrides')
+            .delete()
+            .eq('event_id', event.id);
+          if (cleared.error) return { error: cleared.error };
 
           if (overrides.length === 0) return { error: null };
           const { error } = await supabase.from('occurrence_overrides').insert(
@@ -547,15 +892,9 @@ export const useCalendar = create<CalendarState>((set, get) => {
       );
     },
 
-    purgeDeleted: (eventId) =>
-      set((s) => ({
-        recentlyDeleted: eventId
-          ? s.recentlyDeleted.filter((d) => d.event.id !== eventId)
-          : [],
-      })),
-
     moveOccurrence: async (occ, deltaDays, scope) => {
       if (occ.readOnly || deltaDays === 0) return;
+      captureVersion(occ.eventId, 'move');
 
       // A one-off event has no series to distinguish from, so it always moves whole.
       const wholeSeries = scope === 'series' || !occ.event.recurrence;
@@ -569,7 +908,7 @@ export const useCalendar = create<CalendarState>((set, get) => {
       }
 
       const ev = occ.event;
-      await get().updateEvent(ev.id, shiftEvent(ev, deltaDays, deltaDays, get().timezone));
+      await writeEvent(ev.id, shiftEvent(ev, deltaDays, deltaDays, get().timezone));
     },
 
     /** Every entry by the same number of days, so the spacing survives. */
@@ -598,6 +937,7 @@ export const useCalendar = create<CalendarState>((set, get) => {
       const nextStart = edge === 'start' ? addDays(occ.date, deltaDays) : occ.date;
       const nextEnd = edge === 'end' ? addDays(occ.endDate, deltaDays) : occ.endDate;
       if (nextEnd < nextStart) return; // refuse to invert the bar
+      captureVersion(occ.eventId, 'resize');
 
       const wholeSeries = scope === 'series' || !occ.event.recurrence;
       if (!wholeSeries) {
@@ -608,12 +948,13 @@ export const useCalendar = create<CalendarState>((set, get) => {
       const ev = occ.event;
       const startDelta = edge === 'start' ? deltaDays : 0;
       const endDelta = edge === 'end' ? deltaDays : 0;
-      await get().updateEvent(ev.id, shiftEvent(ev, startDelta, endDelta, get().timezone));
+      await writeEvent(ev.id, shiftEvent(ev, startDelta, endDelta, get().timezone));
     },
 
     setOccurrenceTime: async (occ, startMinutes, endMinutes, scope) => {
       if (occ.readOnly || occ.allDay) return;
       if (endMinutes <= startMinutes) return;
+      captureVersion(occ.eventId, 'edit');
 
       const wholeSeries = scope === 'series' || !occ.event.recurrence;
       if (!wholeSeries) {
@@ -624,7 +965,7 @@ export const useCalendar = create<CalendarState>((set, get) => {
       const ev = occ.event;
       const span = eventSpan(ev);
       if (!span) return;
-      await get().updateEvent(ev.id, {
+      await writeEvent(ev.id, {
         startsAt: instantFromCivil(span.start, startMinutes, ev.timezone).toISOString(),
         endsAt: instantFromCivil(span.end, endMinutes, ev.timezone).toISOString(),
       });
@@ -632,21 +973,24 @@ export const useCalendar = create<CalendarState>((set, get) => {
 
     cancelOccurrence: async (occ) => {
       if (occ.readOnly) return;
-      // A one-off has nothing to except out of; delete the row instead.
+      // A one-off has nothing to except out of; delete the row instead — which
+      // takes its own snapshot, under the same reason this one would use.
       if (!occ.event.recurrence) {
         await get().deleteEvent(occ.eventId);
         return;
       }
+      captureVersion(occ.eventId, 'delete');
       await patchOccurrence(occ, {}, true);
     },
 
     setStatus: async (occ, status) => {
       if (occ.readOnly) return;
+      captureVersion(occ.eventId, 'status');
       if (occ.event.recurrence) {
         await patchOccurrence(occ, { status });
         return;
       }
-      await get().updateEvent(occ.eventId, { status });
+      await writeEvent(occ.eventId, { status });
     },
 
     createCategory: async (name, color) => {
@@ -729,28 +1073,44 @@ export const useCalendar = create<CalendarState>((set, get) => {
 });
 
 /**
- * Push everything one delete removed onto the front of the pool.
+ * Say once that history is unavailable, then stop.
  *
- * The stamp is shared by the whole batch and forced strictly past the newest
- * entry already there, which makes it a batch key as well as a time: "what did
- * the last delete take" has an exact answer, which is what a single UNDO has to
- * cover. Two deletes inside one millisecond would otherwise be one
- * indistinguishable batch — a millisecond of drift on a stamp nobody reads below
- * the minute is the cheaper of the two errors.
+ * The two ways this fires are "the migration has not been run" and "the table
+ * is unreachable", and both of them fire on *every* edit. One line in the
+ * console is a diagnosis; one per keystroke is noise that buries it.
  */
-function remember(
-  pool: DeletedEntry[],
-  events: TempoEvent[],
-  overrides: OccurrenceOverride[],
-): DeletedEntry[] {
-  if (events.length === 0) return pool;
-  const at = Math.max(Date.now(), (pool[0]?.at ?? 0) + 1);
-  const taken = events.map((event) => ({
-    event,
-    overrides: overrides.filter((o) => o.eventId === event.id),
-    at,
-  }));
-  return [...taken, ...pool].slice(0, DELETE_POOL_CAP);
+/**
+ * What a `postgres_changes` callback hands over. Narrowed to the two fields
+ * this store reads — `old` carries only the primary key on a delete.
+ */
+interface RemotePayload<Row> {
+  eventType: 'INSERT' | 'UPDATE' | 'DELETE';
+  new?: Row;
+  old?: { id?: string };
+}
+
+/**
+ * Replace by id, or append when it is new.
+ *
+ * Order is preserved for rows that were already there, which matters more than
+ * it looks: the list view and the trash both read these arrays in order, and an
+ * entry that jumped to the bottom every time another device touched it would
+ * make a shared calendar visibly restless.
+ */
+function replaceById<T extends { id: string }>(list: T[], incoming: T): T[] {
+  const at = list.findIndex((item) => item.id === incoming.id);
+  if (at === -1) return [...list, incoming];
+  const next = [...list];
+  next[at] = incoming;
+  return next;
+}
+
+let historyWarned = false;
+
+function warnOnce(message: string) {
+  if (historyWarned) return;
+  historyWarned = true;
+  console.warn(`[tempo] history unavailable — edits are fine, versions are not being kept: ${message}`);
 }
 
 /**
@@ -765,6 +1125,11 @@ function remember(
  *
  * `notify`, `source` and the identity fields are deliberately absent: they are
  * not the form's to state, and an edit must not reset them.
+ *
+ * `reminders` is here, unlike `notify`, precisely because it *is* the form's to
+ * state — the control is in the entry form, so an omitted value means the user
+ * cleared it rather than that the caller didn't know. Every caller must send
+ * the current list, the same contract `title` has.
  */
 function draftFields(draft: EventDraft, tz: string) {
   return {
@@ -773,6 +1138,7 @@ function draftFields(draft: EventDraft, tz: string) {
     kind: draft.kind,
     categoryId: draft.categoryId ?? null,
     recurrence: draft.recurrence ?? null,
+    reminders: draft.reminders ?? [],
     anchorDate: draft.anchorDate ?? null,
     displayTemplate: draft.displayTemplate ?? null,
     status: draft.status ?? (draft.kind === 'assignment' ? 'todo' : null),
