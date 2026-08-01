@@ -101,16 +101,24 @@ export function YearView({ year, onYear, onOpenDay, selectedDay }: Props) {
         */}
         <div className="flex items-center gap-1">
           <YearStep label="‹" onClick={() => onYear(year - 1)} title="Previous year" />
-          <div className="w-[116px]">
+          <div className="w-[132px]">
+            {/*
+              The right inset is widened here rather than in `inputClass`,
+              which every field in the app shares. Only a `<select>` has an
+              arrow drawn inside its right edge, and only this one is narrow
+              enough for its value to reach it — the others hold prose across
+              a full column. Widening the shared inset would push text off
+              centre in a dozen text fields to buy clearance in one.
+            */}
             <select
               value={year}
               onChange={(e) => onYear(Number(e.target.value))}
               aria-label="Year"
-              className={`${inputClass} tabular-nums`}
+              className={`${inputClass} pr-7 tabular-nums`}
             >
               {years.map((y) => (
                 <option key={y} value={y}>
-                  {y === thisYear ? `${y} · TODAY` : y}
+                  {y}
                 </option>
               ))}
             </select>

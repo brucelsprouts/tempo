@@ -110,7 +110,6 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
   const [anchorDate, setAnchorDate] = useState<CivilDate>(
     existing?.anchorDate ?? occurrence?.date ?? from,
   );
-  const [notify, setNotify] = useState(existing?.notify ?? false);
   const [notes, setNotes] = useState(existing?.notes ?? '');
 
   // A birthday is the general machinery with the dials pre-set, not a special
@@ -175,7 +174,10 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
       recurrence: buildRecurrence(),
       anchorDate: effectiveTemplate ? effectiveAnchor : null,
       displayTemplate: effectiveTemplate,
-      notify,
+      // `notify` is deliberately absent. It is the Google mirror flag, and the
+      // mirror does not exist — no route reads it. The column and the field
+      // stay for the day one is written; leaving it out of the draft means an
+      // edit preserves whatever a row already holds rather than resetting it.
       notes: notes.trim() || null,
     } satisfies EventDraft;
 
@@ -337,16 +339,6 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
             ))}
           </select>
         </Field>
-
-        <label className="flex cursor-pointer items-center gap-2.5 self-end border border-hair px-3 py-2.5">
-          <input
-            type="checkbox"
-            checked={notify}
-            onChange={(e) => setNotify(e.target.checked)}
-            className="accent-white"
-          />
-          <span className="text-[11px] text-dim">Mirror to Google for reminders</span>
-        </label>
 
         <div className="col-span-2">
           <Field label="[06] NOTES">
