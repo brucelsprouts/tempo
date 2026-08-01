@@ -11,6 +11,7 @@ import {
 import type { EventKind, Frequency, Occurrence, Recurrence } from '@/lib/tempo/types';
 import type { EntrySeed } from './CalendarShell';
 import { DatePicker } from './DatePicker';
+import { TimePicker } from './TimePicker';
 import { Button, Field, inputClass, SegmentedControl } from './ui';
 
 /**
@@ -61,12 +62,8 @@ const TEMPLATES = [
   { value: 'yearTagged', label: 'YEAR', template: TEMPLATE_PRESETS.yearTagged },
 ] as const;
 
-const toMinutes = (t: string) => {
-  const [h, m] = t.split(':').map(Number);
-  return h * 60 + m;
-};
-const fromMinutes = (n: number) =>
-  `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
+/** The last minute a day holds, and the ceiling on a nudged end time. */
+const LAST_MINUTE = 23 * 60 + 59;
 
 export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange }: Props) {
   const timezone = useCalendar((s) => s.timezone);
@@ -91,16 +88,14 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
   const [endDate, setEndDate] = useState<CivilDate>(
     existing?.endDate ?? occurrence?.endDate ?? seed?.end ?? from,
   );
+  // Minutes from midnight, all the way through. It is what the store, the
+  // expander and the bars already speak, so the form no longer parses a string
+  // back into the number it was handed.
   const seedStart = occurrence?.startMinutes ?? seed?.startMinutes ?? null;
-  const [startTime, setStartTime] = useState(
-    seedStart != null ? fromMinutes(seedStart) : '09:00',
-  );
-  const [endTime, setEndTime] = useState(
-    occurrence?.endMinutes != null
-      ? fromMinutes(occurrence.endMinutes)
-      : seedStart != null
-        ? fromMinutes(Math.min(23 * 60 + 59, seedStart + 60))
-        : '10:00',
+  const [startMinutes, setStartMinutes] = useState(seedStart ?? 9 * 60);
+  const [endMinutes, setEndMinutes] = useState(
+    occurrence?.endMinutes ??
+      (seedStart != null ? Math.min(LAST_MINUTE, seedStart + 60) : 10 * 60),
   );
   const [categoryId, setCategoryId] = useState<string | null>(existing?.categoryId ?? null);
   const [freq, setFreq] = useState<'NONE' | Frequency>(existing?.recurrence?.freq ?? 'NONE');
@@ -122,6 +117,17 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
   const effectiveAnchor = isBirthday ? startDate : anchorDate;
   const recurs = effectiveFreq !== 'NONE';
   const needsAnchor = templateNeedsAnchor(effectiveTemplate);
+
+  /**
+   * Whether the end time is on the same day as the start, and therefore whether
+   * it has to come after it. An entry running Friday 22:00 → Saturday 02:00 is
+   * ordinary, so the floor cannot simply be "always the start time".
+   *
+   * `<=` rather than `===` because `save` normalises an inverted range down to
+   * a single day; a form showing an end date before its start is already
+   * describing one day, whatever the two fields say.
+   */
+  const sameDay = endDate <= startDate;
 
   // Reported on every change, including the first render, so the ghost appears
   // with the form rather than only once a date is touched.
@@ -162,14 +168,21 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
     e.preventDefault();
     if (!title.trim()) return;
 
+    // The end picker's `min` only holds while the two dates agree, and the
+    // dates can be pulled together after the times were set — a Friday 22:00 →
+    // Saturday 02:00 entry dragged back onto one day. Normalised here, beside
+    // the inverted-date case, because this is already the place that decides
+    // what a backwards range means.
+    const end = sameDay ? Math.max(startMinutes, endMinutes) : endMinutes;
+
     const shared = {
       title: title.trim(),
       kind,
       allDay: isBirthday ? true : allDay,
       startDate,
       endDate: endDate < startDate ? startDate : endDate,
-      startMinutes: allDay ? undefined : toMinutes(startTime),
-      endMinutes: allDay ? undefined : toMinutes(endTime),
+      startMinutes: allDay ? undefined : startMinutes,
+      endMinutes: allDay ? undefined : end,
       categoryId,
       recurrence: buildRecurrence(),
       anchorDate: effectiveTemplate ? effectiveAnchor : null,
@@ -280,19 +293,24 @@ export function EventForm({ mode, seed, occurrence, onClose, onDraftDatesChange 
         {!allDay && !isBirthday && (
           <>
             <Field label="FROM">
-              <input
-                type="time"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className={inputClass}
+              <TimePicker
+                label="Start time"
+                value={startMinutes}
+                onChange={(m) => {
+                  setStartMinutes(m);
+                  // The same push the date pair makes, for the same reason: a
+                  // start that overtakes the end leaves a range that reads
+                  // backwards, and correcting it here beats rejecting it later.
+                  if (sameDay && endMinutes < m) setEndMinutes(m);
+                }}
               />
             </Field>
             <Field label="TO">
-              <input
-                type="time"
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                className={inputClass}
+              <TimePicker
+                label="End time"
+                value={endMinutes}
+                min={sameDay ? startMinutes : undefined}
+                onChange={setEndMinutes}
               />
             </Field>
           </>
