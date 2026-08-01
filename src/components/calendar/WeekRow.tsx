@@ -25,11 +25,13 @@ interface Props {
   today: CivilDate;
   colorFor: (categoryId: string | null) => string;
   /**
-   * Where a draft entry would land, if it touches this row — and, mid-drag,
-   * where the bar under the cursor is headed. One dashed band, two callers:
-   * both questions are "what footprint is about to exist here".
+   * Footprints about to exist in this row, dashed. Two callers: the entry form's
+   * draft, which is always one, and a move in flight, which is one per entry
+   * being carried — dragging a lit bar moves the whole selection, and a preview
+   * that drew only the grabbed one made the other three look like they had been
+   * left behind.
    */
-  ghost: { start: CivilDate; end: CivilDate } | null;
+  ghost: readonly { start: CivilDate; end: CivilDate }[];
   /** Occurrence keys drawn with a lit outline. */
   selection: ReadonlySet<string>;
   onOpen: (occ: Occurrence) => void;
@@ -171,23 +173,26 @@ function WeekRowImpl({
    * calendar would rearrange itself while you were still deciding whether to
    * create anything at all. It stacks on top and displaces nothing.
    */
-  const draft = (() => {
-    if (!ghost || !rangesOverlap(ghost.start, ghost.end, weekStart, weekEnd)) return null;
+  const drafts = (() => {
+    const touching = ghost.filter((g) => rangesOverlap(g.start, g.end, weekStart, weekEnd));
+    if (touching.length === 0) return [];
 
     const height = KIND_HEIGHT.event;
     const after =
       laneCount === 0 ? 0 : (laneTops[laneCount - 1] ?? 0) + (laneHeights[laneCount - 1] ?? 0) + LANE_GAP;
-    // Clamped rather than allowed to run past the row: on a full week there is
-    // no free slot, and the honest failure is to sit on the last line of the
-    // budget rather than to draw outside the row and over the week below.
-    const top = Math.min(after, Math.max(0, LANE_BUDGET - height));
 
-    return {
-      startCol: diffDays(maxDate(ghost.start, weekStart), weekStart),
-      endCol: diffDays(minDate(ghost.end, weekEnd), weekStart),
-      top,
+    return touching.map((g, i) => ({
+      startCol: diffDays(maxDate(g.start, weekStart), weekStart),
+      endCol: diffDays(minDate(g.end, weekEnd), weekStart),
+      // Stacked below one another, then clamped rather than allowed to run past
+      // the row: on a full week there is no free slot, and the honest failure is
+      // to sit on the last line of the budget rather than to draw outside the
+      // row and over the week below. Several bands moving together can exhaust
+      // the budget on their own, so they pile up on that last line — which reads
+      // as "and more", and is the truth.
+      top: Math.min(after + i * (height + LANE_GAP), Math.max(0, LANE_BUDGET - height)),
       height,
-    };
+    }));
   })();
 
   // Month label in the gutter whenever a month begins inside this row.
@@ -268,8 +273,9 @@ function WeekRowImpl({
                 />
               ))}
 
-            {draft && (
+            {drafts.map((draft, i) => (
               <div
+                key={i}
                 aria-hidden
                 style={{
                   position: 'absolute',
@@ -283,7 +289,7 @@ function WeekRowImpl({
                 }}
                 className="ml-[4px] border border-dashed border-mute bg-raised/40"
               />
-            )}
+            ))}
           </div>
         </div>
       </div>

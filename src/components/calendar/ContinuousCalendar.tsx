@@ -84,6 +84,9 @@ const AUTOSCROLL_SPEED = 22;
 /** Stable identity for "nothing is selected", so clearing twice re-renders once. */
 const NOTHING: ReadonlySet<string> = new Set();
 
+/** Same reason, for the rows: `WeekRow` is memoised on its props. */
+const EMPTY_GHOSTS: readonly { start: CivilDate; end: CivilDate }[] = [];
+
 /**
  * The one primitive every grid gesture is built on: where the pointer is, as a
  * date.
@@ -432,15 +435,20 @@ export function ContinuousCalendar({
    * land*, which the chip cannot because it follows the cursor rather than the
    * grid. Both together is what makes a cross-row drag legible.
    */
-  const dragGhost = useMemo(() => {
+  const dragGhosts = useMemo(() => {
     if (!drag || !dropDate) return null;
     const delta = diffDays(dropDate, drag.grab);
     if (delta === 0) return null;
-    return {
-      start: addDays(drag.occ.date, delta),
-      end: addDays(drag.occ.endDate, delta),
-    };
-  }, [drag, dropDate]);
+    // Everything the drop will actually move, which is the whole selection when
+    // the grabbed bar is part of it — the same test `handleDragEnd` applies, so
+    // what is previewed and what is written cannot disagree.
+    const carried =
+      selection.has(drag.occ.key) && selected.length > 1 ? selected : [drag.occ];
+    return carried.map((occ) => ({
+      start: addDays(occ.date, delta),
+      end: addDays(occ.endDate, delta),
+    }));
+  }, [drag, dropDate, selection, selected]);
 
   // ------------------------------------------------------- resize and lasso
 
@@ -788,7 +796,7 @@ export function ContinuousCalendar({
                     weekIndex={item.index}
                     today={today}
                     colorFor={colorFor}
-                    ghost={dragGhost ?? ghost ?? null}
+                    ghost={dragGhosts ?? (ghost ? [ghost] : EMPTY_GHOSTS)}
                     selection={selection}
                     onOpen={onOpenOccurrence}
                     onToggleSelect={toggleSelect}

@@ -302,8 +302,11 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
     }
 
     switch (e.key) {
-      case 'n':
-      case 'N':
+      // A rather than N. The letters that matter are A, S and D — new entry,
+      // settings, day — so the hand that drives the calendar never leaves home
+      // row, and N was the one reach in the set.
+      case 'a':
+      case 'A':
         e.preventDefault();
         newEntry();
         break;

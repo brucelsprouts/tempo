@@ -31,9 +31,9 @@ export const SHORTCUTS: ReadonlyArray<{
   meaning: string;
 }> = [
   { keys: ['SPACE'], meaning: 'Centre on today' },
-  { keys: ['N'], meaning: 'New entry' },
-  { keys: ['D'], meaning: 'Open the focused day' },
+  { keys: ['A'], meaning: 'New entry' },
   { keys: ['S'], meaning: 'Settings' },
+  { keys: ['D'], meaning: 'Open the focused day' },
   { keys: ['1', '2', '3'], joiner: '/', meaning: 'Scroll · List · Year' },
   { keys: ['/'], meaning: 'Filter, in list view' },
   { keys: ['ESC'], meaning: 'Unwind one layer' },

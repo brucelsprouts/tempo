@@ -217,7 +217,7 @@ export function ListView({ onOpen, onNew, searchRef }: Props) {
           onClick={onNew}
           className="label ml-auto border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink"
         >
-          + NEW [N]
+          + NEW [A]
         </button>
       </div>
 
@@ -319,7 +319,7 @@ export function ListView({ onOpen, onNew, searchRef }: Props) {
               <tr>
                 <td colSpan={7} className="px-4 py-16 text-center">
                   <span className="label">
-                    {rows.length === 0 ? 'NO ENTRIES YET · PRESS [N]' : 'NOTHING MATCHES'}
+                    {rows.length === 0 ? 'NO ENTRIES YET · PRESS [A]' : 'NOTHING MATCHES'}
                   </span>
                 </td>
               </tr>

@@ -38,6 +38,17 @@ function timeLabel(minutes: number | null): string | null {
 
 const STATUS_GLYPH = { todo: '[ ]', doing: '[~]', done: '[x]' } as const;
 
+/**
+ * How much of each end of a bar grabs a resize rather than a move.
+ *
+ * 16px, up from 8. A resize is the harder gesture to start — it is aimed at an
+ * edge rather than at a shape — and 8px asked for a precision the gesture does
+ * not deserve. The cost is paid by the move, which keeps everything between the
+ * two: 135px of it on the narrowest column this layout produces, so the easier
+ * gesture is still by far the larger target.
+ */
+const HANDLE_W = 'w-4';
+
 export function EventBar({
   segment,
   weekIndex,
@@ -60,7 +71,7 @@ export function EventBar({
    */
   const fromHandle = useRef(false);
 
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     // Not `occ.key`. A bar crossing a week boundary is drawn as two segments,
     // and dnd-kit keys its node registry by id — under one id the second
     // registration clobbered the first, so both halves translated together and
@@ -99,9 +110,21 @@ export function EventBar({
         // know the height of every kind above it in the row to place itself.
         top: segment.top,
         height: segment.height,
-        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+        // Deliberately *not* translated by `transform`.
+        //
+        // A `DragOverlay` chip already follows the cursor, and the destination
+        // rows already draw a dashed footprint, so moving the source as well
+        // was a third answer to "where is this going" — and the damaging one:
+        // the bar is inside the scroll container, so translating it 400px right
+        // pushed the container's `scrollWidth` out past its own width and the
+        // whole grid could be dragged sideways. The source stays put and dims.
         opacity: isDragging ? 0.25 : 1,
+        // Both ends carry the category colour. Only the left did, which made a
+        // bar look like it pointed somewhere — the eye reads a single coloured
+        // edge as a direction rather than as a boundary. A clipped end is left
+        // bare, so the two ways a bar can stop still look different.
         borderLeft: continuesBefore ? undefined : `2px solid ${color}`,
+        borderRight: continuesAfter ? undefined : `2px solid ${color}`,
         // Ink rather than `hairlit`, which is a hairline colour and disappears
         // against `bg-raised` at the one moment it has to be unmistakable.
         // White is spoken for: it marks today.
@@ -186,7 +209,7 @@ export function EventBar({
             fromHandle.current = true;
             onResizeStart(occ, 'start', e);
           }}
-          className="absolute left-0 top-0 h-full w-2 cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100"
+          className={`absolute left-0 top-0 h-full ${HANDLE_W} cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100`}
           style={{ background: `linear-gradient(90deg, ${color}, transparent)` }}
         />
       )}
@@ -196,7 +219,7 @@ export function EventBar({
             fromHandle.current = true;
             onResizeStart(occ, 'end', e);
           }}
-          className="absolute right-0 top-0 h-full w-2 cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100"
+          className={`absolute right-0 top-0 h-full ${HANDLE_W} cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100`}
           style={{ background: `linear-gradient(270deg, ${color}, transparent)` }}
         />
       )}
