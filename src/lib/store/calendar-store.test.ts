@@ -106,6 +106,7 @@ function seed(events: TempoEvent[]) {
     events,
     overrides: [],
     categories: [],
+    recentlyDeleted: [],
     status: 'ready',
     error: null,
   });
@@ -300,6 +301,135 @@ describe('deleting a selection', () => {
 
     expect(useCalendar.getState().events).toHaveLength(2);
     expect(useCalendar.getState().error).toBe('write rejected');
+  });
+});
+
+// ------------------------------------------------------------------ recovery
+
+/**
+ * The pool answers one failure — "I deleted that by accident" — so the two
+ * things it has to get right are that a restore puts back everything the delete
+ * took, exceptions included, and that it puts it back as a row rather than as an
+ * edit to a row that is no longer there.
+ */
+describe('deletion recovery', () => {
+  const exception = (eventId: string, date: string) => ({
+    id: `o-${eventId}-${date}`,
+    eventId,
+    occurrenceDate: date,
+    cancelled: true,
+    patch: {},
+  });
+
+  it('brings a series back with the exceptions that were deleted with it', async () => {
+    seed([event({ recurrence: { freq: 'WEEKLY' } }), event({ id: 'e2' })]);
+    useCalendar.setState({
+      overrides: [
+        exception('e1', '2026-08-17'),
+        exception('e1', '2026-08-24'),
+        exception('e2', '2026-08-17'),
+      ],
+    });
+
+    await useCalendar.getState().deleteEvent('e1');
+
+    // Captured, not merely dropped: the DB cascades these and nothing else is
+    // holding them.
+    expect(useCalendar.getState().overrides.map((o) => o.eventId)).toEqual(['e2']);
+    expect(useCalendar.getState().recentlyDeleted[0].overrides).toHaveLength(2);
+
+    await useCalendar.getState().restoreDeleted('e1');
+
+    const back = useCalendar.getState().overrides.filter((o) => o.eventId === 'e1');
+    expect(back.map((o) => o.occurrenceDate)).toEqual(['2026-08-17', '2026-08-24']);
+    // A cancelled instance that came back uncancelled is the failure this whole
+    // capture exists to prevent.
+    expect(back.every((o) => o.cancelled)).toBe(true);
+    expect(useCalendar.getState().events).toHaveLength(2);
+    expect(useCalendar.getState().recentlyDeleted).toHaveLength(0);
+  });
+
+  it('restores by inserting, since an update would write to nothing', async () => {
+    seed([event({})]);
+    useCalendar.setState({ overrides: [exception('e1', '2026-08-17')] });
+
+    await useCalendar.getState().deleteEvent('e1');
+    await useCalendar.getState().restoreDeleted('e1');
+
+    expect(recorded.filter((c) => c.op === 'update')).toHaveLength(0);
+    expect(recorded.filter((c) => c.table === 'events' && c.op === 'insert')).toHaveLength(1);
+    expect(
+      recorded.filter((c) => c.table === 'occurrence_overrides' && c.op === 'insert'),
+    ).toHaveLength(1);
+  });
+
+  it('gives one delete one stamp, whatever it took', async () => {
+    seed([event({ id: 'e1' }), event({ id: 'e2' }), event({ id: 'e3' })]);
+
+    await useCalendar.getState().deleteEvents(['e1', 'e2']);
+    await useCalendar.getState().deleteEvent('e3');
+
+    const pool = useCalendar.getState().recentlyDeleted;
+    // Newest first, and the pair deleted together share the stamp a single UNDO
+    // is keyed on.
+    expect(pool.map((d) => d.event.id)).toEqual(['e3', 'e1', 'e2']);
+    expect(pool[1].at).toBe(pool[2].at);
+    expect(pool[0].at).toBeGreaterThan(pool[1].at);
+  });
+
+  it('caps at twenty and drops the oldest', async () => {
+    seed(Array.from({ length: 25 }, (_, i) => event({ id: `e${i}` })));
+
+    for (let i = 0; i < 25; i++) await useCalendar.getState().deleteEvent(`e${i}`);
+
+    const pool = useCalendar.getState().recentlyDeleted;
+    expect(pool).toHaveLength(20);
+    expect(pool[0].event.id).toBe('e24');
+    expect(pool.at(-1)!.event.id).toBe('e5');
+  });
+
+  it('takes the undo offer back when the delete itself is rejected', async () => {
+    seed([event({})]);
+    shouldFail = true;
+
+    await useCalendar.getState().deleteEvent('e1');
+
+    expect(useCalendar.getState().events).toHaveLength(1);
+    // An entry that never left has nothing to restore, and offering to insert it
+    // would collide with the row still sitting there.
+    expect(useCalendar.getState().recentlyDeleted).toHaveLength(0);
+  });
+
+  it('rolls a rejected restore back into the pool', async () => {
+    seed([event({})]);
+    await useCalendar.getState().deleteEvent('e1');
+    shouldFail = true;
+
+    await useCalendar.getState().restoreDeleted('e1');
+
+    expect(useCalendar.getState().events).toHaveLength(0);
+    expect(useCalendar.getState().recentlyDeleted).toHaveLength(1);
+    expect(useCalendar.getState().error).toBe('write rejected');
+  });
+
+  it('covers a one-off skipped through cancelOccurrence, which deletes it', async () => {
+    const e = event({});
+    seed([e]);
+
+    await useCalendar.getState().cancelOccurrence(occurrenceOf(e, '2026-08-10'));
+
+    expect(useCalendar.getState().recentlyDeleted[0].event.id).toBe('e1');
+  });
+
+  it('purges one entry, or the lot', async () => {
+    seed([event({ id: 'e1' }), event({ id: 'e2' })]);
+    await useCalendar.getState().deleteEvents(['e1', 'e2']);
+
+    useCalendar.getState().purgeDeleted('e1');
+    expect(useCalendar.getState().recentlyDeleted.map((d) => d.event.id)).toEqual(['e2']);
+
+    useCalendar.getState().purgeDeleted();
+    expect(useCalendar.getState().recentlyDeleted).toHaveLength(0);
   });
 });
 

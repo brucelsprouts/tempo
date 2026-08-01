@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { useCalendar } from '@/lib/store/calendar-store';
+import { useCalendar, type DeletedEntry } from '@/lib/store/calendar-store';
 import {
   getServerViewSnapshot,
   getViewSnapshot,
@@ -15,6 +15,7 @@ import { DayModal } from './DayModal';
 import { EventForm } from './EventForm';
 import { ListView } from './ListView';
 import { Settings } from './Settings';
+import { Toast } from './Toast';
 import { YearView } from './YearView';
 import { Modal, type ScrimCutout } from './ui';
 
@@ -70,6 +71,8 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   const dismissError = useCalendar((s) => s.dismissError);
   const timezone = useCalendar((s) => s.timezone);
   const eventCount = useCalendar((s) => s.events.length);
+  const recentlyDeleted = useCalendar((s) => s.recentlyDeleted);
+  const restoreDeleted = useCalendar((s) => s.restoreDeleted);
 
   const view = useSyncExternalStore(subscribeView, getViewSnapshot, getServerViewSnapshot);
   const today = todayIn(timezone);
@@ -79,6 +82,9 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   const [year, setYear] = useState<number | null>(null);
   const [ghost, setGhost] = useState<{ start: CivilDate; end: CivilDate } | null>(null);
   const [band, setBand] = useState<ScrimCutout | null>(null);
+  const [toast, setToast] = useState<{ at: number; entries: DeletedEntry[] } | null>(null);
+  /** The batch stamp already shown, so a shrinking pool doesn't re-announce. */
+  const announced = useRef(0);
 
   const activeYear = year ?? parts(today).year;
   const top = overlays[overlays.length - 1] ?? null;
@@ -141,6 +147,47 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   }, []);
 
   /**
+   * The toast follows the pool, not the delete.
+   *
+   * Two things delete — the entry form and the grid's selection — and neither
+   * reports back up here. The pool is the one place both of them land, so this
+   * watches for a batch newer than the last one announced rather than asking to
+   * be told. Entries share a stamp with everything their delete removed, which
+   * is what makes a single UNDO cover exactly one delete.
+   */
+  useEffect(() => {
+    const newest = recentlyDeleted[0];
+    if (!newest || newest.at <= announced.current) return;
+    announced.current = newest.at;
+    setToast({ at: newest.at, entries: recentlyDeleted.filter((d) => d.at === newest.at) });
+  }, [recentlyDeleted]);
+
+  /**
+   * A rejected delete rolls the pool back with everything else, which would
+   * otherwise strand a toast offering to undo something that never left.
+   * Derived rather than cleared in an effect, so it cannot disagree with the
+   * pool for a frame.
+   */
+  const liveToast = toast && recentlyDeleted.some((d) => d.at === toast.at) ? toast : null;
+
+  const dismissToast = useCallback(() => setToast(null), []);
+
+  const undoDelete = useCallback(async () => {
+    if (!toast) return;
+    setToast(null);
+    /**
+     * One insert per entry, sequentially.
+     *
+     * Not batched the way a group move is: each restore is its own row, and a
+     * failure partway leaves a state you can describe and finish by hand —
+     * whatever failed is still in the pool and still has a RESTORE beside it in
+     * settings. Sequential because two optimistic writes in flight would
+     * snapshot each other half-applied.
+     */
+    for (const entry of toast.entries) await restoreDeleted(entry.event.id);
+  }, [toast, restoreDeleted]);
+
+  /**
    * The keymap reads current state, so it is rebuilt every render — but the
    * listener must not be, or a fast key press during a re-subscribe is simply
    * dropped. The window subscription is therefore permanent and indirects
@@ -167,6 +214,10 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
      * already dismissed.
      */
     if (e.key === 'Escape') {
+      // The toast is not a layer, so it goes on the way past and the press is
+      // still spent on whatever is — closing a modal and clearing a toast on one
+      // Escape is right, and making the toast eat a press would not be.
+      setToast(null);
       if (overlays.length > 0) {
         pop();
       } else if (!calendarRef.current?.unwind() && typing) {
@@ -175,6 +226,27 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
         // a layer — in the scroll view there is nothing to be typing into.
         target.blur();
       }
+      return;
+    }
+
+    /**
+     * The one chord the app claims, and only while there is something to undo.
+     *
+     * It sits ahead of the rule below because that rule exists to protect the
+     * browser's chords, and for the few seconds a toast is up this is what
+     * ⌘Z means. Not in a text field, where it still means "undo my typing", and
+     * not with Shift, which is redo.
+     */
+    if (
+      (e.metaKey || e.ctrlKey) &&
+      !e.altKey &&
+      !e.shiftKey &&
+      (e.key === 'z' || e.key === 'Z') &&
+      liveToast &&
+      !typing
+    ) {
+      e.preventDefault();
+      void undoDelete();
       return;
     }
 
@@ -355,18 +427,34 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
         )}
       </div>
 
-      <footer className="flex shrink-0 items-center gap-4 border-t border-hair px-4 py-2">
-        <span className="label">
-          {status === 'loading' ? 'SYNCING' : status === 'error' ? 'ERROR' : 'ONLINE'}
-        </span>
-        <span className="label">{eventCount} ENTRIES</span>
-
-        {error && (
-          <button onClick={dismissError} className="label ml-auto text-dim hover:text-ink">
-            ! {error.slice(0, 60).toUpperCase()} — DISMISS
-          </button>
+      {/* The toast is anchored to the footer rather than to the viewport, so
+          "above the footer" is a fact about the layout instead of a measurement
+          that has to be kept in step with it. Keyed on the batch, so a second
+          delete replaces the first and restarts its clock rather than stacking a
+          second UNDO over the older one. */}
+      <div className="relative shrink-0">
+        {liveToast && (
+          <Toast
+            key={liveToast.at}
+            entries={liveToast.entries}
+            onUndo={undoDelete}
+            onDismiss={dismissToast}
+          />
         )}
-      </footer>
+
+        <footer className="flex items-center gap-4 border-t border-hair px-4 py-2">
+          <span className="label">
+            {status === 'loading' ? 'SYNCING' : status === 'error' ? 'ERROR' : 'ONLINE'}
+          </span>
+          <span className="label">{eventCount} ENTRIES</span>
+
+          {error && (
+            <button onClick={dismissError} className="label ml-auto text-dim hover:text-ink">
+              ! {error.slice(0, 60).toUpperCase()} — DISMISS
+            </button>
+          )}
+        </footer>
+      </div>
 
       {/* Only the top of the stack renders. Two live overlays would mean two
           scrims, and the one underneath would darken the one above it. */}
