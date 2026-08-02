@@ -78,6 +78,8 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   const eventCount = useCalendar((s) => s.events.length);
   const undoStack = useCalendar((s) => s.undoStack);
   const undo = useCalendar((s) => s.undo);
+  const isOffline = useCalendar((s) => s.isOffline);
+  const cachedAt = useCalendar((s) => s.cachedAt);
 
   const view = useSyncExternalStore(subscribeView, getViewSnapshot, getServerViewSnapshot);
   const today = todayIn(timezone);
@@ -497,6 +499,11 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
 
   return (
     <div className="safe-shell flex h-full flex-col">
+      {isOffline && cachedAt && (
+        <div className="bg-raised border-b border-hair px-3 py-1.5 text-center text-[10px] tracking-[0.2em] text-dim select-none shrink-0">
+          ⚠️ OFFLINE · VIEWING CACHED CALENDAR (AS OF {new Date(cachedAt).toLocaleString().toUpperCase()})
+        </div>
+      )}
       {/*
         Two rows on a phone, one everywhere else.
 
@@ -555,7 +562,10 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
         <div className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto">
           <button
             onClick={() => newEntry()}
-            className="tap label flex-1 border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink sm:flex-none"
+            disabled={isOffline}
+            className={`tap label flex-1 border border-hair px-2.5 py-1.5 transition-colors sm:flex-none ${
+              isOffline ? 'opacity-50 cursor-default' : 'hover:border-hairlit hover:text-ink'
+            }`}
           >
             + NEW
           </button>
@@ -627,7 +637,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
 
         <footer className="chrome-tight flex items-center gap-4 border-t border-hair px-3 py-2 sm:px-4">
           <span className="label">
-            {status === 'loading' ? 'SYNCING' : status === 'error' ? 'ERROR' : 'ONLINE'}
+            {isOffline ? 'OFFLINE' : (status === 'loading' ? 'SYNCING' : status === 'error' ? 'ERROR' : 'ONLINE')}
           </span>
           <span className="label">{eventCount} ENTRIES</span>
 

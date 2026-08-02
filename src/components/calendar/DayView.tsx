@@ -50,8 +50,8 @@ interface Props {
 export function DayView({ date, occurrences, onOpen, onNew }: Props) {
   const categories = useCalendar((s) => s.categories);
   const setOccurrenceTime = useCalendar((s) => s.setOccurrenceTime);
-
   const timezone = useCalendar((s) => s.timezone);
+  const isOffline = useCalendar((s) => s.isOffline);
   const nowMinutes = useNowMinutes(timezone);
   const isToday = date === todayIn(timezone);
 
@@ -179,7 +179,7 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
   ) {
     e.stopPropagation();
     e.preventDefault();
-    if (occ.readOnly) return;
+    if (occ.readOnly || isOffline) return;
 
     const originY = e.clientY;
     /**

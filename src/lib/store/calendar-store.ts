@@ -91,6 +91,8 @@ interface CalendarState {
   categories: Category[];
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
+  isOffline: boolean;
+  cachedAt: string | null;
 
   /**
    * The trash: rows whose `deleted_at` is set, newest first.
@@ -253,6 +255,7 @@ export const useCalendar = create<CalendarState>((set, get) => {
     persist: () => Promise<{ error: { message: string } | null }>,
     record?: { label: string; touched: Touched },
   ): Promise<boolean> {
+    if (get().isOffline) return false;
     const snapshot: Snapshot = {
       events: get().events,
       overrides: get().overrides,
@@ -696,6 +699,8 @@ export const useCalendar = create<CalendarState>((set, get) => {
     versionsFor: null,
     status: 'idle',
     error: null,
+    isOffline: false,
+    cachedAt: null,
 
     dismissError: () => set({ error: null }),
 
@@ -709,26 +714,114 @@ export const useCalendar = create<CalendarState>((set, get) => {
     },
 
     load: async () => {
-      set({ status: 'loading', error: null });
+      set({ status: 'loading', error: null, isOffline: false, cachedAt: null });
 
       const saved = storedTimezone();
       if (saved) set({ timezone: saved });
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+
+      const isBrowser = typeof window !== 'undefined';
+      let user = null;
+      try {
+        const res = await supabase.auth.getUser();
+        user = res.data.user;
+      } catch (e) {
+        // failed to get user (likely network error)
+      }
+
       if (!user) {
+        if (isBrowser) {
+          const lastUserId = window.localStorage.getItem('tempo-last-user-id');
+          if (lastUserId) {
+            const cachedStr = window.localStorage.getItem(`tempo-cache-${lastUserId}`);
+            if (cachedStr) {
+              try {
+                const cache = JSON.parse(cachedStr);
+                set({
+                  status: 'ready',
+                  isOffline: true,
+                  cachedAt: cache.cachedAt,
+                  ownerId: lastUserId,
+                  events: cache.events,
+                  deleted: cache.deleted,
+                  overrides: cache.overrides,
+                  categories: cache.categories,
+                  error: 'Offline mode: viewing cached calendar',
+                });
+                return;
+              } catch (err) {
+                // ignore malformed cache
+              }
+            }
+          }
+        }
         set({ status: 'error', error: 'Not signed in' });
         return;
       }
 
-      const [events, overrides, categories] = await Promise.all([
-        supabase.from('events').select('*'),
-        supabase.from('occurrence_overrides').select('*'),
-        supabase.from('categories').select('*').order('sort_order'),
-      ]);
+      if (isBrowser) {
+        try {
+          window.localStorage.setItem('tempo-last-user-id', user.id);
+          window.localStorage.setItem('tempo-last-user-email', user.email ?? '');
+        } catch {}
+      }
+
+      let events, overrides, categories;
+      try {
+        const [evRes, ovRes, catRes] = await Promise.all([
+          supabase.from('events').select('*'),
+          supabase.from('occurrence_overrides').select('*'),
+          supabase.from('categories').select('*').order('sort_order'),
+        ]);
+        events = evRes;
+        overrides = ovRes;
+        categories = catRes;
+      } catch (e) {
+        if (isBrowser) {
+          const cachedStr = window.localStorage.getItem(`tempo-cache-${user.id}`);
+          if (cachedStr) {
+            try {
+              const cache = JSON.parse(cachedStr);
+              set({
+                status: 'ready',
+                isOffline: true,
+                cachedAt: cache.cachedAt,
+                ownerId: user.id,
+                events: cache.events,
+                deleted: cache.deleted,
+                overrides: cache.overrides,
+                categories: cache.categories,
+                error: 'Offline mode: viewing cached calendar',
+              });
+              return;
+            } catch (err) {}
+          }
+        }
+        set({ status: 'error', error: 'Database fetch failed: offline' });
+        return;
+      }
 
       const failure = events.error ?? overrides.error ?? categories.error;
       if (failure) {
+        if (isBrowser) {
+          const cachedStr = window.localStorage.getItem(`tempo-cache-${user.id}`);
+          if (cachedStr) {
+            try {
+              const cache = JSON.parse(cachedStr);
+              set({
+                status: 'ready',
+                isOffline: true,
+                cachedAt: cache.cachedAt,
+                ownerId: user.id,
+                events: cache.events,
+                deleted: cache.deleted,
+                overrides: cache.overrides,
+                categories: cache.categories,
+                error: 'Offline mode: viewing cached calendar',
+              });
+              return;
+            } catch (err) {}
+          }
+        }
         set({ status: 'error', error: failure.message });
         return;
       }
@@ -742,26 +835,38 @@ export const useCalendar = create<CalendarState>((set, get) => {
         if (seeded.data) categoryRows = seeded.data;
       }
 
-      /**
-       * One query, partitioned here.
-       *
-       * Two queries — one for live rows, one for the trash — would be two
-       * round-trips for a split this side of the wire can do for nothing, and
-       * they could disagree if a delete landed between them.
-       */
       const all = (events.data ?? []).map(eventFromRow);
       const cutoff = new Date(Date.now() - TRASH_DAYS * 86_400_000).toISOString();
       const expired = all.filter((e) => e.deletedAt !== null && e.deletedAt < cutoff);
+      const loadedEvents = all.filter((e) => e.deletedAt === null);
+      const loadedDeleted = all
+        .filter((e) => e.deletedAt !== null && e.deletedAt >= cutoff)
+        .sort((a, b) => (a.deletedAt! < b.deletedAt! ? 1 : -1));
+      const loadedOverrides = (overrides.data ?? []).map(overrideFromRow);
+      const loadedCategories = categoryRows.map(categoryFromRow);
+
+      if (isBrowser) {
+        try {
+          window.localStorage.setItem(`tempo-cache-${user.id}`, JSON.stringify({
+            cachedAt: new Date().toISOString(),
+            events: loadedEvents,
+            deleted: loadedDeleted,
+            overrides: loadedOverrides,
+            categories: loadedCategories,
+          }));
+        } catch (err) {}
+      }
 
       set({
         ownerId: user.id,
-        events: all.filter((e) => e.deletedAt === null),
-        deleted: all
-          .filter((e) => e.deletedAt !== null && e.deletedAt >= cutoff)
-          .sort((a, b) => (a.deletedAt! < b.deletedAt! ? 1 : -1)),
-        overrides: (overrides.data ?? []).map(overrideFromRow),
-        categories: categoryRows.map(categoryFromRow),
+        events: loadedEvents,
+        deleted: loadedDeleted,
+        overrides: loadedOverrides,
+        categories: loadedCategories,
         status: 'ready',
+        error: null,
+        isOffline: false,
+        cachedAt: null,
       });
 
       /**

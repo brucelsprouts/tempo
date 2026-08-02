@@ -114,8 +114,10 @@ export function EventForm({
   const updateEventFromDraft = useCalendar((s) => s.updateEventFromDraft);
   const deleteEvent = useCalendar((s) => s.deleteEvent);
   const cancelOccurrence = useCalendar((s) => s.cancelOccurrence);
+  const isOffline = useCalendar((s) => s.isOffline);
 
   const existing = occurrence?.event;
+  const readOnly = occurrence?.readOnly || isOffline;
   const today = todayIn(timezone);
   const from = seed?.start ?? occurrence?.date ?? today;
 
@@ -327,7 +329,7 @@ export function EventForm({
           MONTH and YEAR came to be written over the field next to them. The
           spans say `full` rather than `2` so they mean the same thing in both.
       */}
-      <div className="grid flex-1 grid-cols-1 gap-x-4 gap-y-4 overflow-y-auto px-4 py-4 sm:grid-cols-2">
+      <fieldset disabled={readOnly} className="grid flex-1 grid-cols-1 gap-x-4 gap-y-4 overflow-y-auto px-4 py-4 sm:grid-cols-2 disabled:opacity-90">
         <div className="col-span-full">
           <Field label="[00] TITLE">
             <input
@@ -491,16 +493,22 @@ export function EventForm({
             />
           </Field>
         </div>
-      </div>
+      </fieldset>
 
       <div className="shrink-0 space-y-2 border-t border-hair px-4 py-3">
         {/* Wraps, because an edit on a recurring entry puts four buttons in
             here and SAVE is `flex-1` — on a phone the other three were being
             squeezed to their padding. */}
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" variant="primary" className="flex-1">
-            {mode === 'new' ? 'CREATE' : 'SAVE'}
-          </Button>
+          {readOnly ? (
+            <Button type="button" variant="quiet" onClick={onClose} className="flex-1">
+              CLOSE
+            </Button>
+          ) : (
+            <Button type="submit" variant="primary" className="flex-1">
+              {mode === 'new' ? 'CREATE' : 'SAVE'}
+            </Button>
+          )}
 
           {mode === 'edit' && occurrence && (
             <>
@@ -509,7 +517,7 @@ export function EventForm({
                   HISTORY
                 </Button>
               )}
-              {occurrence.event.recurrence && (
+              {!readOnly && occurrence.event.recurrence && (
                 <Button
                   type="button"
                   variant="quiet"
@@ -521,16 +529,18 @@ export function EventForm({
                   SKIP THIS ONE
                 </Button>
               )}
-              <Button
-                type="button"
-                variant="quiet"
-                onClick={async () => {
-                  await deleteEvent(occurrence.eventId);
-                  onClose();
-                }}
-              >
-                DELETE {occurrence.event.recurrence ? 'SERIES' : ''}
-              </Button>
+              {!readOnly && (
+                <Button
+                  type="button"
+                  variant="quiet"
+                  onClick={async () => {
+                    await deleteEvent(occurrence.eventId);
+                    onClose();
+                  }}
+                >
+                  DELETE {occurrence.event.recurrence ? 'SERIES' : ''}
+                </Button>
+              )}
             </>
           )}
         </div>

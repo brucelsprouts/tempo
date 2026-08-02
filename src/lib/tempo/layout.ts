@@ -126,40 +126,75 @@ export function layoutWeek(
   // Greedy lowest-available-lane. Bars are pre-sorted longest-first so the
   // multi-day spine of a week settles into the top lanes and short chips fill
   // in beneath, which keeps lanes stable as you scroll across a boundary.
-  const laneEnds: number[] = [];
+  //
+  // Because they are sorted longest-first, events starting later can be processed
+  // before events starting earlier. We track column-level occupancy per lane so
+  // that a lane's empty days before a long event are not incorrectly blocked.
+  const laneOccupied: boolean[][] = [];
   const assigned: Array<(typeof clipped)[number] & { lane: number }> = [];
 
   for (const c of clipped) {
-    let lane = laneEnds.findIndex((end) => end < c.startCol);
+    let lane = laneOccupied.findIndex((occupied) => {
+      for (let col = c.startCol; col <= c.endCol; col++) {
+        if (occupied[col]) return false;
+      }
+      return true;
+    });
+
     if (lane === -1) {
-      lane = laneEnds.length;
-      laneEnds.push(c.endCol);
-    } else {
-      laneEnds[lane] = c.endCol;
+      lane = laneOccupied.length;
+      laneOccupied.push(new Array(DAYS_PER_WEEK).fill(false));
+    }
+
+    for (let col = c.startCol; col <= c.endCol; col++) {
+      laneOccupied[lane][col] = true;
     }
     assigned.push({ ...c, lane });
   }
 
-  /**
-   * Lane geometry, resolved after assignment rather than during it.
-   *
-   * A lane is as tall as the tallest thing in it, and each lane starts below
-   * the one above — so the offsets can only be known once every bar has a lane.
-   * Measured from the top of the *lane area*, not of the row: `WeekRow` adds
-   * `DAY_HEADER_H` once when it positions the overlay, so the header appears in
-   * exactly one place and cannot be double-counted against the budget.
-   */
-  const laneHeights: number[] = [];
+  // 1. Calculate column heights for each (col, lane) cell.
+  const colHeights = Array.from({ length: DAYS_PER_WEEK }, () => [] as number[]);
   for (const a of assigned) {
     const h = KIND_HEIGHT[a.occurrence.kind];
-    laneHeights[a.lane] = Math.max(laneHeights[a.lane] ?? 0, h);
+    for (let col = a.startCol; col <= a.endCol; col++) {
+      colHeights[col][a.lane] = h;
+    }
   }
 
-  const laneTops: number[] = [];
-  let cursor = 0;
-  for (let i = 0; i < laneHeights.length; i++) {
-    laneTops[i] = cursor;
-    cursor += laneHeights[i] + LANE_GAP;
+  // 2. Compute column-level top offsets for each (col, lane) cell.
+  const colTops = Array.from({ length: DAYS_PER_WEEK }, () => [] as number[]);
+  for (let col = 0; col < DAYS_PER_WEEK; col++) {
+    let currentTop = 0;
+    const maxLane = colHeights[col].length;
+    for (let l = 0; l < maxLane; l++) {
+      colTops[col][l] = currentTop;
+      const h = colHeights[col][l] ?? 0;
+      if (h > 0) {
+        currentTop += h + LANE_GAP;
+      }
+    }
+  }
+
+  // 3. Populate global laneHeights and laneTops (as max of each lane across all columns).
+  // This satisfies the WeekLayout interface and maintains correct total height of the row.
+  const maxLanes = Math.max(0, ...assigned.map((a) => a.lane + 1));
+  const laneHeights: number[] = new Array(maxLanes).fill(0);
+  const laneTops: number[] = new Array(maxLanes).fill(0);
+
+  for (let l = 0; l < maxLanes; l++) {
+    let maxHeight = 0;
+    for (let col = 0; col < DAYS_PER_WEEK; col++) {
+      maxHeight = Math.max(maxHeight, colHeights[col][l] ?? 0);
+    }
+    laneHeights[l] = maxHeight;
+
+    let maxTop = 0;
+    for (let col = 0; col < DAYS_PER_WEEK; col++) {
+      if ((colHeights[col][l] ?? 0) > 0) {
+        maxTop = Math.max(maxTop, colTops[col][l] ?? 0);
+      }
+    }
+    laneTops[l] = maxTop;
   }
 
   const segments: WeekSegment[] = [];
@@ -167,10 +202,15 @@ export function layoutWeek(
   let laneCount = 0;
 
   for (const a of assigned) {
-    // Cut on the lane's full extent, not the bar's. A 28px event sharing a lane
-    // with a 42px task would otherwise be drawn in a row that has already run
-    // out of budget, overlapping the "+N" chip below it.
-    const hidden = laneTops[a.lane] + laneHeights[a.lane] > budget;
+    const h = KIND_HEIGHT[a.occurrence.kind];
+    // A segment's top is the maximum of the top offsets needed in the columns it covers,
+    // ensuring the multi-day bar remains flat across columns.
+    let segmentTop = 0;
+    for (let col = a.startCol; col <= a.endCol; col++) {
+      segmentTop = Math.max(segmentTop, colTops[col][a.lane] ?? 0);
+    }
+
+    const hidden = segmentTop + h > budget;
     if (hidden) {
       for (let col = a.startCol; col <= a.endCol; col++) overflow[col] += 1;
     } else {
@@ -180,10 +220,8 @@ export function layoutWeek(
     segments.push({
       ...a,
       hidden,
-      top: laneTops[a.lane],
-      // Its own height, not its lane's: an event beside a task stays 28px and
-      // top-aligns, rather than being stretched to look like something it isn't.
-      height: KIND_HEIGHT[a.occurrence.kind],
+      top: segmentTop,
+      height: h,
     });
   }
 

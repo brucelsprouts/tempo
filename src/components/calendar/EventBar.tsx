@@ -2,6 +2,7 @@
 
 import { useDraggable } from '@dnd-kit/core';
 import { useRef } from 'react';
+import { useCalendar } from '@/lib/store/calendar-store';
 import type { WeekSegment } from '@/lib/tempo/layout';
 import type { Occurrence } from '@/lib/tempo/types';
 import { DAYS_PER_WEEK } from '@/lib/tempo/layout';
@@ -70,6 +71,7 @@ export function EventBar({
    * propagation, so a press anywhere else on the bar always resets it first.
    */
   const fromHandle = useRef(false);
+  const isOffline = useCalendar((s) => s.isOffline);
 
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     // Not `occ.key`. A bar crossing a week boundary is drawn as two segments,
@@ -80,7 +82,7 @@ export function EventBar({
     // the drag handlers actually read.
     id: `${occ.key}#${weekIndex}`,
     data: { occurrence: occ },
-    disabled: occ.readOnly,
+    disabled: occ.readOnly || isOffline,
   });
 
   const left = startCol;
@@ -138,7 +140,7 @@ export function EventBar({
         tick ? 'text-[11px]' : 'text-[12px]',
         'border-y border-r border-hair transition-colors',
         continuesBefore ? 'border-l border-l-hairlit pl-1' : 'pl-1.5',
-        occ.readOnly ? 'cursor-default' : 'cursor-grab hover:border-hairlit hover:bg-sunken',
+        occ.readOnly || isOffline ? 'cursor-default' : 'cursor-grab hover:border-hairlit hover:bg-sunken',
         occ.event.source === 'google' ? 'opacity-70' : '',
         done ? 'opacity-45' : '',
       ].join(' ')}
@@ -204,7 +206,7 @@ export function EventBar({
           from an end that is actually in this row, which is also what makes the
           cross-week gesture unambiguous: there is exactly one handle per end of
           an entry, however many rows the entry spans. */}
-      {!occ.readOnly && !continuesBefore && (
+      {!occ.readOnly && !isOffline && !continuesBefore && (
         <span
           onPointerDown={(e) => {
             fromHandle.current = true;
@@ -214,7 +216,7 @@ export function EventBar({
           style={{ background: `linear-gradient(90deg, ${color}, transparent)` }}
         />
       )}
-      {!occ.readOnly && !continuesAfter && (
+      {!occ.readOnly && !isOffline && !continuesAfter && (
         <span
           onPointerDown={(e) => {
             fromHandle.current = true;
