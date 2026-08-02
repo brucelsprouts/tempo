@@ -1409,3 +1409,22 @@ describe('undo', () => {
     expect(useCalendar.getState().undoStack).toHaveLength(50);
   });
 });
+
+describe('undo labels', () => {
+  it('labels a move by the gesture, not by the method that wrote it', async () => {
+    const e = event({ title: 'Standup', startDate: '2026-08-10' });
+    useCalendar.setState({ ownerId: 'owner-1', events: [e], undoStack: [] });
+
+    await useCalendar.getState().moveOccurrence(occurrenceOf(e, '2026-08-10'), 1, 'series');
+    expect(useCalendar.getState().undoStack[0].label).toBe('Moved Standup');
+  });
+
+  it('labels a bulk delete by its size', async () => {
+    const a = event({ id: 'a' });
+    const b = event({ id: 'b' });
+    useCalendar.setState({ ownerId: 'owner-1', events: [a, b], deleted: [], undoStack: [] });
+
+    await useCalendar.getState().deleteEvents(['a', 'b']);
+    expect(useCalendar.getState().undoStack[0].label).toBe('Deleted 2 entries');
+  });
+});
