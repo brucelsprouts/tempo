@@ -13,12 +13,15 @@ import { minutesInZone, parts, todayIn } from '@/lib/tempo/civil';
 import type { Occurrence } from '@/lib/tempo/types';
 import { DEFAULT_CATEGORY_COLOR, MONTHS } from './constants';
 import {
+  applyDrag,
   DAY_MINUTES,
   daySegment,
+  FINE_MINUTES,
   labelEvery,
   placeSegments,
   resolveHourHeight,
   showsHalfHours,
+  SNAP_MINUTES,
   zoomIn,
   zoomOut,
   type DaySegment,
@@ -35,8 +38,6 @@ import {
  * half of `DayModal`, which owns the date, the steppers and dismissal, so the
  * chrome lives in one place rather than being negotiated between them.
  */
-
-const SNAP_MINUTES = 15;
 
 interface Props {
   date: CivilDate;
@@ -55,9 +56,7 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
   const isToday = date === todayIn(timezone);
 
   const gridRef = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<{ key: string; startDelta: number; endDelta: number } | null>(
-    null,
-  );
+  const [drag, setDrag] = useState<{ key: string; start: number; end: number } | null>(null);
   const [scrolled, setScrolled] = useState(false);
 
   const zoom = useSyncExternalStore(subscribeZoom, getZoomSnapshot, getServerZoomSnapshot);
@@ -178,26 +177,35 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
     if (occ.readOnly) return;
 
     const originY = e.clientY;
-    const snap = (dy: number) => {
-      const minutes = (dy / hourHeight) * 60;
-      return Math.round(minutes / SNAP_MINUTES) * SNAP_MINUTES;
-    };
+    /**
+     * A block whose drawn edges are both cuts, or whose stored end reads earlier
+     * than its stored start, spans more than this day. `setOccurrenceTime` takes
+     * only minutes and cannot say "and also move it a day", so the drag holds it
+     * still rather than silently truncating it.
+     */
+    const lockDates = segment.continuesBefore || segment.continuesAfter;
+
+    const resolve = (ev: PointerEvent | React.PointerEvent) =>
+      applyDrag({
+        start: segment.top,
+        end: segment.bottom,
+        deltaMinutes: ((ev.clientY - originY) / hourHeight) * 60,
+        mode,
+        // Alt is the deliberate escape from the grid.
+        step: ev.altKey ? FINE_MINUTES : SNAP_MINUTES,
+        lockDates,
+      });
 
     const move = (ev: PointerEvent) => {
-      const d = snap(ev.clientY - originY);
-      setDrag({ key: occ.key, startDelta: mode === 'move' ? d : 0, endDelta: d });
+      const { start, end } = resolve(ev);
+      setDrag({ key: occ.key, start, end });
     };
 
     const finish = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', move);
       setDrag(null);
-      const d = snap(ev.clientY - originY);
-      if (d === 0) return;
-
-      const start = segment.top + (mode === 'move' ? d : 0);
-      const end = segment.bottom + d;
-      if (start < 0 || end > DAY_MINUTES || end <= start) return;
-
+      const { start, end } = resolve(ev);
+      if (start === segment.top && end === segment.bottom) return;
       setOccurrenceTime(occ, start, end, ev.shiftKey ? 'series' : 'occurrence');
     };
 
@@ -258,8 +266,8 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
           <div className="absolute inset-y-0 left-11 right-2">
             {placed.map(({ key, occ, segment, lane, of }) => {
               const active = drag?.key === key ? drag : null;
-              const top = segment.top + (active?.startDelta ?? 0);
-              const bottom = segment.bottom + (active?.endDelta ?? 0);
+              const top = active?.start ?? segment.top;
+              const bottom = active?.end ?? segment.bottom;
               const color = colorFor(occ.categoryId);
               const height = Math.max(18, ((bottom - top) / 60) * hourHeight - 2);
 
@@ -285,18 +293,43 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
                     // from one that genuinely ends at midnight.
                     segment.continuesBefore ? '' : 'border-t',
                     segment.continuesAfter ? '' : 'border-b',
+                    active ? 'cursor-grabbing shadow-[0_6px_18px_rgba(0,0,0,0.6)]' : 'cursor-grab',
                   ].join(' ')}
                 >
-                  {segment.continuesBefore && (
+                  {segment.continuesBefore && height >= 40 && (
                     <div className="label leading-none opacity-70">↑ FROM {shortDate(occ.date)}</div>
                   )}
-                  <div className="truncate leading-tight">{occ.title}</div>
-                  <div className="label mt-0.5">{clockLabel(top)}</div>
-                  {segment.continuesAfter && (
+
+                  {/* Three densities. A 15-minute entry used to render two
+                      stacked lines inside an 18px box and overflow itself. */}
+                  {height >= 40 ? (
+                    <>
+                      <div className="truncate leading-tight">{occ.title}</div>
+                      <div className="label mt-0.5">{clockLabel(top)}</div>
+                    </>
+                  ) : height >= 22 ? (
+                    <div className="flex items-baseline gap-1.5 leading-tight">
+                      <span className="truncate">{occ.title}</span>
+                      <span className="label shrink-0 opacity-70">{clockLabel(top)}</span>
+                    </div>
+                  ) : (
+                    <div className="truncate leading-none">{occ.title}</div>
+                  )}
+
+                  {segment.continuesAfter && height >= 40 && (
                     <div className="label absolute inset-x-1.5 bottom-0.5 leading-none opacity-70">
                       ↓ TO {shortDate(occ.endDate)}
                     </div>
                   )}
+
+                  {/* The readout that turns a drag from an estimate into a
+                      measurement — and makes the quarter-hour snap legible. */}
+                  {active && (
+                    <div className="absolute -right-1 -top-6 z-40 whitespace-nowrap border border-hairlit bg-panel px-1.5 py-0.5 text-[10px] text-bright shadow-[0_4px_12px_rgba(0,0,0,0.6)]">
+                      {clockLabel(top)} – {clockLabel(bottom)}
+                    </div>
+                  )}
+
                   {/* Nothing to grab on an edge that is a clip rather than an end. */}
                   {!segment.continuesAfter && (
                     <span
