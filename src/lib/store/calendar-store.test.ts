@@ -1287,3 +1287,125 @@ describe('saving an edited draft', () => {
     expect(patch).not.toHaveProperty('endMinutes');
   });
 });
+
+// ------------------------------------------------------------------- undo
+
+describe('undo', () => {
+  /**
+   * The stack is the one mechanism behind every action's inverse, so these test
+   * the reconciler through the store rather than the store's own bookkeeping:
+   * what matters is that the calendar comes back, whatever moved it.
+   */
+  it('puts a moved event back', async () => {
+    const e = event({ startDate: '2026-08-10', endDate: '2026-08-10' });
+    useCalendar.setState({ ownerId: 'owner-1', events: [e], undoStack: [] });
+
+    await useCalendar.getState().moveOccurrence(occurrenceOf(e, '2026-08-10'), 5, 'series');
+    expect(useCalendar.getState().events[0].startDate).toBe('2026-08-15');
+
+    await useCalendar.getState().undo();
+    expect(useCalendar.getState().events[0].startDate).toBe('2026-08-10');
+    expect(useCalendar.getState().undoStack).toHaveLength(0);
+  });
+
+  it('puts a resized event back', async () => {
+    const e = event({ startDate: '2026-08-10', endDate: '2026-08-12' });
+    useCalendar.setState({ ownerId: 'owner-1', events: [e], undoStack: [] });
+
+    await useCalendar
+      .getState()
+      .resizeOccurrence(occurrenceOf(e, '2026-08-10', '2026-08-12'), 3, 'end', 'series');
+    expect(useCalendar.getState().events[0].endDate).toBe('2026-08-15');
+
+    await useCalendar.getState().undo();
+    expect(useCalendar.getState().events[0].endDate).toBe('2026-08-12');
+  });
+
+  it('unwinds one action at a time, newest first', async () => {
+    const e = event({ startDate: '2026-08-10', endDate: '2026-08-10' });
+    useCalendar.setState({ ownerId: 'owner-1', events: [e], undoStack: [] });
+
+    await useCalendar.getState().moveOccurrence(occurrenceOf(e, '2026-08-10'), 1, 'series');
+    const once = useCalendar.getState().events[0];
+    await useCalendar.getState().moveOccurrence(occurrenceOf(once, '2026-08-11'), 1, 'series');
+    expect(useCalendar.getState().events[0].startDate).toBe('2026-08-12');
+
+    await useCalendar.getState().undo();
+    expect(useCalendar.getState().events[0].startDate).toBe('2026-08-11');
+    await useCalendar.getState().undo();
+    expect(useCalendar.getState().events[0].startDate).toBe('2026-08-10');
+  });
+
+  /** A delete is an update now, so its undo is one too — no special case. */
+  it('takes an entry back out of the trash', async () => {
+    const e = event({ id: 'e1' });
+    useCalendar.setState({ ownerId: 'owner-1', events: [e], deleted: [], undoStack: [] });
+
+    await useCalendar.getState().deleteEvent('e1');
+    expect(useCalendar.getState().events).toHaveLength(0);
+    expect(useCalendar.getState().deleted).toHaveLength(1);
+
+    await useCalendar.getState().undo();
+    expect(useCalendar.getState().events).toHaveLength(1);
+    expect(useCalendar.getState().deleted).toHaveLength(0);
+  });
+
+  it('removes an entry that undo says was never created', async () => {
+    useCalendar.setState({ ownerId: 'owner-1', events: [], undoStack: [] });
+
+    await useCalendar.getState().createEvent({
+      title: 'New',
+      kind: 'event',
+      allDay: true,
+      startDate: '2026-08-10',
+      endDate: '2026-08-10',
+    });
+    expect(useCalendar.getState().events).toHaveLength(1);
+
+    await useCalendar.getState().undo();
+    expect(useCalendar.getState().events).toHaveLength(0);
+  });
+
+  /** A write the server refused has nothing to take back. */
+  it('records nothing when the write fails', async () => {
+    const e = event({ startDate: '2026-08-10' });
+    useCalendar.setState({ ownerId: 'owner-1', events: [e], undoStack: [] });
+
+    shouldFail = true;
+    await useCalendar.getState().moveOccurrence(occurrenceOf(e, '2026-08-10'), 5, 'series');
+    shouldFail = false;
+
+    expect(useCalendar.getState().undoStack).toHaveLength(0);
+    expect(useCalendar.getState().events[0].startDate).toBe('2026-08-10');
+  });
+
+  it('keeps the entry when the undo itself fails, so it can be retried', async () => {
+    const e = event({ startDate: '2026-08-10' });
+    useCalendar.setState({ ownerId: 'owner-1', events: [e], undoStack: [] });
+    await useCalendar.getState().moveOccurrence(occurrenceOf(e, '2026-08-10'), 5, 'series');
+
+    shouldFail = true;
+    await useCalendar.getState().undo();
+    shouldFail = false;
+
+    expect(useCalendar.getState().undoStack).toHaveLength(1);
+  });
+
+  it('does nothing on an empty stack', async () => {
+    useCalendar.setState({ ownerId: 'owner-1', events: [], undoStack: [] });
+    await expect(useCalendar.getState().undo()).resolves.toBeUndefined();
+  });
+
+  it('evicts the oldest past the cap', async () => {
+    const e = event({ startDate: '2026-08-10' });
+    useCalendar.setState({ ownerId: 'owner-1', events: [e], undoStack: [] });
+
+    for (let i = 0; i < 55; i++) {
+      const current = useCalendar.getState().events[0];
+      await useCalendar
+        .getState()
+        .moveOccurrence(occurrenceOf(current, current.startDate!), 1, 'series');
+    }
+    expect(useCalendar.getState().undoStack).toHaveLength(50);
+  });
+});

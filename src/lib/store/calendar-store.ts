@@ -42,8 +42,21 @@ import type {
   VersionReason,
 } from '@/lib/tempo/types';
 
+import { EMPTY_TOUCHED, planRows, type Snapshot, type Touched } from './undo';
+
 /** Whether an edit applies to one instance or rewrites the whole series. */
 export type EditScope = 'occurrence' | 'series';
+
+/** A safety net, not a log. The fifty-first action pushes the oldest off. */
+const UNDO_CAP = 50;
+
+export interface UndoEntry {
+  /** What the toast says, and what ⌘Z is taking back. */
+  label: string;
+  at: number;
+  before: Snapshot;
+  touched: Touched;
+}
 
 export interface EventDraft {
   title: string;
@@ -144,6 +157,18 @@ interface CalendarState {
   deleteCategory: (id: string) => Promise<void>;
   setTimezone: (tz: string) => void;
   dismissError: () => void;
+
+  /**
+   * What this session did, newest first.
+   *
+   * In memory and nowhere else, and deliberately separate from `event_versions`:
+   * a version log is per-entry and ordered by time, and a group move of six
+   * entries is one action across six rows. Only a stack can express that as one
+   * Cmd-Z. The durable half already exists; this is the reflex.
+   */
+  undoStack: UndoEntry[];
+  /** Take back the last action. */
+  undo: () => Promise<void>;
 }
 
 /** Seeded once, so a fresh calendar has colours to assign immediately. */
@@ -195,12 +220,20 @@ export const useCalendar = create<CalendarState>((set, get) => {
    */
   let channel: ReturnType<typeof supabase.channel> | null = null;
 
-  /** Apply optimistically, persist, restore the snapshot if the write fails. */
+  /**
+   * Apply optimistically, persist, restore the snapshot if the write fails —
+   * and remember the snapshot if it succeeds.
+   *
+   * The snapshot was always taken; it was simply thrown away on success. Undo
+   * is that snapshot kept, which is why it costs a field rather than a
+   * mechanism.
+   */
   async function optimistic(
     apply: () => void,
     persist: () => Promise<{ error: { message: string } | null }>,
-  ) {
-    const snapshot = {
+    record?: { label: string; touched: Touched },
+  ): Promise<boolean> {
+    const snapshot: Snapshot = {
       events: get().events,
       overrides: get().overrides,
       categories: get().categories,
@@ -213,7 +246,19 @@ export const useCalendar = create<CalendarState>((set, get) => {
     const { error } = await persist();
     if (error) {
       set({ ...snapshot, error: error.message });
+      return false;
     }
+    // Only on success. An entry for a rejected write would offer to take back
+    // something that never happened.
+    if (record) {
+      set((s) => ({
+        undoStack: [
+          { label: record.label, at: Date.now(), before: snapshot, touched: record.touched },
+          ...s.undoStack,
+        ].slice(0, UNDO_CAP),
+      }));
+    }
+    return true;
   }
 
   /**
@@ -273,6 +318,16 @@ export const useCalendar = create<CalendarState>((set, get) => {
     const newest = get().deleted[0]?.deletedAt;
     return newest && newest >= now ? new Date(Date.parse(newest) + 1).toISOString() : now;
   }
+
+  /** An entry's title, for a label. Falls back rather than throwing. */
+  function titleOf(id: string): string {
+    const { events, deleted } = get();
+    return (events.find((e) => e.id === id) ?? deleted.find((e) => e.id === id))?.title ?? 'entry';
+  }
+
+  /** The rows an action touched, for the common single-table cases. */
+  const touchedEvents = (ids: string[]): Touched => ({ ...EMPTY_TOUCHED, events: ids });
+  const touchedOverrides = (ids: string[]): Touched => ({ ...EMPTY_TOUCHED, overrides: ids });
 
   /**
    * An entry changed somewhere else.
@@ -348,8 +403,18 @@ export const useCalendar = create<CalendarState>((set, get) => {
     }));
   }
 
-  /** The write half of `updateEvent`, without the version capture. */
-  async function writeEvent(id: string, patch: Partial<TempoEvent>) {
+  /**
+   * The write half of `updateEvent`, without the version capture.
+   *
+   * The record is optional because the label belongs to the *gesture*, not to
+   * the method that finished it: `moveOccurrence` delegating here must still
+   * say "Moved", so it passes its own.
+   */
+  async function writeEvent(
+    id: string,
+    patch: Partial<TempoEvent>,
+    record?: { label: string; touched: Touched },
+  ) {
     await optimistic(
       () =>
         set((s) => ({
@@ -359,6 +424,7 @@ export const useCalendar = create<CalendarState>((set, get) => {
         const { error } = await supabase.from('events').update(eventToRow(patch)).eq('id', id);
         return { error };
       },
+      record ?? { label: `Edited ${titleOf(id)}`, touched: touchedEvents([id]) },
     );
   }
 
@@ -371,6 +437,8 @@ export const useCalendar = create<CalendarState>((set, get) => {
     for (const id of ids) captureVersion(id, 'delete');
 
     const at = deleteStamp();
+    // Read before the rows move, so a one-entry delete says what it took.
+    const label = ids.length === 1 ? `Deleted ${titleOf(ids[0])}` : `Deleted ${ids.length} entries`;
     await optimistic(
       () =>
         set((s) => ({
@@ -387,6 +455,7 @@ export const useCalendar = create<CalendarState>((set, get) => {
         const { error } = ids.length === 1 ? await q.eq('id', ids[0]) : await q.in('id', ids);
         return { error };
       },
+      { label, touched: touchedEvents(ids) },
     );
   }
 
@@ -397,7 +466,12 @@ export const useCalendar = create<CalendarState>((set, get) => {
   }
 
   /** Merge a patch into this occurrence's override, creating one if needed. */
-  async function patchOccurrence(occ: Occurrence, patch: OccurrencePatch, cancelled = false) {
+  async function patchOccurrence(
+    occ: Occurrence,
+    patch: OccurrencePatch,
+    cancelled = false,
+    record?: (override: OccurrenceOverride) => { label: string; touched: Touched },
+  ) {
     const ownerId = get().ownerId;
     if (!ownerId) return;
 
@@ -430,6 +504,10 @@ export const useCalendar = create<CalendarState>((set, get) => {
           { onConflict: 'event_id,occurrence_date' },
         );
         return { error };
+      },
+      record?.(merged) ?? {
+        label: `Edited ${titleOf(occ.eventId)}`,
+        touched: touchedOverrides([merged.id]),
       },
     );
   }
@@ -518,6 +596,9 @@ export const useCalendar = create<CalendarState>((set, get) => {
     if (patches.size === 0 && overrides.size === 0) return;
     const rewritten = [...overrides.values()];
 
+    const moved = patches.size + overrides.size;
+    const movedIds = [...patches.keys(), ...rewritten.map((o) => o.eventId)];
+
     // One version per entry actually being touched, and only once the group has
     // resolved — an occurrence that turned out to be a no-op is not an edit.
     for (const id of new Set([...patches.keys(), ...rewritten.map((o) => o.eventId)])) {
@@ -561,6 +642,15 @@ export const useCalendar = create<CalendarState>((set, get) => {
         }
 
         return { error: null };
+      },
+      {
+        // One gesture, however many rows it reached.
+        label: moved === 1 ? `Moved ${titleOf(movedIds[0])}` : `Moved ${moved} entries`,
+        touched: {
+          events: [...patches.keys()],
+          overrides: rewritten.map((o) => o.id),
+          categories: [],
+        },
       },
     );
   }
@@ -690,6 +780,7 @@ export const useCalendar = create<CalendarState>((set, get) => {
             .insert({ id, owner_id: ownerId, title: event.title, ...eventToRow(event) });
           return { error };
         },
+        { label: `Created ${event.title}`, touched: touchedEvents([id]) },
       );
     },
 
@@ -744,6 +835,13 @@ export const useCalendar = create<CalendarState>((set, get) => {
           const q = supabase.from('events').update({ deleted_at: null });
           const { error } = ids.length === 1 ? await q.eq('id', ids[0]) : await q.in('id', ids);
           return { error };
+        },
+        {
+          label:
+            ids.length === 1
+              ? `Restored ${titleOf(ids[0])}`
+              : `Restored ${ids.length} entries`,
+          touched: touchedEvents(ids),
         },
       );
     },
@@ -901,6 +999,117 @@ export const useCalendar = create<CalendarState>((set, get) => {
       );
     },
 
+    undoStack: [],
+
+    /**
+     * Put the calendar back to before the last action.
+     *
+     * Local state is an assignment; the server needs the difference written to
+     * it, which `planRows` works out once for every action there is. The entry
+     * is only popped once the write lands, so a failed undo can be retried
+     * rather than silently lost.
+     */
+    undo: async () => {
+      const ownerId = get().ownerId;
+      const entry = get().undoStack[0];
+      if (!ownerId || !entry) return;
+
+      const { before, touched } = entry;
+      const live = get();
+
+      /**
+       * Live and trashed rows are one set. Deletion is soft, so a row in the
+       * trash still exists on the server — treating the two lists separately
+       * would plan an insert for a row that was only ever updated.
+       */
+      const events = planRows(
+        [...before.events, ...before.deleted],
+        [...live.events, ...live.deleted],
+        touched.events,
+      );
+      const overrides = planRows(before.overrides, live.overrides, touched.overrides);
+      const categories = planRows(before.categories, live.categories, touched.categories);
+
+      // An undo is an edit, and an edit that leaves no version behind is a hole
+      // in the history surface.
+      for (const e of [...events.update, ...events.insert]) captureVersion(e.id, 'edit');
+
+      const ok = await optimistic(
+        () =>
+          set({
+            events: before.events,
+            overrides: before.overrides,
+            categories: before.categories,
+            deleted: before.deleted,
+          }),
+        async () => {
+          for (const e of [...events.insert, ...events.update]) {
+            const { error } = await supabase
+              .from('events')
+              .upsert({ id: e.id, owner_id: ownerId, title: e.title, ...eventToRow(e) });
+            if (error) return { error };
+          }
+          if (events.remove.length > 0) {
+            const { error } = await supabase.from('events').delete().in('id', events.remove);
+            if (error) return { error };
+          }
+
+          for (const o of [...overrides.insert, ...overrides.update]) {
+            const { error } = await supabase.from('occurrence_overrides').upsert(
+              {
+                id: o.id,
+                owner_id: ownerId,
+                event_id: o.eventId,
+                occurrence_date: o.occurrenceDate,
+                cancelled: o.cancelled,
+                patch: o.patch as never,
+              },
+              { onConflict: 'event_id,occurrence_date' },
+            );
+            if (error) return { error };
+          }
+          if (overrides.remove.length > 0) {
+            const { error } = await supabase
+              .from('occurrence_overrides')
+              .delete()
+              .in('id', overrides.remove);
+            if (error) return { error };
+          }
+
+          for (const c of [...categories.insert, ...categories.update]) {
+            const { error } = await supabase.from('categories').upsert({
+              id: c.id,
+              owner_id: ownerId,
+              name: c.name,
+              color: c.color,
+              sort_order: c.sortOrder,
+            });
+            if (error) return { error };
+          }
+          if (categories.remove.length > 0) {
+            const { error } = await supabase
+              .from('categories')
+              .delete()
+              .in('id', categories.remove);
+            if (error) return { error };
+          }
+
+          return { error: null };
+        },
+      );
+
+      /**
+       * Popped only once the write lands.
+       *
+       * `optimistic` rolled the local state back if it did not, which leaves
+       * this entry still describing a real difference — so it stays, and the
+       * undo can be pressed again. Read from `optimistic`'s own answer rather
+       * than from `state.error`, which may still be holding a message from some
+       * earlier, unrelated failure nobody has dismissed.
+       */
+      if (ok) set((s) => ({ undoStack: s.undoStack.slice(1) }));
+    },
+
     moveOccurrence: async (occ, deltaDays, scope) => {
       if (occ.readOnly || deltaDays === 0) return;
       captureVersion(occ.eventId, 'move');
@@ -908,16 +1117,25 @@ export const useCalendar = create<CalendarState>((set, get) => {
       // A one-off event has no series to distinguish from, so it always moves whole.
       const wholeSeries = scope === 'series' || !occ.event.recurrence;
 
+      const label = `Moved ${occ.title}`;
       if (!wholeSeries) {
-        await patchOccurrence(occ, {
-          startDate: addDays(occ.date, deltaDays),
-          endDate: addDays(occ.endDate, deltaDays),
-        });
+        await patchOccurrence(
+          occ,
+          {
+            startDate: addDays(occ.date, deltaDays),
+            endDate: addDays(occ.endDate, deltaDays),
+          },
+          false,
+          (merged) => ({ label, touched: touchedOverrides([merged.id]) }),
+        );
         return;
       }
 
       const ev = occ.event;
-      await writeEvent(ev.id, shiftEvent(ev, deltaDays, deltaDays, get().timezone));
+      await writeEvent(ev.id, shiftEvent(ev, deltaDays, deltaDays, get().timezone), {
+        label,
+        touched: touchedEvents([occ.eventId]),
+      });
     },
 
     /** Every entry by the same number of days, so the spacing survives. */
@@ -949,15 +1167,22 @@ export const useCalendar = create<CalendarState>((set, get) => {
       captureVersion(occ.eventId, 'resize');
 
       const wholeSeries = scope === 'series' || !occ.event.recurrence;
+      const label = `Resized ${occ.title}`;
       if (!wholeSeries) {
-        await patchOccurrence(occ, { startDate: nextStart, endDate: nextEnd });
+        await patchOccurrence(occ, { startDate: nextStart, endDate: nextEnd }, false, (merged) => ({
+          label,
+          touched: touchedOverrides([merged.id]),
+        }));
         return;
       }
 
       const ev = occ.event;
       const startDelta = edge === 'start' ? deltaDays : 0;
       const endDelta = edge === 'end' ? deltaDays : 0;
-      await writeEvent(ev.id, shiftEvent(ev, startDelta, endDelta, get().timezone));
+      await writeEvent(ev.id, shiftEvent(ev, startDelta, endDelta, get().timezone), {
+        label,
+        touched: touchedEvents([occ.eventId]),
+      });
     },
 
     setOccurrenceTime: async (occ, startMinutes, endMinutes, scope) => {
@@ -966,18 +1191,26 @@ export const useCalendar = create<CalendarState>((set, get) => {
       captureVersion(occ.eventId, 'edit');
 
       const wholeSeries = scope === 'series' || !occ.event.recurrence;
+      const label = `Rescheduled ${occ.title}`;
       if (!wholeSeries) {
-        await patchOccurrence(occ, { startMinutes, endMinutes });
+        await patchOccurrence(occ, { startMinutes, endMinutes }, false, (merged) => ({
+          label,
+          touched: touchedOverrides([merged.id]),
+        }));
         return;
       }
 
       const ev = occ.event;
       const span = eventSpan(ev);
       if (!span) return;
-      await writeEvent(ev.id, {
-        startsAt: instantFromCivil(span.start, startMinutes, ev.timezone).toISOString(),
-        endsAt: instantFromCivil(span.end, endMinutes, ev.timezone).toISOString(),
-      });
+      await writeEvent(
+        ev.id,
+        {
+          startsAt: instantFromCivil(span.start, startMinutes, ev.timezone).toISOString(),
+          endsAt: instantFromCivil(span.end, endMinutes, ev.timezone).toISOString(),
+        },
+        { label, touched: touchedEvents([occ.eventId]) },
+      );
     },
 
     cancelOccurrence: async (occ) => {
@@ -989,17 +1222,24 @@ export const useCalendar = create<CalendarState>((set, get) => {
         return;
       }
       captureVersion(occ.eventId, 'delete');
-      await patchOccurrence(occ, {}, true);
+      await patchOccurrence(occ, {}, true, (merged) => ({
+        label: `Skipped ${occ.title}`,
+        touched: touchedOverrides([merged.id]),
+      }));
     },
 
     setStatus: async (occ, status) => {
       if (occ.readOnly) return;
       captureVersion(occ.eventId, 'status');
+      const label = `Marked ${occ.title} ${status}`;
       if (occ.event.recurrence) {
-        await patchOccurrence(occ, { status });
+        await patchOccurrence(occ, { status }, false, (merged) => ({
+          label,
+          touched: touchedOverrides([merged.id]),
+        }));
         return;
       }
-      await writeEvent(occ.eventId, { status });
+      await writeEvent(occ.eventId, { status }, { label, touched: touchedEvents([occ.eventId]) });
     },
 
     createCategory: async (name, color) => {
@@ -1027,10 +1267,16 @@ export const useCalendar = create<CalendarState>((set, get) => {
           });
           return { error };
         },
+        {
+          label: `Added category ${category.name}`,
+          touched: { ...EMPTY_TOUCHED, categories: [id] },
+        },
       );
     },
 
     updateCategory: async (id, patch) => {
+      // Read before the write, so a colour-only change still names the category.
+      const name = patch.name ?? get().categories.find((c) => c.id === id)?.name ?? 'category';
       await optimistic(
         () =>
           set((s) => ({
@@ -1043,10 +1289,17 @@ export const useCalendar = create<CalendarState>((set, get) => {
           const { error } = await supabase.from('categories').update(patch).eq('id', id);
           return { error };
         },
+        { label: `Renamed category ${name}`, touched: { ...EMPTY_TOUCHED, categories: [id] } },
       );
     },
 
     deleteCategory: async (id) => {
+      // Both halves of what a delete changes, read before it changes them.
+      const name = get().categories.find((c) => c.id === id)?.name ?? 'category';
+      const affectedIds = get()
+        .events.filter((e) => e.categoryId === id)
+        .map((e) => e.id);
+
       await optimistic(
         () =>
           set((s) => ({
@@ -1075,6 +1328,10 @@ export const useCalendar = create<CalendarState>((set, get) => {
 
           const { error } = await supabase.from('categories').delete().eq('id', id);
           return { error };
+        },
+        {
+          label: `Deleted category ${name}`,
+          touched: { events: affectedIds, overrides: [], categories: [id] },
         },
       );
     },
