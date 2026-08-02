@@ -4,20 +4,32 @@ Two sections. **H** gives every mutation an undo, not just deletion. **I**
 rebuilds the focused-day timeline so a block occupies exactly the time it
 occupies, the day can be seen whole, and dragging one lands where you meant.
 
-Neither depends on `supabase/migrations/20260801_history.sql`. See
-"Relationship to Section G" below — the two are designed to land in either
-order.
-
 ---
 
 ## Relationship to Section G
 
-Section G (`2026-08-01-history-design.md`) is specced and unimplemented. It adds
-soft delete and a durable per-event `event_versions` log, and it removes the
-in-memory `recentlyDeleted` pool. Section H must not collide with it.
+**Section G has landed** (`e34b763`), along with reminders, push delivery and
+realtime sync. This section was written while G was still pending and has been
+rewritten against what actually shipped.
 
-They answer different questions, and the difference is the same one G already
-draws between a trash and a version log:
+What that means concretely:
+
+- There is no `recentlyDeleted` pool. Deletion is soft: `deleted: TempoEvent[]`
+  holds rows whose `deleted_at` is set, and `deleteEvent` is an **update**.
+- `optimistic()` snapshots `{ events, overrides, categories, deleted }`.
+- `captureVersion(eventId, reason)` writes to `event_versions` at the head of
+  each mutation, outside `optimistic()`, unawaited and failing soft.
+- `rollbackTo(versionId)` already writes a recorded shape back, and is the
+  closest existing analogue to H's reconciler.
+
+The prediction this spec made about soft delete held: because a delete is now an
+update, undoing one is an **upsert restoring `deleted_at = null`**, with no
+special case in the reconciler. That is no longer a forecast — `rollbackTo`
+does exactly this at `calendar-store.ts`, setting `deletedAt: null` on the
+restored row.
+
+H is still worth building beside G, because they answer different questions —
+the same distinction G already draws between a trash and a version log:
 
 - **G's versions** are durable, per-entry, and ordered by time — "what did this
   entry look like last Tuesday". Scoped to one event; ten kept per event.
@@ -32,18 +44,9 @@ the history table is unreachable — and "⌘Z did nothing" is a worse failure t
 "no version list". And G's migration may not have been run, which would make the
 undo stack a feature that appears to work and doesn't.
 
-**Landing order does not matter.** H snapshots whatever the store holds and
-reconciles it back, so:
-
-- If H lands first, it snapshots `recentlyDeleted` alongside everything else.
-- If G lands first, `recentlyDeleted` is gone and `deleteEvent` is an update
-  setting `deleted_at`. H's reconciler sees a *changed row*, not a missing one,
-  and restores it by upsert with no special case. This is the strongest argument
-  for the reconciler design in H.2: soft delete is not a code path it has to
-  know about.
-
-When G lands, the only edit needed to H is dropping `recentlyDeleted` from the
-snapshot type.
+Undo **does** call `captureVersion(id, 'edit')` for each event it touches, the
+same way `rollbackTo` does. Undo is an edit, and an edit that leaves no version
+behind is a hole in the history surface.
 
 ---
 
@@ -53,12 +56,13 @@ snapshot type.
 
 ⌘Z takes back the last thing you did, repeatedly, for the life of the tab.
 
-Today undo exists only for deletion: a `recentlyDeleted` pool, a toast, and a
-⌘Z that is live only while that toast is up
-(`CalendarShell.tsx`, the keymap). Every other mutation — dragging an
-entry to another date, dragging its end day, retiming it on the timeline,
-editing it in the form, flipping its status — is permanent the instant it
-happens.
+Today undo exists only for deletion: the trash, a toast, and a ⌘Z that is live
+only while that toast is up (`CalendarShell.tsx`, the keymap). Section G added a
+durable per-entry version list beside it, reachable from the HISTORY surface —
+but that is a place you *go*, entry by entry, not something you reach for by
+reflex. Every other mutation — dragging an entry to another date, dragging its
+end day, retiming it on the timeline, editing it in the form, flipping its
+status — has no immediate way back.
 
 That is the gap. Dragging is the app's primary gesture and the easiest thing to
 do by accident, and it is the one action with no way back.
@@ -73,7 +77,7 @@ const snapshot = {
   events: get().events,
   overrides: get().overrides,
   categories: get().categories,
-  recentlyDeleted: get().recentlyDeleted,
+  deleted: get().deleted,
 };
 ```
 
@@ -81,15 +85,31 @@ Taken before `apply()`, used to roll back when the write fails, and otherwise
 thrown away. Undo is that snapshot kept.
 
 ```ts
+interface Snapshot {
+  events: TempoEvent[];
+  overrides: OccurrenceOverride[];
+  categories: Category[];
+  deleted: TempoEvent[];
+}
+
 interface UndoEntry {
   /** What the toast says, and what ⌘Z is taking back. */
   label: string;
   at: number;
   before: Snapshot;
+  /** Which rows this action changed. See "Scoped to the rows the action touched". */
+  touched: Touched;
+}
+
+interface Touched {
+  events: string[];
+  overrides: string[];
+  categories: string[];
 }
 ```
 
-`optimistic` takes a `label` and pushes an entry **on success only**. A write the
+`optimistic` takes a `label` and a `Touched`, and pushes an entry **on success
+only**. A write the
 server rejected has already been rolled back; an undo entry for it would offer to
 take back something that never happened.
 
@@ -119,12 +139,36 @@ of bug is the reason this is worth the diff.
 Deep-equality is a plain structural compare on the mapped row shape, not on the
 `TempoEvent` object, so `updatedAt` drift does not manufacture writes.
 
+### Scoped to the rows the action touched
+
+Realtime sync is live: `connect()` streams another device's inserts, updates and
+deletes straight into the store. So the state an undo runs against is **not**
+necessarily the state its snapshot was taken from — a remote change can land in
+between.
+
+A reconciler that diffed the entire snapshot against the entire live store would
+therefore revert other devices' unrelated edits as a side effect of ⌘Z. That is
+a data-loss bug, not a race.
+
+So an `UndoEntry` carries the `Touched` set defined above, and the reconciler
+considers only those ids — `reconcile(before, live, touched)`.
+
+Every mutation already knows this set — `shiftBy` builds `patches` and
+`overrides` maps keyed by id, `softDelete` takes an `ids` array, and the
+single-entity methods have one id each. It is collected, not computed.
+
+The narrow case that remains is a row edited **both** locally and remotely
+between the action and the undo, where undo wins and the remote edit is lost.
+That is the same last-write-wins seam `connect()` already documents for the echo
+flicker, it is bounded to one row, and closing it needs per-row versioning the
+schema does not have.
+
 ### Scope and lifetime
 
-In-memory, capped at 50 entries, gone when the tab closes — the same reasoning
-already documented for `recentlyDeleted`. The failure this catches is noticed in
-seconds. It is not an archive, and no surface may imply that it is; that is what
-Section G is for.
+In-memory, capped at 50 entries, gone when the tab closes. The failure this
+catches is noticed in seconds, so a stack that lives as long as the tab covers
+it. It is not an archive, and no surface may imply that it is — `event_versions`
+and the trash are the durable half, and they already exist.
 
 No redo. ⌘⇧Z stays the browser's.
 
@@ -169,7 +213,7 @@ Moved Standup`, with no UNDO button, on the same clock. A keypress that changes
 the calendar must always say what it changed.
 
 The shell keeps announcing from state rather than being told: it currently
-watches `recentlyDeleted` for a batch newer than the last announced, and now
+watches `deleted` for a batch newer than the last announced, and now
 watches the top of the undo stack the same way. Two surfaces mutate the calendar
 without reporting upward, and that is why this is a subscription and not a
 callback.
