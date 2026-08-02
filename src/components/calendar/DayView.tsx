@@ -1,12 +1,28 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useCalendar } from '@/lib/store/calendar-store';
+import {
+  getServerZoomSnapshot,
+  getZoomSnapshot,
+  setZoom,
+  subscribeZoom,
+} from '@/lib/store/day-zoom';
 import type { CivilDate } from '@/lib/tempo/civil';
 import { minutesInZone, parts, todayIn } from '@/lib/tempo/civil';
 import type { Occurrence } from '@/lib/tempo/types';
-import { DEFAULT_CATEGORY_COLOR, HOUR_H_DEFAULT, MONTHS } from './constants';
-import { DAY_MINUTES, daySegment, placeSegments, type DaySegment } from './timeline';
+import { DEFAULT_CATEGORY_COLOR, MONTHS } from './constants';
+import {
+  DAY_MINUTES,
+  daySegment,
+  labelEvery,
+  placeSegments,
+  resolveHourHeight,
+  showsHalfHours,
+  zoomIn,
+  zoomOut,
+  type DaySegment,
+} from './timeline';
 
 /**
  * The 24-hour timeline: where time-of-day lives.
@@ -20,7 +36,6 @@ import { DAY_MINUTES, daySegment, placeSegments, type DaySegment } from './timel
  * chrome lives in one place rather than being negotiated between them.
  */
 
-const HOUR_H = HOUR_H_DEFAULT;
 const SNAP_MINUTES = 15;
 
 interface Props {
@@ -43,6 +58,10 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
   const [drag, setDrag] = useState<{ key: string; startDelta: number; endDelta: number } | null>(
     null,
   );
+  const [scrolled, setScrolled] = useState(false);
+
+  const zoom = useSyncExternalStore(subscribeZoom, getZoomSnapshot, getServerZoomSnapshot);
+  const [paneHeight, setPaneHeight] = useState(0);
 
   /**
    * The strip holds only what genuinely has no time of day. A multi-day *timed*
@@ -66,10 +85,87 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
   const colorFor = (id: string | null) =>
     categories.find((c) => c.id === id)?.color ?? DEFAULT_CATEGORY_COLOR;
 
-  // Open on the working day rather than at midnight.
+  /**
+   * FIT has to know how tall the column is, and the column is sized by flexbox
+   * rather than by anything this component states — so it is measured, and
+   * re-measured on resize. A stored pixel height would have stopped being a fit
+   * the first time the window changed.
+   */
   useEffect(() => {
-    if (gridRef.current) gridRef.current.scrollTop = 7 * HOUR_H;
+    const el = gridRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => setPaneHeight(entry.contentRect.height));
+    observer.observe(el);
+    setPaneHeight(el.clientHeight);
+    return () => observer.disconnect();
+  }, []);
+
+  const hourHeight = resolveHourHeight(zoom, paneHeight || 1);
+  const everyNth = labelEvery(hourHeight);
+  const halfHours = showsHalfHours(hourHeight);
+
+  /**
+   * Where the column opens.
+   *
+   * Today opens on now; another day opens on its first entry; an empty day falls
+   * back to the working morning. A fixed 07:00 was wrong for exactly the days
+   * you open the modal to look at.
+   *
+   * The clock is read here rather than taken from `nowMinutes`, which is still
+   * null on the mount this runs in — the ticking state arrives a render later,
+   * and this effect deliberately never runs again for the same day.
+   */
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el || hourHeight === 0) return;
+    const first = placed.reduce<number | null>(
+      (min, p) => (min === null || p.segment.top < min ? p.segment.top : min),
+      null,
+    );
+    const anchor = isToday ? minutesInZone(new Date(), timezone) : (first ?? 7 * 60);
+    el.scrollTop = Math.max(0, (anchor / 60) * hourHeight - el.clientHeight / 3);
+    // Deliberately not reacting to the clock: re-anchoring every 30 seconds
+    // would yank the column out from under whatever you were reading.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date]);
+
+  /**
+   * Zooming keeps the middle of the column pointing at the same time.
+   *
+   * Holding the pixel offset instead would land you at a different hour every
+   * time you changed the scale, which is the single most disorienting thing a
+   * timeline can do.
+   */
+  const previousHeight = useRef(hourHeight);
+  useEffect(() => {
+    const el = gridRef.current;
+    const was = previousHeight.current;
+    previousHeight.current = hourHeight;
+    if (!el || was === hourHeight || was === 0) return;
+    const centreMinutes = ((el.scrollTop + el.clientHeight / 2) / was) * 60;
+    el.scrollTop = (centreMinutes / 60) * hourHeight - el.clientHeight / 2;
+  }, [hourHeight]);
+
+  /**
+   * ⌘/Ctrl-wheel — and a trackpad pinch, which sends the same thing — changes
+   * the scale rather than the page's.
+   *
+   * A native, non-passive listener rather than React's `onWheel`: React registers
+   * `wheel` on the root as passive, so `preventDefault` there is ignored and the
+   * browser zooms the whole page out from under the gesture.
+   */
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      // Without the guard this would hijack ordinary scrolling.
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      setZoom(e.deltaY < 0 ? zoomIn(zoom, paneHeight) : zoomOut(zoom, paneHeight));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [zoom, paneHeight]);
 
   function beginTimeDrag(
     e: React.PointerEvent,
@@ -83,7 +179,7 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
 
     const originY = e.clientY;
     const snap = (dy: number) => {
-      const minutes = (dy / HOUR_H) * 60;
+      const minutes = (dy / hourHeight) * 60;
       return Math.round(minutes / SNAP_MINUTES) * SNAP_MINUTES;
     };
 
@@ -112,7 +208,12 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
   return (
     <div className="flex h-full flex-col">
       {bars.length > 0 && (
-        <div className="shrink-0 space-y-1 border-b border-hair px-3 py-2.5">
+        <div
+          className={[
+            'relative z-10 shrink-0 space-y-1 border-b border-hair px-3 py-2.5',
+            // Reads as pinned rather than as the first thing in the scroll.
+            scrolled ? 'shadow-[0_4px_8px_-4px_rgba(0,0,0,0.6)]' : '',
+          ].join(' ')}>
           <div className="label mb-1.5">ALL DAY</div>
           {bars.map((occ) => (
             <button
@@ -127,18 +228,30 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
         </div>
       )}
 
-      <div ref={gridRef} className="relative flex-1 overflow-y-auto">
-        <div className="relative" style={{ height: 24 * HOUR_H }}>
+      <div
+        ref={gridRef}
+        onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
+        className="relative flex-1 overflow-y-auto"
+      >
+        <div className="relative" style={{ height: 24 * hourHeight }}>
           {Array.from({ length: 24 }, (_, h) => (
             <div
               key={h}
               onClick={() => onNew(date, h * 60)}
               className="absolute inset-x-0 cursor-copy border-t border-hair transition-colors hover:bg-panel"
-              style={{ top: h * HOUR_H, height: HOUR_H }}
+              style={{ top: h * hourHeight, height: hourHeight }}
             >
-              <span className="label absolute left-2 top-1">
-                {String(h).padStart(2, '0')}
-              </span>
+              {h % everyNth === 0 && (
+                <span className="label absolute left-2 top-1">
+                  {String(h).padStart(2, '0')}
+                </span>
+              )}
+              {halfHours && (
+                <div
+                  className="pointer-events-none absolute inset-x-0 border-t border-hair/40"
+                  style={{ top: hourHeight / 2 }}
+                />
+              )}
             </div>
           ))}
 
@@ -148,7 +261,7 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
               const top = segment.top + (active?.startDelta ?? 0);
               const bottom = segment.bottom + (active?.endDelta ?? 0);
               const color = colorFor(occ.categoryId);
-              const height = Math.max(18, ((bottom - top) / 60) * HOUR_H - 2);
+              const height = Math.max(18, ((bottom - top) / 60) * hourHeight - 2);
 
               return (
                 <div
@@ -157,7 +270,7 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
                   onClick={() => !drag && onOpen(occ)}
                   style={{
                     position: 'absolute',
-                    top: (top / 60) * HOUR_H,
+                    top: (top / 60) * hourHeight,
                     height,
                     left: `${(lane / of) * 100}%`,
                     width: `calc(${100 / of}% - 3px)`,
@@ -201,7 +314,7 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
             <div
               // Never intercepts a drag: this is a readout, not a target.
               className="pointer-events-none absolute inset-x-0 z-30"
-              style={{ top: (nowMinutes / 60) * HOUR_H }}
+              style={{ top: (nowMinutes / 60) * hourHeight }}
               aria-hidden="true"
             >
               <div className="absolute inset-x-11 h-px bg-[#c8553d]" />

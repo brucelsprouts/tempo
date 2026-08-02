@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useCalendar } from '@/lib/store/calendar-store';
+import { getZoomSnapshot, setZoom } from '@/lib/store/day-zoom';
 import {
   getServerViewSnapshot,
   getViewSnapshot,
@@ -17,6 +18,7 @@ import { History } from './History';
 import { ListView } from './ListView';
 import { Settings } from './Settings';
 import { Toast } from './Toast';
+import { zoomIn, zoomOut } from './timeline';
 import { YearView } from './YearView';
 import { Modal } from './ui';
 
@@ -261,6 +263,30 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
         target.blur();
       }
       return;
+    }
+
+    /**
+     * The timeline's scale, while the day is the top layer.
+     *
+     * Here rather than in `DayView` because the shell is the one place that
+     * decides what a key means — a second window listener would race this one.
+     */
+    if (top?.kind === 'day' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (e.key === '+' || e.key === '=') {
+        e.preventDefault();
+        setZoom(zoomIn(getZoomSnapshot(), 0));
+        return;
+      }
+      if (e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        setZoom(zoomOut(getZoomSnapshot(), 0));
+        return;
+      }
+      if (e.key === '0') {
+        e.preventDefault();
+        setZoom('fit');
+        return;
+      }
     }
 
     /**

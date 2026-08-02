@@ -2,12 +2,19 @@
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { groupOverrides, useCalendar } from '@/lib/store/calendar-store';
+import {
+  getServerZoomSnapshot,
+  getZoomSnapshot,
+  setZoom,
+  subscribeZoom,
+} from '@/lib/store/day-zoom';
 import { addDays, dayOfWeek, parts, todayIn, type CivilDate } from '@/lib/tempo/civil';
 import { expandAll } from '@/lib/tempo/recurrence';
 import type { Occurrence } from '@/lib/tempo/types';
 import { DayView } from './DayView';
 import { TasksPane } from './TasksPane';
-import { MONTHS_LONG, WEEKDAYS } from './constants';
+import { HOUR_H_DEFAULT, MONTHS_LONG, WEEKDAYS } from './constants';
+import { zoomIn, zoomOut } from './timeline';
 import { Modal, SegmentedControl } from './ui';
 
 /**
@@ -43,6 +50,7 @@ export function DayModal({ date, onDate, onOpen, onNew, onClose }: Props) {
 
   const wide = useWide();
   const [pane, setPane] = useState<'day' | 'tasks'>('day');
+  const zoom = useSyncExternalStore(subscribeZoom, getZoomSnapshot, getServerZoomSnapshot);
 
   const { year, month, day } = parts(date);
   const isToday = date === todayIn(timezone);
@@ -61,6 +69,32 @@ export function DayModal({ date, onDate, onOpen, onNew, onClose }: Props) {
         <Stepper label="Next day" onClick={() => onDate(addDays(date, 1))}>
           ›
         </Stepper>
+
+        {/* `zoomIn`/`zoomOut` are passed 0 for the pane height: from FIT the
+            modal cannot know the column's measured height, and both clamp to
+            the floor — so the first click out of FIT lands on the minimum and
+            steps up from there. */}
+        <div className="ml-2 flex items-center gap-1">
+          <Stepper label="Zoom out" onClick={() => setZoom(zoomOut(zoom, 0))}>
+            −
+          </Stepper>
+          <button
+            type="button"
+            onClick={() => setZoom(zoom === 'fit' ? HOUR_H_DEFAULT : 'fit')}
+            aria-pressed={zoom === 'fit'}
+            className={[
+              'border px-2 py-1 text-[10px] leading-none tracking-[0.12em] transition-colors',
+              zoom === 'fit'
+                ? 'border-hairlit bg-raised text-bright'
+                : 'border-hair text-mute hover:border-hairlit hover:text-ink',
+            ].join(' ')}
+          >
+            FIT
+          </button>
+          <Stepper label="Zoom in" onClick={() => setZoom(zoomIn(zoom, 0))}>
+            +
+          </Stepper>
+        </div>
 
         {/* Only a switch when there isn't room for both. Above the breakpoint
             the timeline and the list are the same surface, and a control that
@@ -82,12 +116,12 @@ export function DayModal({ date, onDate, onOpen, onNew, onClose }: Props) {
 
       <div className={wide ? 'grid grid-cols-2 divide-x divide-hair' : ''}>
         {(wide || pane === 'day') && (
-          <div className="h-[52vh] min-h-0">
+          <div className="h-[min(72vh,calc(100vh-14rem))] min-h-[360px] min-w-0">
             <DayView date={date} occurrences={occurrences} onOpen={onOpen} onNew={onNew} />
           </div>
         )}
         {(wide || pane === 'tasks') && (
-          <div className="h-[52vh] min-h-0">
+          <div className="h-[min(72vh,calc(100vh-14rem))] min-h-[360px] min-w-0">
             <TasksPane occurrences={occurrences} onOpen={onOpen} />
           </div>
         )}

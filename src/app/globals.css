@@ -213,3 +213,12 @@ body {
     transform: translateY(0);
   }
 }
+
+/* A timeline that animates its scale is a timeline that lurches for anyone who
+   asked the OS for less of that. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
