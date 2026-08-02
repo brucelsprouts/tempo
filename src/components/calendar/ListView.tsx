@@ -1,7 +1,15 @@
 'use client';
 
-import { Fragment, useMemo, useState, type Ref } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useState,
+  type Ref,
+} from 'react';
 import { groupOverrides, useCalendar } from '@/lib/store/calendar-store';
+import { getClipboard, setClipboard } from '@/lib/store/clipboard';
 import { addDays, diffDays, parts, todayIn, type CivilDate } from '@/lib/tempo/civil';
 import { expandAll, expandEvent, eventSpan } from '@/lib/tempo/recurrence';
 import type { Occurrence, Recurrence, TempoEvent } from '@/lib/tempo/types';
@@ -80,13 +88,32 @@ function relative(d: CivilDate, today: CivilDate): string {
   return 'IN PROGRESS';
 }
 
+/** Stable identity for "nothing is selected", so clearing twice re-renders once. */
+const NOTHING: ReadonlySet<string> = new Set();
+
+/**
+ * What the table answers to, for the shell that owns the keymap.
+ *
+ * The same shape `CalendarHandle` exposes, so the shell can route one chord to
+ * whichever view is up without knowing which one that is.
+ */
+export interface ListHandle {
+  /** Reports whether there was a selection to clear. */
+  unwind: () => boolean;
+  /** Reports how many entries it took, so the shell can say so. */
+  copySelection: () => number;
+  duplicateSelection: () => boolean;
+  pasteClipboard: () => boolean;
+}
+
 interface Props {
   onOpen: (occ: Occurrence) => void;
   onNew: () => void;
   searchRef?: Ref<HTMLInputElement>;
+  ref?: Ref<ListHandle>;
 }
 
-export function ListView({ onOpen, onNew, searchRef }: Props) {
+export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
   const events = useCalendar((s) => s.events);
   const overrides = useCalendar((s) => s.overrides);
   const categories = useCalendar((s) => s.categories);
@@ -192,6 +219,160 @@ export function ListView({ onOpen, onNew, searchRef }: Props) {
     setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: 1 }));
   }
 
+  // ------------------------------------------------------------- selection
+
+  /**
+   * The rows as one list, in the order they are drawn.
+   *
+   * A shift-click means "everything between these two", and *between* is a fact
+   * about what you can see — the sort and the grouping both reorder the table,
+   * so a range resolved against the underlying events would light up rows the
+   * gesture never crossed.
+   */
+  const flat = useMemo(() => sections.flatMap((s) => s.rows), [sections]);
+
+  /**
+   * Rows a selection can hold. A Google-sourced entry refuses every edit a
+   * selection can apply, so it never enters one — the same rule the grid
+   * applies to its bars, and the reason the checkbox on such a row is dead.
+   */
+  const selectable = useMemo(
+    () => flat.filter((r) => r.occ !== null && !r.occ.readOnly),
+    [flat],
+  );
+
+  const [selection, setSelection] = useState<ReadonlySet<string>>(NOTHING);
+  /** Where the last plain toggle landed, which is what a shift-click ranges from. */
+  const [anchor, setAnchor] = useState<string | null>(null);
+
+  const selectedRows = useMemo(
+    () => selectable.filter((r) => selection.has(r.event.id)),
+    [selectable, selection],
+  );
+
+  const clear = useCallback(() => {
+    setSelection(NOTHING);
+    setAnchor(null);
+  }, []);
+
+  const toggle = useCallback((id: string) => {
+    setSelection((s) => {
+      const next = new Set(s);
+      if (!next.delete(id)) next.add(id);
+      return next.size === 0 ? NOTHING : next;
+    });
+    setAnchor(id);
+  }, []);
+
+  /**
+   * Everything between the anchor and this row, replacing what was lit.
+   *
+   * Explorer's rule rather than an additive one: shift-click *is* the range, so
+   * dragging the far end of a selection around narrows it as well as widens it.
+   * The anchor deliberately does not move — that is what makes the second, third
+   * and fourth shift-click all measure from the same place.
+   */
+  const extendTo = useCallback(
+    (id: string) => {
+      const order = selectable.map((r) => r.event.id);
+      const from = anchor === null ? -1 : order.indexOf(anchor);
+      const to = order.indexOf(id);
+      if (to === -1) return;
+      // No anchor yet — the first shift-click has nothing to measure from, so
+      // it behaves as a plain toggle and becomes the anchor for the next one.
+      if (from === -1) {
+        toggle(id);
+        return;
+      }
+      const [lo, hi] = from <= to ? [from, to] : [to, from];
+      setSelection(new Set(order.slice(lo, hi + 1)));
+    },
+    [selectable, anchor, toggle],
+  );
+
+  /** Every row the filter is currently showing, or none of them. */
+  const toggleAll = useCallback(() => {
+    setSelection((s) =>
+      s.size >= selectable.length && selectable.length > 0
+        ? NOTHING
+        : new Set(selectable.map((r) => r.event.id)),
+    );
+    setAnchor(null);
+  }, [selectable]);
+
+  const allLit = selectable.length > 0 && selectedRows.length === selectable.length;
+  const someLit = selectedRows.length > 0 && !allLit;
+
+  function handleRowClick(r: Row, e: React.MouseEvent) {
+    if (e.metaKey || e.ctrlKey) {
+      if (r.occ && !r.occ.readOnly) toggle(r.event.id);
+      return;
+    }
+    if (e.shiftKey) {
+      if (r.occ && !r.occ.readOnly) extendTo(r.event.id);
+      return;
+    }
+    // Unmodified, a click still means "open this", which is what the table did
+    // before it could select anything and what a row without a checkbox in
+    // reach still has to do.
+    if (r.occ) onOpen(r.occ);
+  }
+
+  // ------------------------------------------------- copy, paste, duplicate
+
+  const duplicateOccurrences = useCalendar((s) => s.duplicateOccurrences);
+
+  /**
+   * The occurrences behind the lit rows.
+   *
+   * The table is a list of *events* and the store speaks occurrences, so this is
+   * the translation between them: each row's own `occ`, which is the instance
+   * the row already opens on.
+   */
+  const selectedOccurrences = useMemo(
+    () => selectedRows.flatMap((r) => (r.occ ? [r.occ] : [])),
+    [selectedRows],
+  );
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      unwind: () => {
+        if (selection.size === 0) return false;
+        clear();
+        return true;
+      },
+      copySelection: () => {
+        setClipboard(selectedOccurrences);
+        return selectedOccurrences.length;
+      },
+      duplicateSelection: () => {
+        if (selectedOccurrences.length === 0) return false;
+        void duplicateOccurrences(selectedOccurrences, null).then((copies) =>
+          setSelection(copies.length > 0 ? new Set(copies.map((e) => e.id)) : NOTHING),
+        );
+        return true;
+      },
+      /**
+       * A paste here lands in place, not on a date.
+       *
+       * The table has no day under the cursor to land on — a row's position in
+       * it is a sort order, not a date — so pasting shifts nothing and simply
+       * makes the copies. Which also means ⌘C in the table and ⌘V on the grid
+       * do place entries somewhere, because there the pointer has an answer.
+       */
+      pasteClipboard: () => {
+        const held = getClipboard();
+        if (held.length === 0) return false;
+        void duplicateOccurrences([...held], null).then((copies) =>
+          setSelection(copies.length > 0 ? new Set(copies.map((e) => e.id)) : NOTHING),
+        );
+        return true;
+      },
+    }),
+    [selection, clear, selectedOccurrences, duplicateOccurrences],
+  );
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-hair px-4 py-2.5">
@@ -213,6 +394,17 @@ export function ListView({ onOpen, onNew, searchRef }: Props) {
           {filtered.length} / {rows.length} ENTRIES
         </span>
 
+        {/* Only while there is one. A permanent readout of zero would be a
+            label for a state the table is in almost all of the time. */}
+        {selectedRows.length > 0 && (
+          <button
+            onClick={clear}
+            className="label border border-hairlit px-2 py-1 text-dim transition-colors hover:text-ink"
+          >
+            {selectedRows.length} SELECTED · CLEAR [ESC]
+          </button>
+        )}
+
         <button
           onClick={onNew}
           className="label ml-auto border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink"
@@ -225,6 +417,14 @@ export function ListView({ onOpen, onNew, searchRef }: Props) {
         <table className="w-full min-w-[860px] border-collapse text-[11px]">
           <thead className="sticky top-0 z-10 bg-panel">
             <tr className="border-b border-hairlit">
+              <th className="w-[44px] px-3 py-2 text-left font-normal">
+                <Check
+                  state={allLit ? 'on' : someLit ? 'some' : 'off'}
+                  onClick={toggleAll}
+                  label={allLit ? 'Clear selection' : 'Select all entries'}
+                  disabled={selectable.length === 0}
+                />
+              </th>
               <HeadCell label="TITLE" col="title" sort={sort} onSort={toggleSort} wide />
               <HeadCell label="TYPE" col="kind" sort={sort} onSort={toggleSort} />
               <HeadCell label="REPEATS" col="repeat" sort={sort} onSort={toggleSort} />
@@ -240,7 +440,7 @@ export function ListView({ onOpen, onNew, searchRef }: Props) {
               <Fragment key={section.label ?? '·'}>
                 {section.label && (
                   <tr>
-                    <td colSpan={7} className="border-y border-hair bg-sunken px-3 py-1.5">
+                    <td colSpan={8} className="border-y border-hair bg-sunken px-3 py-1.5">
                       <span className="label text-dim">{section.label}</span>
                       <span className="label ml-2">{section.rows.length}</span>
                     </td>
@@ -249,12 +449,37 @@ export function ListView({ onOpen, onNew, searchRef }: Props) {
 
                 {section.rows.map((r) => {
                   const past = r.next === null;
+                  const lit = selection.has(r.event.id);
+                  const locked = !r.occ || r.occ.readOnly;
                   return (
                     <tr
                       key={r.event.id}
-                      onClick={() => r.occ && onOpen(r.occ)}
-                      className="cursor-pointer border-b border-hair transition-colors hover:bg-raised"
+                      onClick={(e) => handleRowClick(r, e)}
+                      // A shift-click is a range here, and the browser's own
+                      // reading of it — extend the text selection — would paint
+                      // half the table blue on the way.
+                      onMouseDown={(e) => {
+                        if (e.shiftKey) e.preventDefault();
+                      }}
+                      aria-selected={lit}
+                      className={`cursor-pointer border-b border-hair transition-colors ${
+                        lit ? 'bg-raised' : 'hover:bg-raised'
+                      }`}
                     >
+                      <td className="px-3 py-2">
+                        <Check
+                          state={lit ? 'on' : 'off'}
+                          disabled={locked}
+                          label={`Select ${r.event.title}`}
+                          // The checkbox selects and never opens, so the press
+                          // must not reach the row's own handler.
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (e.shiftKey) extendTo(r.event.id);
+                            else toggle(r.event.id);
+                          }}
+                        />
+                      </td>
                       <td className="max-w-0 px-3 py-2">
                         <div className="flex items-center gap-2">
                           <span
@@ -317,7 +542,7 @@ export function ListView({ onOpen, onNew, searchRef }: Props) {
 
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-16 text-center">
+                <td colSpan={8} className="px-4 py-16 text-center">
                   <span className="label">
                     {rows.length === 0 ? 'NO ENTRIES YET · PRESS [A]' : 'NOTHING MATCHES'}
                   </span>
@@ -328,6 +553,49 @@ export function ListView({ onOpen, onNew, searchRef }: Props) {
         </table>
       </div>
     </div>
+  );
+}
+
+/**
+ * A checkbox in the notation the table already speaks.
+ *
+ * `[ ]` and `[x]` are not a stylisation here — they are the same glyphs the
+ * STATUS column prints, so a row reads in one alphabet rather than mixing a
+ * drawn control into a table made of text. `[~]` is the header's partial state,
+ * borrowed from `doing` for the same reason: it already means "some of this".
+ *
+ * A button rather than an `<input>`, because the indeterminate state of a real
+ * checkbox is only reachable through a DOM property and cannot be expressed in
+ * JSX at all.
+ */
+function Check({
+  state,
+  onClick,
+  label,
+  disabled,
+}: {
+  state: 'on' | 'off' | 'some';
+  onClick: (e: React.MouseEvent) => void;
+  label: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={state === 'some' ? 'mixed' : state === 'on'}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      // `whitespace-nowrap`, because the glyph is three characters wide and a
+      // column sized to the content would otherwise break `[ ]` across two
+      // lines at the space in the middle of it.
+      className={`tap whitespace-nowrap text-[11px] tabular-nums transition-colors disabled:opacity-25 ${
+        state === 'off' ? 'text-mute hover:text-dim' : 'text-ink'
+      }`}
+    >
+      {state === 'on' ? '[x]' : state === 'some' ? '[~]' : '[ ]'}
+    </button>
   );
 }
 

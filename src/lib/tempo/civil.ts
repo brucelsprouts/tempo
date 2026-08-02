@@ -121,6 +121,19 @@ export function addYears(d: CivilDate, n: number): CivilDate {
   return addMonths(d, n * 12);
 }
 
+/**
+ * The same day of the same year, in a month you named. Stays within the year: this
+ * answers a month picker, and a picker that reads `MAR` while showing you next March
+ * is lying about one of the two.
+ *
+ * Expressed as a step rather than as `civil(year, month, day)` so that it inherits
+ * `addMonths`'s clamp — a cursor on the 31st asked for February has to land on the
+ * 28th, the same as it does when the month steppers walk it there.
+ */
+export function setMonth(d: CivilDate, month: number): CivilDate {
+  return addMonths(d, month - parts(d).month);
+}
+
 /** 0 = Sunday … 6 = Saturday. */
 export function dayOfWeek(d: CivilDate): number {
   return toUTCDate(d).getUTCDay();

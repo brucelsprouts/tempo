@@ -16,7 +16,7 @@
 
 // Bump to invalidate everything below. The activate handler deletes any cache
 // whose name doesn't match, so a rename is the whole cache-busting mechanism.
-const VERSION = 'tempo-v1';
+const VERSION = 'tempo-v2';
 const OFFLINE_URL = '/offline';
 
 // Only the things that must be there when there is no network. Not the app
@@ -64,16 +64,25 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Build output is content-hashed, so a hit can never be stale — the filename
+  // Built output is content-hashed, so a hit can never be stale — the filename
   // changes when the contents do. Cache on first use rather than precaching a
   // manifest this worker would have to be kept in step with.
+  //
+  // That invariant is the *response's* claim, not the path's, so it is read off
+  // `immutable` rather than assumed from `/_next/static/`. Turbopack's dev
+  // chunks are served from the same prefix under names derived from the module
+  // path — `src_0u324_x._.js` is rewritten in place on every edit — so a
+  // path-only rule pins the first build of a file forever and the dev server
+  // becomes unable to ship you a change. Dev sends `no-cache, must-revalidate`;
+  // this now believes it.
   if (url.pathname.startsWith('/_next/static/')) {
     event.respondWith(
       caches.match(request).then(
         (hit) =>
           hit ||
           fetch(request).then((response) => {
-            if (response.ok) {
+            const immutable = response.headers.get('cache-control')?.includes('immutable');
+            if (response.ok && immutable) {
               const copy = response.clone();
               caches.open(VERSION).then((cache) => cache.put(request, copy));
             }

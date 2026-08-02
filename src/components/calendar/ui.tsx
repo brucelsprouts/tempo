@@ -137,8 +137,22 @@ export function Popover({
         left: box?.left ?? 0,
         top: box?.top ?? 0,
         maxHeight: box?.maxHeight,
-        // Laid out before it is placed, because placing it requires measuring it.
-        visibility: box ? 'visible' : 'hidden',
+        /*
+          Laid out before it is placed, because placing it requires measuring it, and
+          hidden for the one frame in between.
+
+          `opacity` rather than `visibility`, which is what this was and which quietly
+          broke every panel that opens onto a field. A `visibility: hidden` element
+          cannot take focus — the browser refuses and says nothing — and the focus a
+          panel asks for on open is requested during exactly this frame, whether by
+          React's `autoFocus` at commit or by an effect. `WhenField` and `DatePicker`
+          both landed their keystrokes in the entry form's title field because of it.
+          An `opacity: 0` element is focusable, measures identically, and `pointerEvents`
+          covers the one thing visibility was also buying: no clicking what you cannot
+          see.
+        */
+        opacity: box ? 1 : 0,
+        pointerEvents: box ? undefined : 'none',
       }}
       className="z-50 overflow-y-auto border border-hairlit bg-panel p-2 shadow-[0_8px_24px_rgba(0,0,0,0.7)]"
     >

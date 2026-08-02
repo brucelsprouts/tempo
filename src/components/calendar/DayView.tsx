@@ -57,6 +57,8 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
 
   const gridRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ key: string; start: number; end: number } | null>(null);
+  /** Set by a drag that re-timed something, so the click it trails can be dropped. */
+  const justDragged = useRef(false);
   const [scrolled, setScrolled] = useState(false);
 
   const zoom = useSyncExternalStore(subscribeZoom, getZoomSnapshot, getServerZoomSnapshot);
@@ -102,6 +104,9 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
   const hourHeight = resolveHourHeight(zoom, paneHeight || 1);
   const everyNth = labelEvery(hourHeight);
   const halfHours = showsHalfHours(hourHeight);
+
+  /** The pixel the now-rule sits on, or null on any day that isn't today. */
+  const nowY = isToday && nowMinutes !== null ? (nowMinutes / 60) * hourHeight : null;
 
   /**
    * Where the column opens.
@@ -204,8 +209,39 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
     const finish = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', move);
       setDrag(null);
+      /**
+       * Whatever the browser selected on the way past, unselected.
+       *
+       * `preventDefault` on the press above is not enough: Chrome suppresses the
+       * compatibility mouse events it would imply only for touch, so a mouse
+       * drag still anchors a text selection and paints half the modal blue the
+       * moment you let go. The blocks now carry `select-none` so nothing starts
+       * there in the first place; this covers the range a press that began just
+       * outside one left behind.
+       */
+      window.getSelection()?.removeAllRanges();
       const { start, end } = resolve(ev);
       if (start === segment.top && end === segment.bottom) return;
+
+      /**
+       * The click this release is about to produce belongs to the drag, not to
+       * the block.
+       *
+       * `drag` state cannot say so: it is cleared above, and the browser
+       * dispatches `click` after `pointerup`, so by the time the handler runs a
+       * finished drag is indistinguishable from a press that never moved —
+       * which is why letting go used to re-time the entry *and* throw the edit
+       * form open on top of it. The flag is cleared on the task after this one,
+       * by which point that click has been and gone.
+       *
+       * Only a drag that actually moved something sets it. A press that jiggles
+       * and lands back on its own start is a click, and should still open.
+       */
+      justDragged.current = true;
+      window.setTimeout(() => {
+        justDragged.current = false;
+      }, 0);
+
       setOccurrenceTime(occ, start, end, ev.shiftKey ? 'series' : 'occurrence');
     };
 
@@ -249,7 +285,13 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
               className="absolute inset-x-0 cursor-copy border-t border-hair transition-colors hover:bg-panel"
               style={{ top: h * hourHeight, height: hourHeight }}
             >
-              {h % everyNth === 0 && (
+              {/* The hour gives its place up to the clock when they would land
+                  on each other. Both sit at `left-2` in a 44px gutter with no
+                  room to pass, and for the seventeen minutes either side of an
+                  hour they printed on top of one another — `05:17` struck
+                  through by an `05`. Now is the more specific of the two, and
+                  it is the one being looked for. */}
+              {h % everyNth === 0 && (nowY === null || Math.abs(nowY - h * hourHeight) >= 14) && (
                 <span className="label absolute left-2 top-1">
                   {String(h).padStart(2, '0')}
                 </span>
@@ -275,7 +317,7 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
                 <div
                   key={key}
                   onPointerDown={(e) => beginTimeDrag(e, occ, segment, 'move')}
-                  onClick={() => !drag && onOpen(occ)}
+                  onClick={() => !drag && !justDragged.current && onOpen(occ)}
                   style={{
                     position: 'absolute',
                     top: (top / 60) * hourHeight,
@@ -287,6 +329,10 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
                   }}
                   className={[
                     'group overflow-hidden border-r border-hair bg-raised px-1.5 py-1',
+                    // A block is a handle, not a paragraph. Without this the
+                    // press that starts a move also starts a text selection,
+                    // and the drag drags that instead.
+                    'select-none',
                     'text-[11px] text-ink transition-colors hover:border-hairlit hover:bg-sunken',
                     // A cut edge gets no border: a block ending flush at the
                     // bottom of the column would otherwise be indistinguishable
@@ -343,17 +389,24 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
             })}
           </div>
 
-          {isToday && nowMinutes !== null && (
+          {nowY !== null && nowMinutes !== null && (
             <div
               // Never intercepts a drag: this is a readout, not a target.
               className="pointer-events-none absolute inset-x-0 z-30"
-              style={{ top: (nowMinutes / 60) * hourHeight }}
+              style={{ top: nowY }}
               aria-hidden="true"
             >
-              <div className="absolute inset-x-11 h-px bg-[#c8553d]" />
+              {/* Exactly the box the blocks are laid out in — `left-11 right-2`
+                  — so the rule crosses every entry it is meant to be read
+                  against. `inset-x-11` mirrored the gutter onto the right and
+                  stopped the line 44px short of the last block, which read as a
+                  tick that had failed to draw rather than as now. */}
+              <div className="absolute left-11 right-2 h-px bg-[#c8553d]" />
               {/* An origin for the line, so it does not read as a hairline border. */}
               <div className="absolute left-[42px] top-[-2.5px] h-[5px] w-[5px] rounded-full bg-[#c8553d]" />
-              <span className="absolute left-1 top-[-6px] text-[10px] leading-none text-[#c8553d]">
+              {/* On the hour numbers' own left edge rather than against the
+                  frame: the readout sits in their column and should share it. */}
+              <span className="absolute left-2 top-[-6px] text-[10px] leading-none text-[#c8553d]">
                 {clockLabel(nowMinutes)}
               </span>
             </div>

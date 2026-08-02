@@ -27,6 +27,7 @@ import {
   versionFromRow,
 } from '@/lib/tempo/mappers';
 import { addDays, diffDays, instantFromCivil, type CivilDate } from '@/lib/tempo/civil';
+import { copyableFields, copyTitle } from '@/lib/tempo/duplicate';
 import { eventSpan } from '@/lib/tempo/recurrence';
 import type {
   Category,
@@ -138,6 +139,19 @@ interface CalendarState {
   moveOccurrences: (occs: Occurrence[], deltaDays: number, scope: EditScope) => Promise<void>;
   /** A selection collapsed onto one date, each entry keeping its own length. */
   gatherOccurrences: (occs: Occurrence[], toDate: CivilDate, scope: EditScope) => Promise<void>;
+  /**
+   * A selection copied, as new entries.
+   *
+   * `toDate` places the earliest copy and shifts the rest by the same delta, so
+   * the shape of a selection survives being pasted somewhere else; `null` means
+   * in place, which is what a duplicate is. Returns the rows it created, so the
+   * caller can light them up — the copies are what you want selected after
+   * making them, the way they are in every editor that has this.
+   */
+  duplicateOccurrences: (
+    occs: Occurrence[],
+    toDate: CivilDate | null,
+  ) => Promise<TempoEvent[]>;
   resizeOccurrence: (
     occ: Occurrence,
     deltaDays: number,
@@ -1158,15 +1172,138 @@ export const useCalendar = create<CalendarState>((set, get) => {
       await shiftBy(occs, (occ) => diffDays(toDate, occ.date), scope);
     },
 
+    /**
+     * Copy a selection, as whole entries.
+     *
+     * Entries and not instances: a selection is made of occurrences, but an
+     * occurrence is a render artefact — there is no row to copy — so what a
+     * duplicate produces is a new event carrying the same recurrence rule.
+     * Selecting two instances of one series therefore yields *one* copy, not
+     * two identical ones, which is why the loop claims event ids as it goes.
+     *
+     * The shift is a single shared delta rather than one per entry. Copying
+     * Monday and Friday and pasting on the 15th means the 15th and the 19th —
+     * the gap between them is most of what made the pair worth copying, and
+     * collapsing both onto the 15th would throw it away. That is the one place
+     * this deliberately parts company with `gatherOccurrences`, which is a
+     * *move* and answers a different question.
+     */
+    duplicateOccurrences: async (occs, toDate) => {
+      const ownerId = get().ownerId;
+      if (!ownerId) return [];
+
+      const tz = get().timezone;
+      const byId = new Map(get().events.map((e) => [e.id, e]));
+
+      // Earliest first: it is the anchor the shared delta is measured from, and
+      // it is the instance that decides where a series lands when several of
+      // its instances are selected at once.
+      const sorted = [...occs]
+        .filter((o) => !o.readOnly)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      if (sorted.length === 0) return [];
+
+      const delta = toDate ? diffDays(toDate, sorted[0].date) : 0;
+
+      /**
+       * Every title in play, so no copy is handed a name that is already on the
+       * calendar — including one handed out a moment ago in this same batch.
+       * Trashed entries are left out: their names are not visible anywhere the
+       * ambiguity would bite, and reserving them would leak the trash into the
+       * numbering.
+       */
+      const taken = new Set(get().events.map((e) => e.title));
+
+      const copies: TempoEvent[] = [];
+      const claimed = new Set<string>();
+      const now = new Date().toISOString();
+
+      for (const occ of sorted) {
+        if (claimed.has(occ.eventId)) continue;
+        claimed.add(occ.eventId);
+
+        /**
+         * The live row, or the one the occurrence is carrying.
+         *
+         * The fallback is what makes a paste survive its original: the
+         * clipboard holds occurrences captured at copy time, so deleting the
+         * entry you copied would otherwise turn ⌘V into a no-op. Live wins when
+         * it exists, so editing an entry between copy and paste gives you the
+         * version you can see rather than the one you had.
+         */
+        const ev = byId.get(occ.eventId) ?? occ.event;
+        if (!ev) continue;
+        const title = copyTitle(ev.title, taken);
+        taken.add(title);
+
+        copies.push({
+          id: crypto.randomUUID(),
+          title,
+          ...copyableFields(ev),
+          // Both date pairs come from the source and then move together, so a
+          // timed copy keeps its instants and an all-day one keeps its bare
+          // dates — exactly one pair is ever populated, and `shiftEvent`
+          // rewrites whichever it is.
+          startsAt: ev.startsAt,
+          endsAt: ev.endsAt,
+          startDate: ev.startDate,
+          endDate: ev.endDate,
+          ...shiftEvent(ev, delta, delta, tz),
+          source: 'tempo',
+          googleEventId: null,
+          deletedAt: null,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+
+      if (copies.length === 0) return [];
+
+      const ok = await optimistic(
+        () => set((s) => ({ events: [...s.events, ...copies] })),
+        async () => {
+          const { error } = await supabase.from('events').insert(
+            copies.map((e) => ({ id: e.id, owner_id: ownerId, title: e.title, ...eventToRow(e) })),
+          );
+          return { error };
+        },
+        {
+          label:
+            copies.length === 1
+              ? `Duplicated ${copies[0].title}`
+              : `Duplicated ${copies.length} entries`,
+          // Rows that did not exist in the snapshot, so undoing plans a delete
+          // — the same path that takes back a `createEvent`.
+          touched: touchedEvents(copies.map((e) => e.id)),
+        },
+      );
+
+      // Nothing to select if the write was refused; `optimistic` has already
+      // rolled the rows back out of the store.
+      return ok ? copies : [];
+    },
+
     resizeOccurrence: async (occ, deltaDays, edge, scope) => {
       if (occ.readOnly || deltaDays === 0) return;
 
+      const wholeSeries = scope === 'series' || !occ.event.recurrence;
       const nextStart = edge === 'start' ? addDays(occ.date, deltaDays) : occ.date;
       const nextEnd = edge === 'end' ? addDays(occ.endDate, deltaDays) : occ.endDate;
-      if (nextEnd < nextStart) return; // refuse to invert the bar
+
+      // Refuse to invert the bar. Equal dates are not yet enough for a timed
+      // entry, because it carries a time of day too: an 18:00-to-midnight
+      // evening covers two dates, and pulling its trailing edge onto the first
+      // one leaves 18:00 to 00:00 — backwards. The row is what the check has to
+      // be about, so it reads the clock the write will actually carry: a series
+      // rewrite keeps the series' hours, an exception keeps this instance's.
+      const span = eventSpan(occ.event);
+      const startMinutes = (wholeSeries ? span?.startMinutes : occ.startMinutes) ?? 0;
+      const endMinutes = (wholeSeries ? span?.endMinutes : occ.endMinutes) ?? 0;
+      if (nextEnd < nextStart) return;
+      if (nextEnd === nextStart && !occ.allDay && endMinutes < startMinutes) return;
+
       captureVersion(occ.eventId, 'resize');
 
-      const wholeSeries = scope === 'series' || !occ.event.recurrence;
       const label = `Resized ${occ.title}`;
       if (!wholeSeries) {
         await patchOccurrence(occ, { startDate: nextStart, endDate: nextEnd }, false, (merged) => ({

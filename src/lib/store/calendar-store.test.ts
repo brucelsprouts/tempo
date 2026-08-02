@@ -158,6 +158,22 @@ function row(over: Record<string, unknown>) {
   };
 }
 
+/** A timed event, which carries instants instead of bare dates. */
+function timed(startsAt: string, endsAt: string): TempoEvent {
+  return event({ allDay: false, startsAt, endsAt, startDate: null, endDate: null });
+}
+
+/** The occurrence a timed event draws, with the wall-clock minutes it reads at. */
+function timedOccurrence(
+  e: TempoEvent,
+  date: string,
+  endDate: string,
+  startMinutes: number,
+  endMinutes: number,
+): Occurrence {
+  return { ...occurrenceOf(e, date, endDate), startMinutes, endMinutes };
+}
+
 function occurrenceOf(e: TempoEvent, date: string, endDate = date): Occurrence {
   return {
     key: `${e.id}:${date}`,
@@ -191,6 +207,10 @@ function seed(events: TempoEvent[]) {
     versionsFor: null,
     status: 'ready',
     error: null,
+    // A seeded calendar is a fresh one. The stack lives in the store rather
+    // than in the fixture, so without this it carries the previous test's
+    // actions into the next one.
+    undoStack: [],
   });
 }
 
@@ -544,6 +564,234 @@ describe('gathering a selection onto one date', () => {
   });
 });
 
+describe('duplicating a selection', () => {
+  const dup = (occs: Occurrence[], to: string | null = null) =>
+    useCalendar.getState().duplicateOccurrences(occs, to);
+  const titles = () => useCalendar.getState().events.map((e) => e.title);
+
+  it('copies in place when given no date', async () => {
+    const one = event({ id: 'e1', title: 'Standup' });
+    seed([one]);
+
+    await dup([occurrenceOf(one, '2026-08-10')]);
+
+    const [, copy] = useCalendar.getState().events;
+    expect(copy.title).toBe('Standup (1)');
+    expect(copy.startDate).toBe('2026-08-10');
+    expect(copy.id).not.toBe('e1');
+  });
+
+  it('numbers each copy past the ones already there', async () => {
+    const one = event({ id: 'e1', title: 'Standup' });
+    seed([one]);
+
+    await dup([occurrenceOf(one, '2026-08-10')]);
+    await dup([occurrenceOf(one, '2026-08-10')]);
+
+    expect(titles()).toEqual(['Standup', 'Standup (1)', 'Standup (2)']);
+  });
+
+  it('does not give two copies made at once the same name', async () => {
+    const one = event({ id: 'e1', title: 'Standup' });
+    const two = event({ id: 'e2', title: 'Standup' });
+    seed([one, two]);
+
+    await dup([occurrenceOf(one, '2026-08-10'), occurrenceOf(two, '2026-08-10')]);
+
+    expect(titles()).toEqual(['Standup', 'Standup', 'Standup (1)', 'Standup (2)']);
+  });
+
+  it('lands the earliest copy on the date and keeps the spacing', async () => {
+    const one = event({ id: 'e1', title: 'A', startDate: '2026-08-10', endDate: '2026-08-10' });
+    const two = event({ id: 'e2', title: 'B', startDate: '2026-08-12', endDate: '2026-08-13' });
+    seed([one, two]);
+
+    await dup(
+      [occurrenceOf(one, '2026-08-10'), occurrenceOf(two, '2026-08-12', '2026-08-13')],
+      '2026-08-20',
+    );
+
+    const copies = useCalendar.getState().events.slice(2);
+    // +10 days for both, so the two-day gap between them survives — and so does
+    // the second entry's own length.
+    expect(copies.map((e) => [e.startDate, e.endDate])).toEqual([
+      ['2026-08-20', '2026-08-20'],
+      ['2026-08-22', '2026-08-23'],
+    ]);
+  });
+
+  it('measures the delta from the earliest, whatever order the selection arrives in', async () => {
+    const one = event({ id: 'e1', title: 'A', startDate: '2026-08-10', endDate: '2026-08-10' });
+    const two = event({ id: 'e2', title: 'B', startDate: '2026-08-12', endDate: '2026-08-12' });
+    seed([one, two]);
+
+    await dup(
+      [occurrenceOf(two, '2026-08-12'), occurrenceOf(one, '2026-08-10')],
+      '2026-08-20',
+    );
+
+    expect(
+      useCalendar
+        .getState()
+        .events.slice(2)
+        .map((e) => e.startDate)
+        .sort(),
+    ).toEqual(['2026-08-20', '2026-08-22']);
+  });
+
+  it('carries the recurrence rule, so a copy of a series is a series', async () => {
+    const weekly = event({
+      id: 'e1',
+      title: 'Standup',
+      recurrence: { freq: 'WEEKLY', interval: 1, byWeekday: [1] },
+      reminders: [{ minutes: 10 }],
+      notes: 'bring coffee',
+    });
+    seed([weekly]);
+
+    await dup([occurrenceOf(weekly, '2026-08-10')]);
+
+    const copy = useCalendar.getState().events[1];
+    expect(copy.recurrence).toEqual({ freq: 'WEEKLY', interval: 1, byWeekday: [1] });
+    expect(copy.reminders).toEqual([{ minutes: 10 }]);
+    expect(copy.notes).toBe('bring coffee');
+  });
+
+  it('makes one copy of a series however many of its instances are selected', async () => {
+    const weekly = event({
+      id: 'e1',
+      title: 'Standup',
+      recurrence: { freq: 'WEEKLY', interval: 1 },
+    });
+    seed([weekly]);
+
+    await dup([occurrenceOf(weekly, '2026-08-10'), occurrenceOf(weekly, '2026-08-17')]);
+
+    expect(useCalendar.getState().events).toHaveLength(2);
+    expect(titles()).toEqual(['Standup', 'Standup (1)']);
+  });
+
+  it('shifts a timed copy by whole days, keeping the time of day', async () => {
+    const timed = event({
+      id: 'e1',
+      title: 'Call',
+      allDay: false,
+      startDate: null,
+      endDate: null,
+      startsAt: '2026-08-10T13:00:00.000Z',
+      endsAt: '2026-08-10T14:00:00.000Z',
+    });
+    seed([timed]);
+
+    await dup([occurrenceOf(timed, '2026-08-10')], '2026-08-12');
+
+    const copy = useCalendar.getState().events[1];
+    expect(copy.startsAt).toBe('2026-08-12T13:00:00.000Z');
+    expect(copy.endsAt).toBe('2026-08-12T14:00:00.000Z');
+    expect(copy.startDate).toBeNull();
+  });
+
+  it('refuses a read-only source and reports nothing copied', async () => {
+    const fromGoogle = event({ id: 'e1', title: 'Imported', source: 'google' });
+    seed([fromGoogle]);
+
+    const made = await dup([occurrenceOf(fromGoogle, '2026-08-10')]);
+
+    expect(made).toEqual([]);
+    expect(useCalendar.getState().events).toHaveLength(1);
+    expect(callsOn('events', 'insert')).toHaveLength(0);
+  });
+
+  it('writes every copy in one statement', async () => {
+    seed([event({ id: 'e1', title: 'A' }), event({ id: 'e2', title: 'B' })]);
+    const [one, two] = useCalendar.getState().events;
+
+    await dup([occurrenceOf(one, '2026-08-10'), occurrenceOf(two, '2026-08-10')]);
+
+    const inserts = callsOn('events', 'insert');
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0].payload).toHaveLength(2);
+  });
+
+  it('returns the rows it made, so the caller can light them up', async () => {
+    const one = event({ id: 'e1', title: 'Standup' });
+    seed([one]);
+
+    const made = await dup([occurrenceOf(one, '2026-08-10')]);
+
+    expect(made).toHaveLength(1);
+    expect(made[0].title).toBe('Standup (1)');
+    expect(useCalendar.getState().events[1].id).toBe(made[0].id);
+  });
+
+  it('rolls the copies back out when the write is rejected', async () => {
+    const one = event({ id: 'e1', title: 'Standup' });
+    seed([one]);
+    shouldFail = true;
+
+    const made = await dup([occurrenceOf(one, '2026-08-10')]);
+
+    expect(made).toEqual([]);
+    expect(useCalendar.getState().events).toHaveLength(1);
+    expect(useCalendar.getState().error).toBe('write rejected');
+    // A rejected write must not offer to take back something that never landed.
+    expect(useCalendar.getState().undoStack).toHaveLength(0);
+  });
+
+  it('undoes to nothing, deleting the copies outright', async () => {
+    const one = event({ id: 'e1', title: 'Standup' });
+    seed([one]);
+
+    await dup([occurrenceOf(one, '2026-08-10')]);
+    expect(useCalendar.getState().events).toHaveLength(2);
+
+    await useCalendar.getState().undo();
+
+    expect(useCalendar.getState().events.map((e) => e.id)).toEqual(['e1']);
+    // A copy has no earlier shape to return to, so it is removed rather than
+    // trashed — the same path that takes back a create.
+    expect(useCalendar.getState().deleted).toHaveLength(0);
+    expect(lastCallOn('events', 'delete')).toBeDefined();
+  });
+
+  it('says what it duplicated', async () => {
+    const one = event({ id: 'e1', title: 'Standup' });
+    seed([one, event({ id: 'e2', title: 'Retro' })]);
+
+    await dup([occurrenceOf(one, '2026-08-10')]);
+    expect(useCalendar.getState().undoStack[0].label).toBe('Duplicated Standup (1)');
+
+    const [, two] = useCalendar.getState().events;
+    await dup([occurrenceOf(one, '2026-08-10'), occurrenceOf(two, '2026-08-10')]);
+    expect(useCalendar.getState().undoStack[0].label).toBe('Duplicated 2 entries');
+  });
+
+  it('pastes an entry that has been deleted since it was copied', async () => {
+    const one = event({ id: 'e1', title: 'Standup' });
+    seed([one]);
+    // What a clipboard holds is a snapshot, so the original going away must not
+    // turn the pending paste into a no-op.
+    const copied = occurrenceOf(one, '2026-08-10');
+    await useCalendar.getState().deleteEvent('e1');
+
+    const made = await dup([copied], '2026-08-20');
+
+    expect(made).toHaveLength(1);
+    expect(made[0].title).toBe('Standup (1)');
+    expect(made[0].startDate).toBe('2026-08-20');
+  });
+
+  it('does nothing at all on an empty selection', async () => {
+    seed([event({ id: 'e1' })]);
+
+    const made = await dup([]);
+
+    expect(made).toEqual([]);
+    expect(callsOn('events', 'insert')).toHaveLength(0);
+    expect(useCalendar.getState().undoStack).toHaveLength(0);
+  });
+});
+
 describe('deleting a selection', () => {
   it('takes the rows in one statement and leaves their exceptions alone', async () => {
     seed([event({ id: 'e1' }), event({ id: 'e2' }), event({ id: 'e3' })]);
@@ -852,6 +1100,54 @@ describe('resizing an occurrence', () => {
 
     expect(useCalendar.getState().events[0].endDate).toBe('2026-08-12');
     expect(recorded).toHaveLength(0);
+  });
+
+  /**
+   * A timed entry running 18:00 to midnight covers two dates and one evening.
+   * Pulling its trailing edge onto the first date leaves the dates equal — which
+   * a day-level check reads as fine — while the clock reads 18:00 to 00:00 on
+   * the same day, which is backwards. The database says so, so the check has to
+   * say so first, in the shape it is actually about to write.
+   */
+  it('refuses to shorten an evening onto the day it already started', async () => {
+    const e = timed('2026-08-02T22:00:00.000Z', '2026-08-03T04:00:00.000Z');
+    seed([e]);
+
+    await useCalendar
+      .getState()
+      .resizeOccurrence(timedOccurrence(e, '2026-08-02', '2026-08-03', 1080, 0), -1, 'end', 'series');
+
+    expect(useCalendar.getState().events[0].endsAt).toBe('2026-08-03T04:00:00.000Z');
+    expect(recorded).toHaveLength(0);
+  });
+
+  it('refuses the same inversion from the leading edge', async () => {
+    const e = timed('2026-08-02T22:00:00.000Z', '2026-08-03T04:00:00.000Z');
+    seed([e]);
+
+    await useCalendar
+      .getState()
+      .resizeOccurrence(timedOccurrence(e, '2026-08-02', '2026-08-03', 1080, 0), 1, 'start', 'series');
+
+    expect(useCalendar.getState().events[0].startsAt).toBe('2026-08-02T22:00:00.000Z');
+    expect(recorded).toHaveLength(0);
+  });
+
+  /**
+   * The same collapse onto one date, but the clock survives it: 05:30 to 11:19
+   * still reads forwards. This is the case the check must not sweep up with the
+   * one above.
+   */
+  it('still shortens an overnight whose hours survive the collapse', async () => {
+    const e = timed('2026-08-02T09:30:00.000Z', '2026-08-03T15:19:00.000Z');
+    seed([e]);
+
+    await useCalendar
+      .getState()
+      .resizeOccurrence(timedOccurrence(e, '2026-08-02', '2026-08-03', 330, 679), -1, 'end', 'series');
+
+    expect(useCalendar.getState().events[0].startsAt).toBe('2026-08-02T09:30:00.000Z');
+    expect(useCalendar.getState().events[0].endsAt).toBe('2026-08-02T15:19:00.000Z');
   });
 });
 

@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { dayOfWeek, todayIn, type CivilDate } from '@/lib/tempo/civil';
+import { DateInput } from './DateInput';
 import { MonthGrid } from './MonthGrid';
 import { TimePicker } from './TimePicker';
 import { WEEKDAYS } from './constants';
 import { inputClass, Popover, Toggle } from './ui';
-import { formatWhen, LAST_MINUTE, normalizeWhen, parseDateInput, type WhenValue } from './when';
+import { formatWhen, LAST_MINUTE, normalizeWhen, type WhenValue } from './when';
 
 /**
  * When an entry happens, in one place.
@@ -104,14 +105,6 @@ export function WhenField({ value, onChange, timezone }: Props): React.JSX.Eleme
     else patch({ endDate: d });
   }
 
-  function commitDraft() {
-    if (draft === null) return;
-    const ref = focused === 'start' ? value.startDate : value.endDate;
-    const parsed = parseDateInput(draft, ref);
-    setDraft(null);
-    if (parsed !== null) setDate(focused, parsed);
-  }
-
   function pick(d: CivilDate) {
     setDraft(null);
     setDate(focused, d);
@@ -141,39 +134,20 @@ export function WhenField({ value, onChange, timezone }: Props): React.JSX.Eleme
     const isFocused = focused === which;
 
     return (
-      <input
-        ref={which === 'start' ? startRef : endRef}
-        type="text"
-        value={isFocused && draft !== null ? draft : stored}
-        onChange={(e) => setDraft(e.target.value)}
-        onFocus={(e) => {
+      <DateInput
+        inputRef={which === 'start' ? startRef : endRef}
+        value={stored}
+        // Only the focused field is mid-edit — two cannot be at once, which is why one
+        // draft slot serves both — so the other renders what is stored.
+        draft={isFocused ? draft : null}
+        onDraft={setDraft}
+        onCommit={(d) => setDate(which, d)}
+        onFocus={() => {
           setFocused(which);
-          setDraft(null);
           setCursor(stored);
-          // Selected, not just focused: the field already holds a date and the reason
-          // to come here is to replace it.
-          e.currentTarget.select();
         }}
-        onBlur={commitDraft}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            // Swallowed rather than allowed through: this is inside a real `<form>`,
-            // and the Enter that means "this date" would otherwise also mean "save".
-            e.preventDefault();
-            commitDraft();
-          } else if (e.key === 'Escape' && draft !== null) {
-            // One layer at a time. Mid-edit, Escape abandons the edit; the next press
-            // finds no draft and closes the popover.
-            e.stopPropagation();
-            setDraft(null);
-          }
-        }}
-        autoComplete="off"
-        spellCheck={false}
-        aria-label={which === 'start' ? 'Start date' : 'End date'}
-        className={`${inputClass} tabular-nums ${
-          isFocused ? 'shadow-[inset_0_0_0_1px_var(--color-hairlit)]' : ''
-        }`}
+        lit={isFocused}
+        label={which === 'start' ? 'Start date' : 'End date'}
       />
     );
   };

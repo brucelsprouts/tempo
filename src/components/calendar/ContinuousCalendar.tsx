@@ -40,8 +40,9 @@ import {
   type MarqueeRect,
   type WeekLayout,
 } from '@/lib/tempo/layout';
-import { expandAll } from '@/lib/tempo/recurrence';
-import type { Occurrence } from '@/lib/tempo/types';
+import { expandAll, eventSpan } from '@/lib/tempo/recurrence';
+import type { Occurrence, TempoEvent } from '@/lib/tempo/types';
+import { getClipboard, setClipboard } from '@/lib/store/clipboard';
 import { DragGhost } from './EventBar';
 import type { DraftPreview } from './EventForm';
 import { WeekRow, type GhostBand } from './WeekRow';
@@ -118,19 +119,24 @@ function edgeScroll(el: HTMLElement, clientY: number): number {
  * The span a half-finished resize is describing.
  *
  * Inversion is clamped rather than flipped: dragging the end handle above the
- * start pins the bar at one day instead of turning it inside out. The commit
- * reads the same function as the preview, so what lands is what was drawn —
- * clamping in only one of the two would show a one-day bar and then write
+ * start pins the bar at its shortest instead of turning it inside out. The
+ * commit reads the same function as the preview, so what lands is what was
+ * drawn — clamping in only one of the two would show a short bar and then write
  * nothing at all, since the store refuses an inverted span outright.
+ *
+ * Shortest is one day for most entries and two for an evening that ends at or
+ * after midnight: 18:00 to 00:00 needs its two dates to stay apart, because on
+ * one date the same clock reads 18:00 to 00:00 and ends before it begins.
  */
 function resizedSpan(
   occ: Occurrence,
   edge: 'start' | 'end',
   to: CivilDate,
 ): { date: CivilDate; endDate: CivilDate } {
+  const floor = !occ.allDay && (occ.endMinutes ?? 0) < (occ.startMinutes ?? 0) ? 1 : 0;
   return edge === 'end'
-    ? { date: occ.date, endDate: maxDate(to, occ.date) }
-    : { date: minDate(to, occ.endDate), endDate: occ.endDate };
+    ? { date: occ.date, endDate: maxDate(to, addDays(occ.date, floor)) }
+    : { date: minDate(to, addDays(occ.endDate, -floor)), endDate: occ.endDate };
 }
 
 /**
@@ -163,6 +169,17 @@ export interface CalendarHandle {
   /** Both report whether there was a selection to act on. */
   deleteSelection: () => boolean;
   moveSelection: (deltaDays: number) => boolean;
+  /** Reports how many entries it took, so the shell can say so. */
+  copySelection: () => number;
+  /**
+   * Copy in place, and paste what ⌘C is holding.
+   *
+   * Both report whether they had anything to work with, so an empty selection
+   * or an empty clipboard leaves the keypress to the browser rather than
+   * swallowing it silently.
+   */
+  duplicateSelection: () => boolean;
+  pasteClipboard: () => boolean;
 }
 
 interface Props {
@@ -196,6 +213,7 @@ export function ContinuousCalendar({
   const gatherOccurrences = useCalendar((s) => s.gatherOccurrences);
   const resizeOccurrence = useCalendar((s) => s.resizeOccurrence);
   const deleteEvents = useCalendar((s) => s.deleteEvents);
+  const duplicateOccurrences = useCalendar((s) => s.duplicateOccurrences);
 
   const today = useMemo(() => todayIn(timezone), [timezone]);
   const epochStart = useMemo(
@@ -278,6 +296,23 @@ export function ContinuousCalendar({
     const ro = new ResizeObserver(([entry]) => setViewportH(entry.contentRect.height));
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+
+  /**
+   * Where the pointer is, always — not only while a gesture is running.
+   *
+   * Paste has no drag to read a destination off, so it asks the same question
+   * drop asks — "what day is under the cursor" — of a position recorded on the
+   * way past. A ref rather than state because nothing renders it; at pointer
+   * frequency, state here would re-render the whole grid for a number only one
+   * keystroke ever reads.
+   */
+  useEffect(() => {
+    const track = (e: PointerEvent) => {
+      pointer.current = { x: e.clientX, y: e.clientY };
+    };
+    window.addEventListener('pointermove', track, { passive: true });
+    return () => window.removeEventListener('pointermove', track);
   }, []);
 
   // Shift held at drop time means "rewrite the series", not "move this one".
@@ -697,6 +732,60 @@ export function ContinuousCalendar({
     [selected, moveOccurrences],
   );
 
+  /**
+   * Light up what a duplicate just made.
+   *
+   * The copies are what you want selected afterwards — it is how you drag them
+   * somewhere, delete them if you changed your mind, or press ⌘D again to make
+   * a third. A key is `${eventId}:${seriesDate}`, and a fresh entry's series
+   * date is wherever its span starts, so the keys are predictable without
+   * waiting for the next expansion to hand them over.
+   */
+  const selectCopies = useCallback((copies: TempoEvent[]) => {
+    // `flatMap` rather than filter-then-map: the id and the date have to stay
+    // together, and an entry with no resolvable span would otherwise shift
+    // every key after it onto the wrong copy.
+    const keys = copies.flatMap((e) => {
+      const start = eventSpan(e)?.start;
+      return start ? [`${e.id}:${start}`] : [];
+    });
+    setSelection(keys.length > 0 ? new Set(keys) : NOTHING);
+  }, []);
+
+  const copySelection = useCallback(() => {
+    setClipboard(selected);
+    return selected.length;
+  }, [selected]);
+
+  /**
+   * Where a paste lands: the day under the cursor, or the focused day.
+   *
+   * The same primitive drop resolves its target with, so paste and drop cannot
+   * disagree about what day a pixel is. The fallback covers a pointer that is
+   * off the grid or has never moved; `null` from both means "in place", which
+   * is the honest answer when there is no target to speak of.
+   */
+  const pasteTarget = useCallback((): CivilDate | null => {
+    const { x, y } = pointer.current;
+    return dateUnderPointer(x, y) ?? selectedDay;
+  }, [selectedDay]);
+
+  const duplicateSelection = useCallback(() => {
+    if (selected.length === 0) return false;
+    // In place, whatever the pointer happens to be over — a duplicate is a copy
+    // of a thing where it already is, and reading the cursor here would make
+    // ⌘D land somewhere different depending on where the mouse was resting.
+    void duplicateOccurrences(selected, null).then(selectCopies);
+    return true;
+  }, [selected, duplicateOccurrences, selectCopies]);
+
+  const pasteClipboard = useCallback(() => {
+    const held = getClipboard();
+    if (held.length === 0) return false;
+    void duplicateOccurrences([...held], pasteTarget()).then(selectCopies);
+    return true;
+  }, [duplicateOccurrences, pasteTarget, selectCopies]);
+
   const jumpToToday = useCallback(() => {
     scrollRef.current?.scrollTo({ top: TODAY_OFFSET, behavior: 'smooth' });
   }, []);
@@ -713,8 +802,26 @@ export function ContinuousCalendar({
 
   useImperativeHandle(
     ref,
-    () => ({ jumpToToday, jumpTo, unwind, deleteSelection, moveSelection }),
-    [jumpToToday, jumpTo, unwind, deleteSelection, moveSelection],
+    () => ({
+      jumpToToday,
+      jumpTo,
+      unwind,
+      deleteSelection,
+      moveSelection,
+      copySelection,
+      duplicateSelection,
+      pasteClipboard,
+    }),
+    [
+      jumpToToday,
+      jumpTo,
+      unwind,
+      deleteSelection,
+      moveSelection,
+      copySelection,
+      duplicateSelection,
+      pasteClipboard,
+    ],
   );
 
   // Which month the viewport is currently sitting in. There is no "current
@@ -746,7 +853,7 @@ export function ContinuousCalendar({
             <div
               key={d}
               className={[
-                'label border-l border-hair px-1.5 py-2',
+                'chrome-tight label border-l border-hair px-1.5 py-2',
                 // Sunday and Saturday keep `.label`'s weight while the five
                 // weekdays lift, so the header marks the same two columns the
                 // weekend bands mark in the grid below.
@@ -844,7 +951,7 @@ function Header({
   onToday: () => void;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-4 border-b border-hair px-3 py-2.5 sm:px-4">
+    <div className="chrome-tight flex shrink-0 items-center gap-4 border-b border-hair px-3 py-2.5 sm:px-4">
       <div className="flex min-w-0 items-baseline gap-2 truncate">
         <span className="text-[13px] tracking-[0.08em] text-ink">{month}</span>
         <span className="text-[11px] tabular-nums text-mute">{year}</span>

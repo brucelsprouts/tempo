@@ -222,16 +222,46 @@ body {
     }
   }
 
+  /* The ruled bars that frame the grid, on a screen with no height to spare.
+
+     A phone held sideways is 402px tall, and the month readout, the weekday
+     strip and the status line spend about 120 of them before a single week is
+     drawn — so the calendar was down to one and a bit rows in the orientation
+     it is most legible in. The bars keep their type and their hairlines and
+     give back the breathing room, which is the part a 402px screen cannot
+     afford. Nothing above the threshold changes.
+
+     Authored after Tailwind's generated utilities, which is what lets this beat
+     the `py-*` on the same element — the same ordering `.label-lit` above
+     depends on. */
+  @media (max-height: 500px) {
+    .chrome-tight {
+      padding-top: 0.25rem;
+      padding-bottom: 0.25rem;
+    }
+  }
+
   /* A control a finger has to land on.
 
      Only on coarse pointers, and only a floor: the chrome is built out of 10px
      labels in 25px boxes, which a mouse hits every time and a thumb does not.
      38px rather than the 44 Apple asks for — the buttons sit in a row of their
-     own on a phone, so the miss they are guarding against is vertical, and 44
-     would make the top bar the tallest thing on a landscape screen. */
+     own on a phone, so the miss being guarded against is vertical, and 44 would
+     make the top bar the tallest thing on the screen.
+
+     The second rule is the honest half of the trade. This floor and
+     `.chrome-tight` above are spending the same 400px, and at 38 the buttons
+     took back most of what the bars gave up — so on a screen that short the
+     floor drops to 32, which is still half again the 25px a thumb was missing
+     and leaves the tightening worth doing. */
   @media (pointer: coarse) {
     .tap {
       min-height: 38px;
+    }
+  }
+  @media (pointer: coarse) and (max-height: 500px) {
+    .tap {
+      min-height: 32px;
     }
   }
 }

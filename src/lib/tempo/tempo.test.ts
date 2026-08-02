@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   addMonths,
+  setMonth,
   civilInZone,
   daysInMonth,
   instantFromCivil,
@@ -64,6 +65,20 @@ describe('civil dates', () => {
     expect(addMonths('2026-01-31', 1)).toBe('2026-02-28');
     expect(addMonths('2024-01-31', 1)).toBe('2024-02-29');
     expect(addMonths('2026-03-15', -3)).toBe('2025-12-15');
+  });
+
+  it('jumps to a named month without leaving the year', () => {
+    // What the picker's month select does. Backwards is a jump, not a rollover: a
+    // header reading MAR must not be showing you next March.
+    expect(setMonth('2026-08-04', 3)).toBe('2026-03-04');
+    expect(setMonth('2026-08-04', 12)).toBe('2026-12-04');
+    expect(setMonth('2026-08-04', 8)).toBe('2026-08-04');
+  });
+
+  it('clamps a month jump to a day the target month has', () => {
+    expect(setMonth('2026-01-31', 2)).toBe('2026-02-28');
+    expect(setMonth('2024-01-31', 2)).toBe('2024-02-29');
+    expect(setMonth('2026-03-31', 4)).toBe('2026-04-30');
   });
 
   it('knows leap years', () => {

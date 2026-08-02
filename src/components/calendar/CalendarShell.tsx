@@ -15,7 +15,7 @@ import { ContinuousCalendar, type CalendarHandle } from './ContinuousCalendar';
 import { DayModal } from './DayModal';
 import { EventForm, type DraftPreview, type EntryFormHandle } from './EventForm';
 import { History } from './History';
-import { ListView } from './ListView';
+import { ListView, type ListHandle } from './ListView';
 import { Settings } from './Settings';
 import { Toast } from './Toast';
 import { zoomIn, zoomOut } from './timeline';
@@ -94,6 +94,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   const top = overlays[overlays.length - 1] ?? null;
 
   const calendarRef = useRef<CalendarHandle>(null);
+  const listRef = useRef<ListHandle>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   /** The live entry form, when one is open. See `dismissEntry`. */
   const formRef = useRef<EntryFormHandle>(null);
@@ -223,6 +224,27 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
    * dropped. The window subscription is therefore permanent and indirects
    * through a ref that always holds this render's handler.
    */
+  /**
+   * Whichever view currently owns a selection.
+   *
+   * The grid and the table both keep their own, and both answer to the same
+   * four calls — so one chord can be bound once here rather than twice, and the
+   * shell never has to grow a copy of what is selected. Null while an overlay
+   * is up: a modal is a layer over the selection, not beside it, and ⌘D with a
+   * form open must not quietly duplicate whatever is lit behind it.
+   */
+  type SelectionSurface = Pick<
+    CalendarHandle,
+    'unwind' | 'copySelection' | 'duplicateSelection' | 'pasteClipboard'
+  >;
+
+  function selectionSurface(): SelectionSurface | null {
+    if (overlays.length > 0) return null;
+    if (view === 'list') return listRef.current;
+    if (view === 'scroll') return calendarRef.current;
+    return null;
+  }
+
   function onKey(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
     const typing =
@@ -250,7 +272,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
       setToast(null);
       if (overlays.length > 0) {
         pop();
-      } else if (!calendarRef.current?.unwind() && typing) {
+      } else if (!selectionSurface()?.unwind() && typing) {
         // The grid's own layer sits under the stack: the selection. Blurring is
         // last because it is not a layer — in the scroll view there is nothing
         // to be typing into.
@@ -302,6 +324,55 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
       e.preventDefault();
       void runUndo();
       return;
+    }
+
+    /**
+     * Copy, paste, duplicate — over whichever view has a selection.
+     *
+     * Every one of them yields rather than swallows: each call reports whether
+     * it had anything to act on, and a chord that found nothing falls through
+     * to the browser. So ⌘V on an empty clipboard still pastes into whatever
+     * has focus, and ⌘D with nothing lit still bookmarks the page — which is
+     * the behaviour someone who has not selected anything is expecting.
+     *
+     * Shift is excluded deliberately: ⌘⇧C is the inspector and ⌘⇧V is
+     * paste-as-plain-text, and neither is ours to take.
+     */
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !typing) {
+      const surface = selectionSurface();
+      const key = e.key.toLowerCase();
+
+      if (surface && key === 'c') {
+        /**
+         * Real text beats the selection.
+         *
+         * Someone who has dragged across an entry's title and pressed ⌘C is
+         * copying that text, and handing them a clipboard of calendar entries
+         * instead would be taking a gesture the browser already answers well.
+         */
+        if (!window.getSelection()?.toString()) {
+          const n = surface.copySelection();
+          if (n > 0) {
+            e.preventDefault();
+            setToast({
+              at: Date.now(),
+              label: n === 1 ? 'Copied 1 entry' : `Copied ${n} entries`,
+              undoable: false,
+            });
+            return;
+          }
+        }
+      }
+
+      if (surface && key === 'v' && surface.pasteClipboard()) {
+        e.preventDefault();
+        return;
+      }
+
+      if (surface && key === 'd' && surface.duplicateSelection()) {
+        e.preventDefault();
+        return;
+      }
     }
 
     // Never shadow a browser or OS chord.
@@ -522,6 +593,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
 
         {view === 'list' && (
           <ListView
+            ref={listRef}
             searchRef={searchRef}
             onOpen={(occ) => push({ kind: 'entry', mode: 'edit', occurrence: occ })}
             onNew={() => newEntry()}
@@ -553,7 +625,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
           />
         )}
 
-        <footer className="flex items-center gap-4 border-t border-hair px-4 py-2">
+        <footer className="chrome-tight flex items-center gap-4 border-t border-hair px-3 py-2 sm:px-4">
           <span className="label">
             {status === 'loading' ? 'SYNCING' : status === 'error' ? 'ERROR' : 'ONLINE'}
           </span>

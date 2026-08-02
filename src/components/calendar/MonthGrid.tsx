@@ -1,17 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 import {
   addDays,
   addMonths,
   addYears,
   compareDates,
   parts,
+  setMonth,
   startOfMonth,
   startOfWeek,
   type CivilDate,
 } from '@/lib/tempo/civil';
-import { MONTHS_LONG, pickerYears, WEEKDAYS } from './constants';
+import { MONTHS, pickerYears, WEEKDAYS } from './constants';
 
 /**
  * One month, drawn once.
@@ -24,8 +25,8 @@ import { MONTHS_LONG, pickerYears, WEEKDAYS } from './constants';
  * It owns the keyboard. The cells are deliberately out of the tab order — forty-two
  * tab stops is not navigation — so the grid itself takes focus and the arrows walk
  * the cursor from there. That has to live with the cells rather than with either
- * caller: `DatePicker` handled the arrows on its panel and `WhenField` has no panel
- * to hang them on, its focus being in a text field most of the time.
+ * caller: both callers now open onto a text field and reach the grid by Tab, so
+ * neither has a panel with the focus to hang an arrow handler on.
  *
  * No `Date` object ever holds a value here. Every step and comparison goes through
  * `civil.ts` — see DESIGN.md §3 for why a civil date that becomes a `Date` is a bug
@@ -74,8 +75,6 @@ interface Props {
   selection: MonthSelection;
   /** Earliest selectable date, inclusive. */
   min?: CivilDate;
-  /** For a popup that opens onto the grid rather than onto a field. */
-  autoFocus?: boolean;
   /** Names the grid for a screen reader; the caller has the human word for it. */
   label: string;
 }
@@ -87,11 +86,8 @@ export function MonthGrid({
   today,
   selection,
   min,
-  autoFocus,
   label,
 }: Props): React.JSX.Element {
-  const gridRef = useRef<HTMLDivElement>(null);
-
   const monthStart = startOfMonth(cursor);
   const { year: shownYear, month: shownMonth } = parts(cursor);
 
@@ -127,10 +123,6 @@ export function MonthGrid({
       ? [selection, selection]
       : [selection.start, selection.end];
   const isRange = typeof selection !== 'string' && from !== to;
-
-  useEffect(() => {
-    if (autoFocus) gridRef.current?.focus();
-  }, [autoFocus]);
 
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     switch (e.key) {
@@ -174,9 +166,31 @@ export function MonthGrid({
         number of clicks.
       */}
       <div className="mb-2 flex items-center gap-1">
-        <span className="shrink-0 px-1 text-[11px] uppercase tracking-[0.16em] text-dim">
-          {MONTHS_LONG[shownMonth - 1]}
-        </span>
+        {/*
+          The month was a `<span>` — the one word in this header that names where you
+          are and the only one you could not change by pointing at it. Reaching next
+          March meant five presses of `›`, and reaching a birth date meant giving up on
+          the steppers entirely and going through the year select first.
+
+          Abbreviated rather than spelled out, which is where this parts company with
+          the arrangement it is copied from. `September` set in this row's tracking is
+          wider than the year select, and the header is a fixed run of five controls
+          inside a 238px popover that `September` already overflowed before it became a
+          control at all. Three letters is unambiguous, it is how `MONTHS` is spelled
+          everywhere else in the app, and it leaves this row narrower than it was.
+        */}
+        <select
+          value={shownMonth}
+          onChange={(e) => moveTo(setMonth(cursor, Number(e.target.value)))}
+          aria-label="Month"
+          className={`${CONTROL} w-[46px] appearance-none px-1 text-center tracking-[0.08em] text-ink hover:border-hairlit`}
+        >
+          {MONTHS.map((m, i) => (
+            <option key={m} value={i + 1}>
+              {m}
+            </option>
+          ))}
+        </select>
 
         {/*
           `appearance-none`, so no native chevron. The one this drew was the only
@@ -228,7 +242,6 @@ export function MonthGrid({
       </div>
 
       <div
-        ref={gridRef}
         tabIndex={0}
         role="grid"
         aria-label={label}
