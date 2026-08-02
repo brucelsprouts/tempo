@@ -58,13 +58,19 @@ export function normalizeWhen(v: WhenValue): WhenValue {
  * Four shapes, and the arrow is doing the work: `→` crosses a date boundary and `–`
  * does not, so "two days" and "two hours on one day" are distinguishable at a glance
  * without the second date being printed twice.
+ *
+ * `hasEnd` mirrors the END DATE toggle in the form. When it is off and the event is
+ * timed, only the start time is shown — an event without an explicit end is a point
+ * in time, not a span.
  */
-export function formatWhen(v: WhenValue): string {
+export function formatWhen(v: WhenValue, hasEnd = true): string {
   const spans = v.endDate !== v.startDate;
 
   if (v.allDay) return spans ? `${v.startDate} → ${v.endDate}` : v.startDate;
 
   const from = formatMinutes(v.startMinutes);
+  if (!hasEnd && !spans) return `${v.startDate} ${from}`;
+
   const to = formatMinutes(v.endMinutes);
   return spans ? `${v.startDate} ${from} → ${v.endDate} ${to}` : `${v.startDate} ${from} – ${to}`;
 }

@@ -86,6 +86,10 @@ describe('formatWhen', () => {
       '2026-08-04 09:00 → 2026-08-06 10:00',
     );
   });
+
+  it('omits the end time when hasEnd is false', () => {
+    expect(formatWhen({ ...base, allDay: false }, false)).toBe('2026-08-04 09:00');
+  });
 });
 
 describe('parseDateInput', () => {

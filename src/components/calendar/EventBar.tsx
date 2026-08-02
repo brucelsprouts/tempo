@@ -138,7 +138,8 @@ export function EventBar({
         tick ? 'text-[11px]' : 'text-[12px]',
         'border-y border-r border-hair transition-colors',
         continuesBefore ? 'border-l border-l-hairlit pl-1' : 'pl-1.5',
-        occ.readOnly ? 'cursor-default opacity-70' : 'cursor-grab hover:border-hairlit hover:bg-sunken',
+        occ.readOnly ? 'cursor-default' : 'cursor-grab hover:border-hairlit hover:bg-sunken',
+        occ.event.source === 'google' ? 'opacity-70' : '',
         done ? 'opacity-45' : '',
       ].join(' ')}
       {...attributes}

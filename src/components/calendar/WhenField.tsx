@@ -192,12 +192,12 @@ export function WhenField({ value, onChange, timezone }: Props): React.JSX.Eleme
         aria-expanded={open}
         // A button's accessible name replaces its text rather than adding to it, and
         // the text here is the value.
-        aria-label={`When, ${formatWhen(value)}`}
+        aria-label={`When, ${formatWhen(value, hasEnd)}`}
         className={`${inputClass} flex items-center justify-between gap-2 text-left tabular-nums ${
           open ? 'shadow-[inset_0_0_0_1px_var(--color-hairlit)]' : ''
         }`}
       >
-        <span className="truncate">{formatWhen(value)}</span>
+        <span className="truncate">{formatWhen(value, hasEnd)}</span>
         <span className="label shrink-0">{WEEKDAYS[dayOfWeek(value.startDate)]}</span>
       </button>
 

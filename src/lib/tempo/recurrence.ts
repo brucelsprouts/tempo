@@ -331,7 +331,7 @@ function buildOccurrence(
     status: patch.status ?? event.status,
     categoryId: event.categoryId,
     isOverride: override !== undefined,
-    readOnly: event.source === 'google',
+    readOnly: event.source === 'google' || event.kind === 'birthday',
   };
 }
 

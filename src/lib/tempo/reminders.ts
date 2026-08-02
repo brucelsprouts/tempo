@@ -62,7 +62,7 @@ export const ALL_DAY_PRESETS: ReadonlyArray<{ minutes: number; label: string }> 
  * still possible.
  */
 export function defaultReminders(kind: TempoEvent['kind'], allDay: boolean): Reminder[] {
-  if (kind === 'birthday') return [{ minutes: 900 }];
+  if (kind === 'birthday') return [{ minutes: 0 }];
   if (kind === 'assignment' || kind === 'milestone') {
     return allDay ? [{ minutes: 2340 }, { minutes: 900 }] : [{ minutes: 1440 }, { minutes: 120 }];
   }

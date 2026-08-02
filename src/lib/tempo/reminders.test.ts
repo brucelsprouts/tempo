@@ -340,8 +340,8 @@ describe('defaults and parsing', () => {
     expect(defaultReminders('assignment', false)).toEqual([{ minutes: 1440 }, { minutes: 120 }]);
   });
 
-  it('gives a birthday one morning-before nudge', () => {
-    expect(defaultReminders('birthday', true)).toEqual([{ minutes: 900 }]);
+  it('gives a birthday a midnight nudge', () => {
+    expect(defaultReminders('birthday', true)).toEqual([{ minutes: 0 }]);
   });
 
   it('collapses duplicates and sorts longest lead first', () => {

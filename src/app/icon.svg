@@ -6,7 +6,8 @@
   </defs>
   <g clip-path="url(#tile)">
     <rect width="64" height="64" fill="#08090a" />
-    <rect width="64" height="14" fill="#2a2d33" />
+    <!-- Band height shared with public/logo.svg and scripts/generate-icons.mjs. -->
+    <rect width="64" height="19" fill="#2a2d33" />
     <g fill="#ffffff">
       <rect x="28" y="25" width="36" height="9" />
       <rect y="42" width="36" height="9" />

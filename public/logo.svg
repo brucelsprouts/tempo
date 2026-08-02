@@ -4,6 +4,12 @@
     An event runs off the end of one week row and resumes at the start of the
     next. The header band reads as a calendar; the bars breaking the frame are
     the point of the product. Achromatic, per the interface itself.
+
+    The band's height of 19 is deliberate and shared with `src/app/icon.svg` and
+    `scripts/generate-icons.mjs`. Home screens mask this tile, and the deepest
+    bite is iOS's squircle at ~22.4% of the height; a band shallower than that
+    loses both top corners to the curve and lands on the phone as a dome. See
+    the generator for the full reasoning before changing it.
   -->
   <defs>
     <clipPath id="tile">
@@ -12,7 +18,7 @@
   </defs>
   <g clip-path="url(#tile)">
     <rect width="64" height="64" fill="#08090a" />
-    <rect width="64" height="14" fill="#2a2d33" />
+    <rect width="64" height="19" fill="#2a2d33" />
     <g fill="#ffffff">
       <rect x="28" y="25" width="36" height="9" />
       <rect y="42" width="36" height="9" />
