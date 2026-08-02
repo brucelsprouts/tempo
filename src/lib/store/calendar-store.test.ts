@@ -690,6 +690,43 @@ describe('soft delete', () => {
   });
 });
 
+describe('emptying the trash back onto the calendar', () => {
+  it('restores every entry in one statement', async () => {
+    seed([event({ id: 'e1' }), event({ id: 'e2' }), event({ id: 'e3' })]);
+    await useCalendar.getState().deleteEvents(['e1', 'e2']);
+    recorded.length = 0;
+
+    await useCalendar.getState().restoreDeleted();
+
+    expect(useCalendar.getState().deleted).toHaveLength(0);
+    expect(useCalendar.getState().events.map((e) => e.id).sort()).toEqual(['e1', 'e2', 'e3']);
+    // One update, not one per entry: a loop would leave half the trash restored
+    // on a failure partway, which the snapshot rollback cannot describe.
+    expect(callsOn('events', 'update')).toHaveLength(1);
+    expect(useCalendar.getState().events.every((e) => e.deletedAt === null)).toBe(true);
+  });
+
+  it('writes nothing when the trash is already empty', async () => {
+    seed([event({ id: 'e1' })]);
+
+    await useCalendar.getState().restoreDeleted();
+
+    expect(recorded).toHaveLength(0);
+  });
+
+  it('puts the whole group back in the trash when the write is rejected', async () => {
+    seed([event({ id: 'e1' }), event({ id: 'e2' })]);
+    await useCalendar.getState().deleteEvents(['e1', 'e2']);
+    shouldFail = true;
+
+    await useCalendar.getState().restoreDeleted();
+
+    expect(useCalendar.getState().deleted).toHaveLength(2);
+    expect(useCalendar.getState().events).toHaveLength(0);
+    expect(useCalendar.getState().error).toBe('write rejected');
+  });
+});
+
 /**
  * The one hard delete left in the app.
  *

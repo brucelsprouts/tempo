@@ -98,7 +98,8 @@ interface CalendarState {
   updateEventFromDraft: (id: string, draft: EventDraft) => Promise<void>;
   deleteEvent: (id: string) => Promise<void>;
   deleteEvents: (ids: string[]) => Promise<void>;
-  restoreDeleted: (eventId: string) => Promise<void>;
+  /** Put one back, or the whole trash when called with nothing. */
+  restoreDeleted: (eventId?: string) => Promise<void>;
   /**
    * The one hard delete in the app. One entry, or the whole trash.
    *
@@ -720,20 +721,28 @@ export const useCalendar = create<CalendarState>((set, get) => {
      * was wrong in a way only the person who cancelled them would ever notice.
      */
     restoreDeleted: async (eventId) => {
-      const entry = get().deleted.find((e) => e.id === eventId);
-      if (!entry) return;
+      const trash = get().deleted;
+      // One entry, or the whole trash — the same shape `purgeDeleted` takes,
+      // because the two sit next to each other and answering to different
+      // calling conventions would be a trap for whoever wires up the next
+      // button.
+      const coming = eventId ? trash.filter((e) => e.id === eventId) : trash;
+      if (coming.length === 0) return;
+      const ids = coming.map((e) => e.id);
+      const back = new Set(ids);
 
       await optimistic(
         () =>
           set((s) => ({
-            events: [...s.events, { ...entry, deletedAt: null }],
-            deleted: s.deleted.filter((e) => e.id !== eventId),
+            events: [...s.events, ...coming.map((e) => ({ ...e, deletedAt: null }))],
+            deleted: s.deleted.filter((e) => !back.has(e.id)),
           })),
         async () => {
-          const { error } = await supabase
-            .from('events')
-            .update({ deleted_at: null })
-            .eq('id', eventId);
+          // One statement, not one per entry: a loop that failed partway would
+          // leave half the trash restored, which a single snapshot rollback has
+          // no way to express.
+          const q = supabase.from('events').update({ deleted_at: null });
+          const { error } = ids.length === 1 ? await q.eq('id', ids[0]) : await q.in('id', ids);
           return { error };
         },
       );

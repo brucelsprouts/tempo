@@ -156,14 +156,43 @@ function DeletedPane({
                 KEEP
               </Button>
             </span>
+          ) : asking('restore', 'all') ? (
+            <span className="flex items-center gap-1.5">
+              <span className="label text-dim">ALL OF IT?</span>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => {
+                  setConfirming(null);
+                  void restoreDeleted();
+                }}
+              >
+                RESTORE {deleted.length}
+              </Button>
+              <Button type="button" variant="quiet" onClick={() => setConfirming(null)}>
+                CANCEL
+              </Button>
+            </span>
           ) : (
-            <Button
-              type="button"
-              variant="quiet"
-              onClick={() => setConfirming({ action: 'purge', id: 'all' })}
-            >
-              PURGE ALL
-            </Button>
+            // Restore first, purge second, and the destructive one last in
+            // reading order — the two sit a few pixels apart and only one of
+            // them can be taken back.
+            <span className="flex items-center gap-1.5">
+              <Button
+                type="button"
+                variant="quiet"
+                onClick={() => setConfirming({ action: 'restore', id: 'all' })}
+              >
+                RESTORE ALL
+              </Button>
+              <Button
+                type="button"
+                variant="quiet"
+                onClick={() => setConfirming({ action: 'purge', id: 'all' })}
+              >
+                PURGE ALL
+              </Button>
+            </span>
           ))}
       </PaneHeader>
 
@@ -189,7 +218,11 @@ function DeletedPane({
                   // it is the target rather than a separate chevron.
                   className="flex min-w-0 flex-1 items-center gap-2 text-left"
                 >
-                  <span className="w-4 shrink-0 text-center text-[11px] text-mute">
+                  {/* `w-5` and no wrapping: the task glyphs are three
+                      characters (`[ ]`, `[x]`), which overflow a 16px column
+                      and break across two lines — so a deleted task rendered
+                      as a bracket stacked on a bracket. */}
+                  <span className="w-5 shrink-0 whitespace-nowrap text-center text-[11px] text-mute">
                     {glyphFor(entry)}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-[11px] text-ink">
