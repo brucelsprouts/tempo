@@ -53,3 +53,69 @@ export function daySegment(occ: Occurrence, date: CivilDate): DaySegment | null 
   if (bottom <= top) return null;
   return { top, bottom, continuesBefore, continuesAfter };
 }
+
+/** A segment with its column assigned. */
+export interface Placed {
+  key: string;
+  segment: DaySegment;
+  lane: number;
+  /** How many lanes to divide the width by — the count for *this* cluster. */
+  of: number;
+}
+
+/**
+ * Side-by-side columns for blocks that overlap, cluster by cluster.
+ *
+ * The width divisor is per-cluster rather than per-day, which is the fix for a
+ * real defect: computed across the whole day, a single overlapping pair at
+ * 09:00 halved every unrelated block in the calendar and left a column of dead
+ * space beside the afternoon.
+ *
+ * A cluster is a set of segments connected by transitive overlap — a and c need
+ * not overlap each other to share a width, if b overlaps both. Anything else
+ * would let two blocks in the same visual stack disagree about how wide a lane
+ * is.
+ *
+ * Touching is not overlapping: a block ending at 10:00 and one starting at
+ * 10:00 are consecutive, and drawing them half-width side by side would be a
+ * lie about a back-to-back schedule.
+ */
+export function placeSegments(items: Array<{ key: string; segment: DaySegment }>): Placed[] {
+  const sorted = [...items].sort(
+    (a, b) => a.segment.top - b.segment.top || a.segment.bottom - b.segment.bottom,
+  );
+
+  const out: Placed[] = [];
+  /** The run of segments currently connected by overlap. */
+  let cluster: Placed[] = [];
+  /** Lane end times within the open cluster. */
+  let laneEnds: number[] = [];
+
+  const closeCluster = () => {
+    const of = Math.max(1, laneEnds.length);
+    for (const placed of cluster) out.push({ ...placed, of });
+    cluster = [];
+    laneEnds = [];
+  };
+
+  for (const item of sorted) {
+    const { top, bottom } = item.segment;
+
+    // The cluster is open while anything in it is still running. `every` over
+    // the lane ends is exactly "nothing overlaps this segment".
+    if (laneEnds.length > 0 && laneEnds.every((end) => end <= top)) closeCluster();
+
+    let lane = laneEnds.findIndex((end) => end <= top);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(bottom);
+    } else {
+      laneEnds[lane] = bottom;
+    }
+
+    cluster.push({ key: item.key, segment: item.segment, lane, of: 1 });
+  }
+  closeCluster();
+
+  return out;
+}
