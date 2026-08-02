@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCalendar } from '@/lib/store/calendar-store';
 import type { CivilDate } from '@/lib/tempo/civil';
-import { parts } from '@/lib/tempo/civil';
+import { minutesInZone, parts, todayIn } from '@/lib/tempo/civil';
 import type { Occurrence } from '@/lib/tempo/types';
 import { DEFAULT_CATEGORY_COLOR, HOUR_H_DEFAULT, MONTHS } from './constants';
 import { DAY_MINUTES, daySegment, placeSegments, type DaySegment } from './timeline';
@@ -34,6 +34,10 @@ interface Props {
 export function DayView({ date, occurrences, onOpen, onNew }: Props) {
   const categories = useCalendar((s) => s.categories);
   const setOccurrenceTime = useCalendar((s) => s.setOccurrenceTime);
+
+  const timezone = useCalendar((s) => s.timezone);
+  const nowMinutes = useNowMinutes(timezone);
+  const isToday = date === todayIn(timezone);
 
   const gridRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ key: string; startDelta: number; endDelta: number } | null>(
@@ -192,10 +196,49 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
               );
             })}
           </div>
+
+          {isToday && nowMinutes !== null && (
+            <div
+              // Never intercepts a drag: this is a readout, not a target.
+              className="pointer-events-none absolute inset-x-0 z-30"
+              style={{ top: (nowMinutes / 60) * HOUR_H }}
+              aria-hidden="true"
+            >
+              <div className="absolute inset-x-11 h-px bg-[#c8553d]" />
+              {/* An origin for the line, so it does not read as a hairline border. */}
+              <div className="absolute left-[42px] top-[-2.5px] h-[5px] w-[5px] rounded-full bg-[#c8553d]" />
+              <span className="absolute left-1 top-[-6px] text-[10px] leading-none text-[#c8553d]">
+                {clockLabel(nowMinutes)}
+              </span>
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
+}
+
+/**
+ * Minutes past midnight, now, in the calendar's zone — or null until mounted.
+ *
+ * Null first, deliberately. A clock read during render is a hydration mismatch:
+ * the server renders one minute and the client another, and React replaces the
+ * tree. The rule appears a frame later instead, which nobody sees.
+ *
+ * Thirty seconds is the tick. A minute would let the line sit visibly wrong for
+ * up to a minute against a gridline it is meant to be read alongside.
+ */
+function useNowMinutes(timezone: string): number | null {
+  const [now, setNow] = useState<number | null>(null);
+
+  useEffect(() => {
+    const read = () => setNow(minutesInZone(new Date(), timezone));
+    read();
+    const timer = window.setInterval(read, 30_000);
+    return () => window.clearInterval(timer);
+  }, [timezone]);
+
+  return now;
 }
 
 /** `2026-08-11` → `AUG 11`. What a continuation chevron points at. */
