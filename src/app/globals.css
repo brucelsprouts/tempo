@@ -46,6 +46,28 @@ html {
   color-scheme: dark;
 }
 
+/**
+ * The four edges iOS will not let us draw on.
+ *
+ * `viewport-fit: cover` in the layout's viewport is what lets the black
+ * background reach under the notch — but it is a whole-page decision, so it
+ * puts the *interface* under there too. On a Home Screen install with a
+ * translucent status bar that meant the header sat beneath the clock and the
+ * battery, and in landscape the camera housing ate whichever end of the top bar
+ * it was on. SETTINGS was the last button in the row, which is why it was the
+ * one that went missing.
+ *
+ * Named here rather than written as `env()` at each call site so the values can
+ * also be read from script — the popover clamps itself against them, and it has
+ * no other way to know the camera is there.
+ */
+:root {
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+}
+
 body {
   background: var(--color-void);
   color: var(--color-ink);
@@ -168,6 +190,50 @@ body {
     outline-offset: 1px;
   }
 
+  /* The app shell's own inset. Padding rather than a margin so `h-full` still
+     describes the window, and applied at the root so the header, the grid and
+     the footer are all inside it at once — there is no arrangement where one of
+     them is under the clock and the others are not. */
+  .safe-shell {
+    padding-top: var(--safe-t);
+    padding-right: var(--safe-r);
+    padding-bottom: var(--safe-b);
+    padding-left: var(--safe-l);
+  }
+
+  /* Overlays are `fixed`, so they escape `.safe-shell` and have to say it
+     again. `max()` rather than the inset alone: this is also the modal's own
+     margin, and on a phone in landscape 7vh is 28px of a 402px-tall screen —
+     enough to look intentional and not enough to be worth spending, so the
+     small case takes the tighter figure and the desktop one keeps the
+     proportion the modal was designed at. */
+  .safe-frame {
+    padding-top: max(0.75rem, var(--safe-t));
+    padding-right: max(0.75rem, var(--safe-r));
+    padding-bottom: max(0.75rem, var(--safe-b));
+    padding-left: max(0.75rem, var(--safe-l));
+  }
+  @media (min-width: 640px) {
+    .safe-frame {
+      padding-top: max(7vh, var(--safe-t));
+      padding-right: max(1.5rem, var(--safe-r));
+      padding-bottom: max(7vh, var(--safe-b));
+      padding-left: max(1.5rem, var(--safe-l));
+    }
+  }
+
+  /* A control a finger has to land on.
+
+     Only on coarse pointers, and only a floor: the chrome is built out of 10px
+     labels in 25px boxes, which a mouse hits every time and a thumb does not.
+     38px rather than the 44 Apple asks for — the buttons sit in a row of their
+     own on a phone, so the miss they are guarding against is vertical, and 44
+     would make the top bar the tallest thing on a landscape screen. */
+  @media (pointer: coarse) {
+    .tap {
+      min-height: 38px;
+    }
+  }
 }
 
 /**

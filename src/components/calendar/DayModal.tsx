@@ -27,6 +27,19 @@ import { Modal, SegmentedControl } from './ui';
  * exhaustive.
  */
 
+/**
+ * How tall a pane is, and the same answer for both — they sit side by side
+ * above the breakpoint, so two figures here would be two panes of different
+ * heights in the one arrangement where that is visible.
+ *
+ * The floor is proportional as well as absolute. A flat 360px is taller than a
+ * phone held sideways has to spare once the modal's own header and toolbar are
+ * paid for, so the pane overflowed the frame and handed its scroll upward —
+ * two nested scrollers over one 24-hour column, and the outer one moving the
+ * toolbar off the top of the modal as you used it.
+ */
+const PANE_H = 'h-[min(72vh,calc(100vh-14rem))] min-h-[min(360px,55vh)] min-w-0';
+
 interface Props {
   date: CivilDate;
   onDate: (d: CivilDate) => void;
@@ -83,7 +96,7 @@ export function DayModal({ date, onDate, onOpen, onNew, onClose }: Props) {
             onClick={() => setZoom(zoom === 'fit' ? HOUR_H_DEFAULT : 'fit')}
             aria-pressed={zoom === 'fit'}
             className={[
-              'border px-2 py-1 text-[10px] leading-none tracking-[0.12em] transition-colors',
+              'tap border px-2 py-1 text-[10px] leading-none tracking-[0.12em] transition-colors',
               zoom === 'fit'
                 ? 'border-hairlit bg-raised text-bright'
                 : 'border-hair text-mute hover:border-hairlit hover:text-ink',
@@ -116,12 +129,12 @@ export function DayModal({ date, onDate, onOpen, onNew, onClose }: Props) {
 
       <div className={wide ? 'grid grid-cols-2 divide-x divide-hair' : ''}>
         {(wide || pane === 'day') && (
-          <div className="h-[min(72vh,calc(100vh-14rem))] min-h-[360px] min-w-0">
+          <div className={PANE_H}>
             <DayView date={date} occurrences={occurrences} onOpen={onOpen} onNew={onNew} />
           </div>
         )}
         {(wide || pane === 'tasks') && (
-          <div className="h-[min(72vh,calc(100vh-14rem))] min-h-[360px] min-w-0">
+          <div className={PANE_H}>
             <TasksPane occurrences={occurrences} onOpen={onOpen} />
           </div>
         )}
@@ -144,7 +157,7 @@ function Stepper({
       type="button"
       onClick={onClick}
       aria-label={label}
-      className="border border-hair px-2 py-1 text-[11px] leading-none text-mute transition-colors hover:border-hairlit hover:text-ink"
+      className="tap min-w-[30px] border border-hair px-2 py-1 text-[11px] leading-none text-mute transition-colors hover:border-hairlit hover:text-ink"
     >
       {children}
     </button>

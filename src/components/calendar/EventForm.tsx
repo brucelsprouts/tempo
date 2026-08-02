@@ -319,9 +319,16 @@ export function EventForm({
     >
       {/* Two columns, and fields that want the width say so. Enter submits from
           anywhere by virtue of being a real form with a real submit button —
-          the notes field is the one exception, handled at the textarea. */}
-      <div className="grid flex-1 grid-cols-2 gap-x-4 gap-y-4 overflow-y-auto px-4 py-4">
-        <div className="col-span-2">
+          the notes field is the one exception, handled at the textarea.
+
+          One column on a phone. The pairing is what 640px bought — REPEATS
+          beside CATEGORY, ANCHOR beside DERIVED LABEL — and at 393px it buys
+          the opposite: a five-cell segmented control in 170px, which is how
+          MONTH and YEAR came to be written over the field next to them. The
+          spans say `full` rather than `2` so they mean the same thing in both.
+      */}
+      <div className="grid flex-1 grid-cols-1 gap-x-4 gap-y-4 overflow-y-auto px-4 py-4 sm:grid-cols-2">
+        <div className="col-span-full">
           <Field label="[00] TITLE">
             <input
               autoFocus
@@ -342,13 +349,13 @@ export function EventForm({
         </div>
 
         {preview && (
-          <div className="col-span-2 border-l-2 border-hairlit bg-panel px-3 py-2">
+          <div className="col-span-full border-l-2 border-hairlit bg-panel px-3 py-2">
             <span className="label">RENDERS AS</span>
             <div className="mt-1 text-[12px] text-bright">{preview}</div>
           </div>
         )}
 
-        <div className="col-span-2">
+        <div className="col-span-full">
           <Field label="[01] TYPE">
             <SegmentedControl
               value={kind}
@@ -374,7 +381,7 @@ export function EventForm({
             />
           </Field>
         ) : (
-          <div className="col-span-2">
+          <div className="col-span-full">
             <Field label="[02] WHEN">
               <WhenField value={when} onChange={setWhen} timezone={timezone} />
             </Field>
@@ -429,7 +436,7 @@ export function EventForm({
           </select>
         </Field>
 
-        <div className="col-span-2">
+        <div className="col-span-full">
           <Field label="[06] REMIND ME">
             {/* Chips rather than a select: reminders are a set, not a choice,
                 and the pairing people actually want — one to start, one to
@@ -446,7 +453,7 @@ export function EventForm({
                     disabled={full}
                     aria-pressed={on}
                     onClick={() => toggleReminder(minutes)}
-                    className={`border px-2 py-1 text-[10px] tracking-[0.1em] transition-colors disabled:opacity-30 ${
+                    className={`tap max-w-full truncate border px-2 py-1 text-[10px] tracking-[0.1em] transition-colors disabled:opacity-30 ${
                       on
                         ? 'border-hairlit bg-raised text-bright'
                         : 'border-hair text-mute hover:border-hairlit hover:text-dim'
@@ -463,7 +470,7 @@ export function EventForm({
           </Field>
         </div>
 
-        <div className="col-span-2">
+        <div className="col-span-full">
           <Field label="[07] NOTES">
             <textarea
               value={notes}
@@ -487,7 +494,10 @@ export function EventForm({
       </div>
 
       <div className="shrink-0 space-y-2 border-t border-hair px-4 py-3">
-        <div className="flex gap-2">
+        {/* Wraps, because an edit on a recurring entry puts four buttons in
+            here and SAVE is `flex-1` — on a phone the other three were being
+            squeezed to their padding. */}
+        <div className="flex flex-wrap gap-2">
           <Button type="submit" variant="primary" className="flex-1">
             {mode === 'new' ? 'CREATE' : 'SAVE'}
           </Button>

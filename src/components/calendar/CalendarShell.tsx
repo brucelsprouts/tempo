@@ -10,7 +10,7 @@ import {
   subscribeView,
 } from '@/lib/store/view-preference';
 import { parts, todayIn, type CivilDate } from '@/lib/tempo/civil';
-import type { Occurrence, TempoEvent } from '@/lib/tempo/types';
+import type { Occurrence } from '@/lib/tempo/types';
 import { ContinuousCalendar, type CalendarHandle } from './ContinuousCalendar';
 import { DayModal } from './DayModal';
 import { EventForm, type DraftPreview, type EntryFormHandle } from './EventForm';
@@ -76,8 +76,8 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   const dismissError = useCalendar((s) => s.dismissError);
   const timezone = useCalendar((s) => s.timezone);
   const eventCount = useCalendar((s) => s.events.length);
-  const deleted = useCalendar((s) => s.deleted);
-  const restoreDeleted = useCalendar((s) => s.restoreDeleted);
+  const undoStack = useCalendar((s) => s.undoStack);
+  const undo = useCalendar((s) => s.undo);
 
   const view = useSyncExternalStore(subscribeView, getViewSnapshot, getServerViewSnapshot);
   const today = todayIn(timezone);
@@ -86,15 +86,9 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   const [focusedDay, setFocusedDay] = useState<CivilDate>(today);
   const [year, setYear] = useState<number | null>(null);
   const [draft, setDraft] = useState<DraftPreview | null>(null);
-  const [toast, setToast] = useState<{ at: string; entries: TempoEvent[] } | null>(null);
-  /**
-   * The batch stamp already shown, so a shrinking trash doesn't re-announce.
-   *
-   * Seeded on the first pass rather than starting empty: the trash is durable
-   * now, so it arrives from `load()` already full, and an empty seed would put
-   * a toast up for whatever you deleted yesterday every time the app opened.
-   */
-  const announced = useRef<string | null>(null);
+  const [toast, setToast] = useState<{ at: number; label: string; undoable: boolean } | null>(null);
+  /** The action already announced, so a shrinking stack doesn't re-announce. */
+  const announced = useRef<number | null>(null);
 
   const activeYear = year ?? parts(today).year;
   const top = overlays[overlays.length - 1] ?? null;
@@ -175,53 +169,53 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   }, []);
 
   /**
-   * The toast follows the trash, not the delete.
+   * The toast follows the stack, not the action.
    *
-   * Two things delete — the entry form and the grid's selection — and neither
-   * reports back up here. The trash is the one place both of them land, so this
-   * watches for a batch newer than the last one announced rather than asking to
-   * be told. Entries share a stamp with everything their delete removed, which
-   * is what makes a single UNDO cover exactly one delete.
+   * Several surfaces mutate the calendar — the grid, the timeline, the form,
+   * the tasks pane — and none of them report back up here. The stack is the one
+   * place all of them land, so this watches for an action newer than the last
+   * announced rather than asking to be told.
    *
-   * The first pass only records where the trash already stood. Everything in it
-   * on load was deleted in some earlier session, and offering to undo it is
-   * offering to undo something you have long since stopped thinking about.
+   * The first pass only records where the stack stood, which is nothing on a
+   * fresh tab and is the right no-op if that ever stops being true.
    */
   useEffect(() => {
-    const newest = deleted[0]?.deletedAt ?? null;
+    const newest = undoStack[0]?.at ?? null;
     if (announced.current === null) {
-      announced.current = newest ?? '';
+      announced.current = newest ?? 0;
       return;
     }
-    if (!newest || newest <= announced.current) return;
+    if (newest === null || newest <= announced.current) return;
     announced.current = newest;
-    setToast({ at: newest, entries: deleted.filter((d) => d.deletedAt === newest) });
-  }, [deleted]);
-
-  /**
-   * A rejected delete rolls the trash back with everything else, which would
-   * otherwise strand a toast offering to undo something that never left.
-   * Derived rather than cleared in an effect, so it cannot disagree with the
-   * trash for a frame.
-   */
-  const liveToast = toast && deleted.some((d) => d.deletedAt === toast.at) ? toast : null;
+    setToast({ at: newest, label: undoStack[0].label, undoable: true });
+  }, [undoStack]);
 
   const dismissToast = useCallback(() => setToast(null), []);
 
-  const undoDelete = useCallback(async () => {
-    if (!toast) return;
-    setToast(null);
-    /**
-     * One insert per entry, sequentially.
-     *
-     * Not batched the way a group move is: each restore is its own row, and a
-     * failure partway leaves a state you can describe and finish by hand —
-     * whatever failed is still in the trash and still has a RESTORE beside it
-     * in HISTORY. Sequential because two optimistic writes in flight would
-     * snapshot each other half-applied.
-     */
-    for (const entry of toast.entries) await restoreDeleted(entry.id);
-  }, [toast, restoreDeleted]);
+  /**
+   * Undo says what it undid.
+   *
+   * Cmd-Z is no longer gated on a visible toast, so it can fire with nothing on
+   * screen — and a keypress that changes the calendar and says nothing is worse
+   * than no keypress at all. The confirmation carries no UNDO of its own:
+   * pressing it again is what "again" means.
+   */
+  const runUndo = useCallback(async () => {
+    const before = useCalendar.getState().undoStack;
+    const entry = before[0];
+    if (!entry) return;
+
+    await undo();
+
+    // The stack shrinking is what "it worked" means. `state.error` may still be
+    // holding a message from some earlier failure nobody has dismissed, and a
+    // failed undo deliberately leaves its entry in place to be retried.
+    const after = useCalendar.getState().undoStack;
+    if (after.length >= before.length) return;
+
+    announced.current = after[0]?.at ?? 0;
+    setToast({ at: Date.now(), label: `Undid: ${entry.label}`, undoable: false });
+  }, [undo]);
 
   /**
    * The keymap reads current state, so it is rebuilt every render — but the
@@ -290,23 +284,23 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
     }
 
     /**
-     * The one chord the app claims, and only while there is something to undo.
+     * The one chord the app claims, and now whenever there is anything to take
+     * back rather than only while a toast happens to be up. The undo you reach
+     * for eight seconds late is the same undo.
      *
-     * It sits ahead of the rule below because that rule exists to protect the
-     * browser's chords, and for the few seconds a toast is up this is what
-     * ⌘Z means. Not in a text field, where it still means "undo my typing", and
-     * not with Shift, which is redo.
+     * Not in a text field, where it still means "undo my typing", and not with
+     * Shift, which is redo and stays the browser's.
      */
     if (
       (e.metaKey || e.ctrlKey) &&
       !e.altKey &&
       !e.shiftKey &&
       (e.key === 'z' || e.key === 'Z') &&
-      liveToast &&
+      undoStack.length > 0 &&
       !typing
     ) {
       e.preventDefault();
-      void undoDelete();
+      void runUndo();
       return;
     }
 
@@ -431,8 +425,19 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   }, []);
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex shrink-0 items-center gap-3 border-b border-hair px-4 py-2">
+    <div className="safe-shell flex h-full flex-col">
+      {/*
+        Two rows on a phone, one everywhere else.
+
+        The row is brand · views · actions, and on a 393px screen those three
+        want about 480px between them — so the last group in the row was simply
+        off the edge, and SETTINGS was the last button in it. Wrapping is what
+        puts it back on screen; `w-full` below `sm` is what makes the wrap
+        deterministic rather than a thing that depends on how wide a font
+        happened to render, and the three buttons split that row evenly because
+        a row of its own is the one place they can afford to be thumb-sized.
+      */}
+      <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-hair px-3 py-2 sm:px-4">
         <div className="flex items-center gap-2">
           <svg viewBox="0 0 64 64" className="h-4 w-4 shrink-0" aria-hidden="true">
             <defs>
@@ -451,7 +456,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
           </svg>
           <span className="text-[12px] tracking-[0.3em] text-bright">TEMPO</span>
         </div>
-        <span className="text-hair">│</span>
+        <span className="hidden text-hair sm:inline">│</span>
 
         <nav className="flex border border-hair" aria-label="View">
           {VIEWS.map((v) => (
@@ -460,24 +465,26 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
               onClick={() => setViewPreference(v.value)}
               aria-current={view === v.value}
               className={[
-                'flex items-center gap-1.5 px-2.5 py-1 text-[10px] tracking-[0.12em] transition-colors',
+                'tap flex items-center gap-1.5 px-2.5 py-1 text-[10px] tracking-[0.12em] transition-colors',
                 view === v.value
                   ? 'bg-raised text-bright'
                   : 'text-mute hover:bg-sunken hover:text-dim',
               ].join(' ')}
             >
               {v.label}
-              <span className="text-[9px] text-mute">{v.key}</span>
+              {/* The keyboard's half of the label, and only where there is one.
+                  On a phone it is a number beside a word that does nothing. */}
+              <span className="hidden text-[9px] text-mute sm:inline">{v.key}</span>
             </button>
           ))}
         </nav>
 
         {banner && <span className="label ml-1 hidden lg:inline">{banner}</span>}
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto">
           <button
             onClick={() => newEntry()}
-            className="label border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink"
+            className="tap label flex-1 border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink sm:flex-none"
           >
             + NEW
           </button>
@@ -486,13 +493,13 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
               has a door of its own. */}
           <button
             onClick={() => push({ kind: 'history' })}
-            className="label border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink"
+            className="tap label flex-1 border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink sm:flex-none"
           >
             HISTORY
           </button>
           <button
             onClick={() => push({ kind: 'settings' })}
-            className="label border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink"
+            className="tap label flex-1 border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink sm:flex-none"
           >
             SETTINGS
           </button>
@@ -537,11 +544,11 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
           delete replaces the first and restarts its clock rather than stacking a
           second UNDO over the older one. */}
       <div className="relative shrink-0">
-        {liveToast && (
+        {toast && (
           <Toast
-            key={liveToast.at}
-            entries={liveToast.entries}
-            onUndo={undoDelete}
+            key={toast.at}
+            label={toast.label}
+            onUndo={toast.undoable ? runUndo : undefined}
             onDismiss={dismissToast}
           />
         )}

@@ -21,6 +21,27 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
  * it. And dismissal is a capture-phase `pointerdown` on the document instead of an
  * overlay, so a click on another field both closes this and lands on that field.
  */
+/**
+ * The safe-area insets, as numbers.
+ *
+ * `Popover` places itself in viewport coordinates, which is the one thing in
+ * the app that cannot be handed the inset as padding — so it reads the same
+ * four custom properties `.safe-shell` and `.safe-frame` are built from. Read
+ * per placement rather than cached: they change on rotation, and rotation is
+ * exactly when a panel would otherwise be left under the camera.
+ */
+function safeInsets() {
+  if (typeof window === 'undefined') return { top: 0, right: 0, bottom: 0, left: 0 };
+  const s = getComputedStyle(document.documentElement);
+  const px = (name: string) => parseFloat(s.getPropertyValue(name)) || 0;
+  return {
+    top: px('--safe-t'),
+    right: px('--safe-r'),
+    bottom: px('--safe-b'),
+    left: px('--safe-l'),
+  };
+}
+
 export function Popover({
   anchorRef,
   onDismiss,
@@ -48,9 +69,15 @@ export function Popover({
 
       const EDGE = 8;
       const GAP = 4;
+      // The window's edge is not where the screen stops. In landscape the camera
+      // housing is inside `innerWidth`, so a panel clamped to it lands under the
+      // notch rather than beside it.
+      const safe = safeInsets();
+      const left0 = EDGE + safe.left;
+      const right0 = EDGE + safe.right;
       const wanted = el.scrollHeight;
-      const below = window.innerHeight - a.bottom - GAP - EDGE;
-      const above = a.top - GAP - EDGE;
+      const below = window.innerHeight - a.bottom - GAP - EDGE - safe.bottom;
+      const above = a.top - GAP - EDGE - safe.top;
 
       // Below by default, and above only when below cannot hold it *and* above is
       // the roomier side. Flipping on the first pixel of overflow would move the
@@ -59,8 +86,8 @@ export function Popover({
       const maxHeight = Math.max(160, flip ? above : below);
 
       setBox({
-        left: Math.max(EDGE, Math.min(a.left, window.innerWidth - EDGE - width)),
-        top: flip ? Math.max(EDGE, a.top - GAP - Math.min(wanted, maxHeight)) : a.bottom + GAP,
+        left: Math.max(left0, Math.min(a.left, window.innerWidth - right0 - width)),
+        top: flip ? Math.max(EDGE + safe.top, a.top - GAP - Math.min(wanted, maxHeight)) : a.bottom + GAP,
         maxHeight,
       });
     };
@@ -161,8 +188,13 @@ export function SegmentedControl<T extends string>({
           type="button"
           onClick={() => onChange(o.value)}
           className={[
-            grow ? 'flex-1' : '',
-            'px-2 py-1.5 text-[10px] tracking-[0.1em] transition-colors',
+            // `min-w-0` is what stops a five-cell control writing over the field
+            // beside it: a flex item's floor is its content, so REPEATS in a
+            // half-width column pushed MONTH and YEAR out through the border
+            // rather than shrinking. It truncates now, and the layout below no
+            // longer puts it in a half-width column to begin with.
+            grow ? 'min-w-0 flex-1 truncate' : '',
+            'tap px-2 py-1.5 text-[10px] tracking-[0.1em] transition-colors',
             o.value === value
               ? 'bg-raised text-bright'
               : 'text-mute hover:bg-sunken hover:text-dim',
@@ -233,7 +265,7 @@ export function Button({
   return (
     <button
       {...rest}
-      className={`border px-3 py-2 text-[10px] tracking-[0.14em] transition-colors disabled:opacity-40 ${styles} ${rest.className ?? ''}`}
+      className={`tap border px-3 py-2 text-[10px] tracking-[0.14em] transition-colors disabled:opacity-40 ${styles} ${rest.className ?? ''}`}
     >
       {children}
     </button>
@@ -392,8 +424,12 @@ export function Modal({
       <div {...backdrop} className="absolute inset-0 bg-void/85" />
 
       {/* Inert wrapper: it spans the viewport for centring, so it must not eat
-          the backdrop clicks passing underneath it. The frame opts back in. */}
-      <div className="pointer-events-none absolute inset-0 flex items-start justify-center px-6 py-[7vh]">
+          the backdrop clicks passing underneath it. The frame opts back in.
+
+          `.safe-frame` is the modal's own margin and the notch clearance in one
+          declaration — it is `fixed`, so the shell's inset does not reach it,
+          and a 7vh top margin is not the same promise as "below the clock". */}
+      <div className="safe-frame pointer-events-none absolute inset-0 flex items-start justify-center">
         <div
           ref={frame}
           tabIndex={-1}

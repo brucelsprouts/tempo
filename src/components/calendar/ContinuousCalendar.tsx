@@ -844,8 +844,8 @@ function Header({
   onToday: () => void;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-4 border-b border-hair px-4 py-2.5">
-      <div className="flex items-baseline gap-2">
+    <div className="flex shrink-0 items-center gap-4 border-b border-hair px-3 py-2.5 sm:px-4">
+      <div className="flex min-w-0 items-baseline gap-2 truncate">
         <span className="text-[13px] tracking-[0.08em] text-ink">{month}</span>
         <span className="text-[11px] tabular-nums text-mute">{year}</span>
         {nextMonth && (
@@ -854,9 +854,10 @@ function Header({
       </div>
       <button
         onClick={onToday}
-        className="label ml-auto border border-hair px-2 py-1 transition-colors hover:border-hairlit hover:text-dim"
+        className="tap label ml-auto shrink-0 border border-hair px-2 py-1 transition-colors hover:border-hairlit hover:text-dim"
       >
-        [SPACE] TODAY
+        {/* The chord is advertised only where one can be pressed. */}
+        <span className="hidden sm:inline">[SPACE] </span>TODAY
       </button>
     </div>
   );

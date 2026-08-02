@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect } from 'react';
-import type { TempoEvent } from '@/lib/tempo/types';
 import { Button } from './ui';
 
 /**
@@ -27,19 +26,18 @@ const LIFETIME_MS = 8000;
 const LIFT_PX = 76;
 
 interface Props {
-  /** Everything a single delete took; one UNDO puts all of it back. */
-  entries: TempoEvent[];
-  onUndo: () => void;
+  /** What just happened, in the words of the gesture that caused it. */
+  label: string;
+  /** Omitted for the confirmation an undo raises — there is nothing to offer. */
+  onUndo?: () => void;
   onDismiss: () => void;
 }
 
-export function Toast({ entries, onUndo, onDismiss }: Props) {
+export function Toast({ label, onUndo, onDismiss }: Props) {
   useEffect(() => {
     const timer = window.setTimeout(onDismiss, LIFETIME_MS);
     return () => window.clearTimeout(timer);
   }, [onDismiss]);
-
-  if (entries.length === 0) return null;
 
   return (
     <div
@@ -55,18 +53,12 @@ export function Toast({ entries, onUndo, onDismiss }: Props) {
         // and `truncate` on the label never has anything to truncate against.
         className="pointer-events-auto flex max-w-[420px] items-center gap-3 border border-hairlit bg-panel px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.7)]"
       >
-        <span className="min-w-0 truncate text-[11px] text-dim">
-          {entries.length === 1 ? (
-            <>
-              Deleted “<span className="text-ink">{entries[0].title}</span>”
-            </>
-          ) : (
-            `Deleted ${entries.length} entries`
-          )}
-        </span>
-        <Button type="button" variant="primary" onClick={onUndo}>
-          UNDO
-        </Button>
+        <span className="min-w-0 truncate text-[11px] text-dim">{label}</span>
+        {onUndo && (
+          <Button type="button" variant="primary" onClick={onUndo}>
+            UNDO
+          </Button>
+        )}
         <button
           type="button"
           onClick={onDismiss}
