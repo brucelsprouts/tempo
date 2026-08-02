@@ -244,20 +244,15 @@ export function WhenField({ value, onChange, timezone }: Props): React.JSX.Eleme
                 </div>
               ) : (
                 /*
-                  One date and two times — where this deliberately parts company with
-                  the screenshot. Notion's "include time" with no end date describes an
-                  instant, because a date on a page is a stamp. An entry in a calendar
-                  has a length, and the overwhelmingly common one is an hour on a single
-                  day, so that case keeps both times rather than making you switch on an
-                  end date to say when a meeting finishes.
+                  One date and one time. The end time appears only when END DATE
+                  is switched on — an event without an explicit end is a point in
+                  time, not a span, so showing a second time picker here would
+                  imply a duration nobody asked for.
                 */
-                <>
+                <div className="grid grid-cols-2 gap-1.5">
                   {dateField('start')}
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {startTime}
-                    {endTime}
-                  </div>
-                </>
+                  {startTime}
+                </div>
               )}
             </div>
 

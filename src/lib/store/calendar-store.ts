@@ -26,7 +26,13 @@ import {
   overrideKey,
   versionFromRow,
 } from '@/lib/tempo/mappers';
-import { addDays, diffDays, instantFromCivil, type CivilDate } from '@/lib/tempo/civil';
+import {
+  addDays,
+  diffDays,
+  instantFromCivil,
+  LAST_MINUTE_OF_DAY,
+  type CivilDate,
+} from '@/lib/tempo/civil';
 import { copyableFields, copyTitle } from '@/lib/tempo/duplicate';
 import { eventSpan } from '@/lib/tempo/recurrence';
 import type {
@@ -43,7 +49,7 @@ import type {
   VersionReason,
 } from '@/lib/tempo/types';
 
-import { EMPTY_TOUCHED, planRows, type Snapshot, type Touched } from './undo';
+import { EMPTY_TOUCHED, movedNothing, planRows, same, type Snapshot, type Touched } from './undo';
 
 /** Whether an edit applies to one instance or rewrites the whole series. */
 export type EditScope = 'occurrence' | 'series';
@@ -257,14 +263,24 @@ export const useCalendar = create<CalendarState>((set, get) => {
       deleted: get().deleted,
     };
     apply();
+
+    /**
+     * Measured here rather than after the write, and against the same diff undo
+     * would use. Realtime streams other devices' edits into the store while a
+     * request is in flight, so asking afterwards would credit this action with
+     * a change that came from somewhere else.
+     */
+    const moot = record ? movedNothing(snapshot, get(), record.touched) : false;
+
     const { error } = await persist();
     if (error) {
       set({ ...snapshot, error: error.message });
       return false;
     }
-    // Only on success. An entry for a rejected write would offer to take back
-    // something that never happened.
-    if (record) {
+    // Only on success, and only if something moved. An entry for a rejected
+    // write would offer to take back something that never happened; an entry
+    // for a no-op would offer to take back nothing at all.
+    if (record && !moot) {
       set((s) => ({
         undoStack: [
           { label: record.label, at: Date.now(), before: snapshot, touched: record.touched },
@@ -802,7 +818,19 @@ export const useCalendar = create<CalendarState>((set, get) => {
       await get().updateEvent(id, draftFields(draft, get().timezone));
     },
 
+    /**
+     * An edit that changes nothing is not an edit.
+     *
+     * `optimistic` already refuses to put a no-op on the undo stack, but this
+     * one has to be caught a step earlier: the form commits on every close,
+     * including the close where you only came to look, and by the time the
+     * write is under way a version has been captured saying you edited it. A
+     * history full of edits nobody made is the same untruth as the toast, told
+     * somewhere it does not expire after eight seconds.
+     */
     updateEvent: async (id, patch) => {
+      const current = get().events.find((e) => e.id === id);
+      if (current && same(current, { ...current, ...patch })) return;
       captureVersion(id, 'edit');
       await writeEvent(id, patch);
     },
@@ -1290,33 +1318,57 @@ export const useCalendar = create<CalendarState>((set, get) => {
       const nextStart = edge === 'start' ? addDays(occ.date, deltaDays) : occ.date;
       const nextEnd = edge === 'end' ? addDays(occ.endDate, deltaDays) : occ.endDate;
 
-      // Refuse to invert the bar. Equal dates are not yet enough for a timed
-      // entry, because it carries a time of day too: an 18:00-to-midnight
-      // evening covers two dates, and pulling its trailing edge onto the first
-      // one leaves 18:00 to 00:00 — backwards. The row is what the check has to
-      // be about, so it reads the clock the write will actually carry: a series
-      // rewrite keeps the series' hours, an exception keeps this instance's.
+      if (nextEnd < nextStart) return; // refuse to invert the bar
+
+      // The clock the write will carry, which is what any check here has to be
+      // about: a series rewrite keeps the series' hours, an exception keeps
+      // this instance's.
       const span = eventSpan(occ.event);
       const startMinutes = (wholeSeries ? span?.startMinutes : occ.startMinutes) ?? 0;
       const endMinutes = (wholeSeries ? span?.endMinutes : occ.endMinutes) ?? 0;
-      if (nextEnd < nextStart) return;
-      if (nextEnd === nextStart && !occ.allDay && endMinutes < startMinutes) return;
+
+      // Collapsed onto a single date, a timed entry still carries a time of
+      // day, and an 18:00-to-midnight evening would read 18:00 to 00:00 —
+      // backwards, and refused outright by the database. Shortening the bar is
+      // what the drag asked for, so the dragged edge gives up its own hour and
+      // takes the day's: the trailing edge ends at 23:59, the leading edge
+      // starts at 00:00. Only on equal dates — a drag that still leaves two
+      // dates already runs forwards, and its hours are none of this business.
+      const clamp: OccurrencePatch =
+        !occ.allDay && nextEnd === nextStart && endMinutes < startMinutes
+          ? edge === 'end'
+            ? { endMinutes: LAST_MINUTE_OF_DAY }
+            : { startMinutes: 0 }
+          : {};
+
+      // What is left has to still have some length to it. An entry ending at
+      // exactly midnight occupies none of the date it ends on, so starting it
+      // there is a drop with nothing in it, and no clamping rescues that.
+      if (
+        !occ.allDay &&
+        nextEnd === nextStart &&
+        (clamp.endMinutes ?? endMinutes) <= (clamp.startMinutes ?? startMinutes)
+      ) {
+        return;
+      }
 
       captureVersion(occ.eventId, 'resize');
 
       const label = `Resized ${occ.title}`;
       if (!wholeSeries) {
-        await patchOccurrence(occ, { startDate: nextStart, endDate: nextEnd }, false, (merged) => ({
-          label,
-          touched: touchedOverrides([merged.id]),
-        }));
+        await patchOccurrence(
+          occ,
+          { startDate: nextStart, endDate: nextEnd, ...clamp },
+          false,
+          (merged) => ({ label, touched: touchedOverrides([merged.id]) }),
+        );
         return;
       }
 
       const ev = occ.event;
       const startDelta = edge === 'start' ? deltaDays : 0;
       const endDelta = edge === 'end' ? deltaDays : 0;
-      await writeEvent(ev.id, shiftEvent(ev, startDelta, endDelta, get().timezone), {
+      await writeEvent(ev.id, shiftEvent(ev, startDelta, endDelta, get().timezone, clamp), {
         label,
         touched: touchedEvents([occ.eventId]),
       });
@@ -1575,12 +1627,18 @@ function draftTiming(draft: EventDraft, tz: string) {
  *
  * Timed events are rebuilt from wall-clock time rather than having milliseconds
  * added, so a 09:00 meeting dragged across a DST boundary is still at 09:00.
+ *
+ * `clock` replaces a wall-clock time outright instead of carrying it across,
+ * which is how a resize that collapses an entry onto one date lands its dragged
+ * edge on that date's own boundary rather than on an hour that reads backwards.
+ * All-day entries have no clock to replace, so it does not reach them.
  */
 function shiftEvent(
   ev: TempoEvent,
   startDelta: number,
   endDelta: number,
   tz: string,
+  clock: { startMinutes?: number; endMinutes?: number } = {},
 ): Partial<TempoEvent> {
   if (ev.allDay) {
     return {
@@ -1594,12 +1652,12 @@ function shiftEvent(
   return {
     startsAt: instantFromCivil(
       addDays(span.start, startDelta),
-      span.startMinutes ?? 0,
+      clock.startMinutes ?? span.startMinutes ?? 0,
       zone,
     ).toISOString(),
     endsAt: instantFromCivil(
       addDays(span.end, endDelta),
-      span.endMinutes ?? 60,
+      clock.endMinutes ?? span.endMinutes ?? 60,
       zone,
     ).toISOString(),
   };

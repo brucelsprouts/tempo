@@ -1,7 +1,7 @@
 /**
  * Derived display fields.
  *
- * The problem this solves: a birthday is one row, but "Mom · 52" is only true
+ * The problem this solves: a birthday is one row, but "Mom > 52" is only true
  * for one year of it. Tools that treat an entry as a single fixed dataset can't
  * express that, so they force you to either store a row per year or give up the
  * age. Here the row stores an *anchor* (the birth date) and a *template*, and
@@ -86,15 +86,15 @@ export function renderTemplate(template: string, ctx: DeriveContext): string {
 
 /**
  * When a token resolves to nothing, the separator around it is left stranded —
- * "Mom · " or "  — anniversary". Collapse the debris so a missing anchor
+ * "Mom > " or "  — anniversary". Collapse the debris so a missing anchor
  * degrades to a clean title rather than a visibly broken one.
  */
 function tidy(s: string): string {
   return s
     .replace(/\s+/g, ' ')
-    .replace(/\s*([·—–-])\s*$/, '')
-    .replace(/^\s*([·—–-])\s*/, '')
-    .replace(/([·—–-])\s*\1/g, '$1')
+    .replace(/\s*([·>—–-])\s*$/, '')
+    .replace(/^\s*([·>—–-])\s*/, '')
+    .replace(/([·>—–-])\s*\1/g, '$1')
     .trim();
 }
 
@@ -128,8 +128,8 @@ export function resolveTitle(
  * nothing downstream branches on `kind`, it only ever reads anchor + template.
  */
 export const TEMPLATE_PRESETS = {
-  /** "Mom · 52" */
-  birthday: '{title} · {yearsSince}',
+  /** "Mom > 52" */
+  birthday: '{title} > {yearsSince}',
   /** "Wedding — 12th anniversary" */
   anniversary: '{title} — {ordinal(yearsSince)} anniversary',
   /** "Standup · #143" */

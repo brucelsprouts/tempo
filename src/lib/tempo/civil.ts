@@ -81,6 +81,13 @@ export function compareDates(a: CivilDate, b: CivilDate): number {
 export const minDate = (a: CivilDate, b: CivilDate) => (a <= b ? a : b);
 export const maxDate = (a: CivilDate, b: CivilDate) => (a >= b ? a : b);
 
+/**
+ * 23:59 — the latest minute an entry can end on and still belong to that date.
+ * A minute later is 00:00 tomorrow, which is a different date. This is the same
+ * ceiling the time picker enforces on anything typed by hand.
+ */
+export const LAST_MINUTE_OF_DAY = 24 * 60 - 1;
+
 /** True when `d` falls inside [start, end], both inclusive. */
 export function withinInclusive(d: CivilDate, start: CivilDate, end: CivilDate): boolean {
   return d >= start && d <= end;

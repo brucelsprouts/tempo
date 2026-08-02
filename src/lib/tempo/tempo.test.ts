@@ -152,7 +152,7 @@ describe('derived display fields', () => {
         anchorDate: '1974-06-14',
         index: 53,
       }),
-    ).toBe('Mom · 52');
+    ).toBe('Mom > 52');
   });
 
   it('renders ordinals', () => {
@@ -255,7 +255,7 @@ describe('recurrence expansion', () => {
 
     expect(occ).toHaveLength(1);
     expect(occ[0].date).toBe('2026-06-14');
-    expect(occ[0].title).toBe('Mom · 52');
+    expect(occ[0].title).toBe('Mom > 52');
     // 1974 is the 1st occurrence, so 2026 is the 53rd
     expect(occ[0].index).toBe(53);
   });
@@ -265,9 +265,9 @@ describe('recurrence expansion', () => {
     const titleIn = (year: number) =>
       expandEvent(mom, [], `${year}-06-01`, `${year}-06-30`)[0].title;
 
-    expect(titleIn(2026)).toBe('Mom · 52');
-    expect(titleIn(2027)).toBe('Mom · 53');
-    expect(titleIn(2044)).toBe('Mom · 70');
+    expect(titleIn(2026)).toBe('Mom > 52');
+    expect(titleIn(2027)).toBe('Mom > 53');
+    expect(titleIn(2044)).toBe('Mom > 70');
   });
 
   it('skips nonexistent dates by default', () => {
@@ -433,7 +433,7 @@ describe('occurrence overrides', () => {
     expect(occ[0].date).toBe('2026-06-20');
     expect(occ[0].seriesDate).toBe('2026-06-14');
     // dragging the celebration to the weekend does not change how old she is
-    expect(occ[0].title).toBe('Mom · 52');
+    expect(occ[0].title).toBe('Mom > 52');
     expect(occ[0].isOverride).toBe(true);
   });
 
@@ -447,7 +447,7 @@ describe('occurrence overrides', () => {
     );
     expect(occ).toHaveLength(1);
     expect(occ[0].date).toBe('2026-07-02');
-    expect(occ[0].title).toBe('Mom · 52');
+    expect(occ[0].title).toBe('Mom > 52');
   });
 
   it('lets an override retitle one instance, overriding the template', () => {

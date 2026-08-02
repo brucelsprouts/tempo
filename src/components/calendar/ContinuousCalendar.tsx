@@ -26,6 +26,7 @@ import { groupOverrides, useCalendar } from '@/lib/store/calendar-store';
 import {
   addDays,
   diffDays,
+  LAST_MINUTE_OF_DAY,
   maxDate,
   minDate,
   parts,
@@ -124,16 +125,28 @@ function edgeScroll(el: HTMLElement, clientY: number): number {
  * drawn — clamping in only one of the two would show a short bar and then write
  * nothing at all, since the store refuses an inverted span outright.
  *
- * Shortest is one day for most entries and two for an evening that ends at or
- * after midnight: 18:00 to 00:00 needs its two dates to stay apart, because on
- * one date the same clock reads 18:00 to 00:00 and ends before it begins.
+ * Shortest is one day for nearly everything. Collapsed onto one date the store
+ * moves the dragged edge to that date's own boundary — the trailing one to
+ * 23:59, the leading one to 00:00 — so an 18:00-to-midnight evening does fit on
+ * a single day once its end gives up midnight. What does not fit is what that
+ * clamp would leave with no length at all: an entry ending at exactly midnight
+ * occupies none of the date it ends on, and one starting at 23:59 has no room
+ * left on the date it starts. Those keep a two-day floor, because the drop
+ * would decline them.
  */
 function resizedSpan(
   occ: Occurrence,
   edge: 'start' | 'end',
   to: CivilDate,
 ): { date: CivilDate; endDate: CivilDate } {
-  const floor = !occ.allDay && (occ.endMinutes ?? 0) < (occ.startMinutes ?? 0) ? 1 : 0;
+  const start = occ.startMinutes ?? 0;
+  const end = occ.endMinutes ?? 0;
+  const fitsOnOneDay =
+    occ.allDay ||
+    (edge === 'end'
+      ? (end < start ? LAST_MINUTE_OF_DAY : end) > start
+      : end > (end < start ? 0 : start));
+  const floor = fitsOnOneDay ? 0 : 1;
   return edge === 'end'
     ? { date: occ.date, endDate: maxDate(to, addDays(occ.date, floor)) }
     : { date: minDate(to, addDays(occ.endDate, -floor)), endDate: occ.endDate };

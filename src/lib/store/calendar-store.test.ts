@@ -1104,12 +1104,13 @@ describe('resizing an occurrence', () => {
 
   /**
    * A timed entry running 18:00 to midnight covers two dates and one evening.
-   * Pulling its trailing edge onto the first date leaves the dates equal — which
-   * a day-level check reads as fine — while the clock reads 18:00 to 00:00 on
-   * the same day, which is backwards. The database says so, so the check has to
-   * say so first, in the shape it is actually about to write.
+   * Pulling its trailing edge onto the first date leaves the dates equal, while
+   * the clock still reads 18:00 to 00:00 — backwards, and the database rejects
+   * it as such. Shortening the bar is what the drag asked for, so the end moves
+   * to the last minute of the day it was dropped on and the evening keeps its
+   * start.
    */
-  it('refuses to shorten an evening onto the day it already started', async () => {
+  it('shortens an evening onto its own day by ending it at 23:59', async () => {
     const e = timed('2026-08-02T22:00:00.000Z', '2026-08-03T04:00:00.000Z');
     seed([e]);
 
@@ -1117,11 +1118,30 @@ describe('resizing an occurrence', () => {
       .getState()
       .resizeOccurrence(timedOccurrence(e, '2026-08-02', '2026-08-03', 1080, 0), -1, 'end', 'series');
 
-    expect(useCalendar.getState().events[0].endsAt).toBe('2026-08-03T04:00:00.000Z');
-    expect(recorded).toHaveLength(0);
+    // 23:59 in Toronto, which is UTC-4 in August.
+    expect(useCalendar.getState().events[0].startsAt).toBe('2026-08-02T22:00:00.000Z');
+    expect(useCalendar.getState().events[0].endsAt).toBe('2026-08-03T03:59:00.000Z');
   });
 
-  it('refuses the same inversion from the leading edge', async () => {
+  /** The mirror: the leading edge lands on the end date and starts at 00:00. */
+  it('starts an overnight at midnight when its leading edge lands on the end date', async () => {
+    const e = timed('2026-08-02T22:00:00.000Z', '2026-08-04T09:00:00.000Z');
+    seed([e]);
+
+    await useCalendar
+      .getState()
+      .resizeOccurrence(timedOccurrence(e, '2026-08-02', '2026-08-04', 1080, 300), 2, 'start', 'series');
+
+    expect(useCalendar.getState().events[0].startsAt).toBe('2026-08-04T04:00:00.000Z');
+    expect(useCalendar.getState().events[0].endsAt).toBe('2026-08-04T09:00:00.000Z');
+  });
+
+  /**
+   * The one drop clamping cannot rescue. An entry ending at exactly midnight
+   * occupies none of the date it ends on, so starting it there would leave
+   * 00:00 to 00:00 — nothing at all.
+   */
+  it('refuses a drop that would leave the entry with no length', async () => {
     const e = timed('2026-08-02T22:00:00.000Z', '2026-08-03T04:00:00.000Z');
     seed([e]);
 
@@ -1131,6 +1151,22 @@ describe('resizing an occurrence', () => {
 
     expect(useCalendar.getState().events[0].startsAt).toBe('2026-08-02T22:00:00.000Z');
     expect(recorded).toHaveLength(0);
+  });
+
+  /**
+   * Clamping is for the collapse onto one date and nothing else. This drag
+   * still leaves two dates, so the hours are none of its business.
+   */
+  it('leaves the clock alone while the dates stay apart', async () => {
+    const e = timed('2026-08-02T22:00:00.000Z', '2026-08-05T09:00:00.000Z');
+    seed([e]);
+
+    await useCalendar
+      .getState()
+      .resizeOccurrence(timedOccurrence(e, '2026-08-02', '2026-08-05', 1080, 300), -2, 'end', 'series');
+
+    expect(useCalendar.getState().events[0].startsAt).toBe('2026-08-02T22:00:00.000Z');
+    expect(useCalendar.getState().events[0].endsAt).toBe('2026-08-03T09:00:00.000Z');
   });
 
   /**
@@ -1703,6 +1739,120 @@ describe('undo', () => {
         .moveOccurrence(occurrenceOf(current, current.startDate!), 1, 'series');
     }
     expect(useCalendar.getState().undoStack).toHaveLength(50);
+  });
+});
+
+describe('actions that changed nothing', () => {
+  /**
+   * Opening an entry and clicking away is the commonest gesture in the app, and
+   * the form commits unconditionally because it cannot tell the difference. So
+   * the store has to: an action that moved no row is not an action, and offering
+   * to take it back names a change the calendar never made — most visibly right
+   * after an undo, where the toast reads as the undo having been reversed.
+   */
+  it('offers no undo for a draft identical to the entry', async () => {
+    const e = event({ title: 'Standup', startDate: '2026-08-10', endDate: '2026-08-10' });
+    seed([e]);
+
+    await useCalendar.getState().updateEventFromDraft('e1', {
+      title: 'Standup',
+      kind: 'event',
+      allDay: true,
+      startDate: '2026-08-10',
+      endDate: '2026-08-10',
+      categoryId: null,
+      recurrence: null,
+      reminders: [],
+      anchorDate: null,
+      displayTemplate: null,
+      notes: null,
+    });
+
+    expect(useCalendar.getState().undoStack).toHaveLength(0);
+    // Nor a write, nor a version: a no-op edit is not history either.
+    expect(callsOn('events', 'update')).toHaveLength(0);
+    expect(callsOn('event_versions', 'insert')).toHaveLength(0);
+  });
+
+  /**
+   * A timed entry's instants are stored, not derived, so this only works if the
+   * store holds them in one canonical spelling — the database's `+00:00` and
+   * `toISOString`'s `Z` are the same moment and must compare as one.
+   */
+  it('offers no undo for an unchanged timed entry loaded from the server', async () => {
+    // `load()` fills the calendar but does not clear the stack, which is the
+    // session's and outlives a reload.
+    seed([]);
+    stored.events = [
+      row({
+        all_day: false,
+        starts_at: '2026-08-10T13:00:00+00:00',
+        ends_at: '2026-08-10T14:00:00+00:00',
+        start_date: null,
+        end_date: null,
+      }),
+    ];
+    await useCalendar.getState().load();
+    recorded.length = 0;
+
+    await useCalendar.getState().updateEventFromDraft('e1', {
+      title: 'Thing',
+      kind: 'event',
+      allDay: false,
+      startDate: '2026-08-10',
+      endDate: '2026-08-10',
+      startMinutes: 9 * 60,
+      endMinutes: 10 * 60,
+      categoryId: null,
+      recurrence: null,
+      reminders: [],
+      anchorDate: null,
+      displayTemplate: null,
+      notes: null,
+    });
+
+    expect(useCalendar.getState().undoStack).toHaveLength(0);
+    expect(callsOn('events', 'update')).toHaveLength(0);
+  });
+
+  it('still offers one when a single field moved', async () => {
+    const e = event({ title: 'Standup', startDate: '2026-08-10', endDate: '2026-08-10' });
+    seed([e]);
+
+    await useCalendar.getState().updateEventFromDraft('e1', {
+      title: 'Standup',
+      kind: 'event',
+      allDay: true,
+      startDate: '2026-08-10',
+      endDate: '2026-08-10',
+      categoryId: null,
+      recurrence: null,
+      reminders: [],
+      anchorDate: null,
+      displayTemplate: null,
+      notes: 'a thought',
+    });
+
+    expect(useCalendar.getState().undoStack).toHaveLength(1);
+  });
+
+  /**
+   * The guard belongs to `optimistic`, not to any one action, so it holds for
+   * every gesture that lands on the same value — here, skipping an instance
+   * that is already skipped.
+   */
+  it('offers no undo for an override that says what the override already said', async () => {
+    const e = event({ id: 'e1', recurrence: { freq: 'DAILY', interval: 1 } });
+    seed([e]);
+
+    await useCalendar.getState().cancelOccurrence(occurrenceOf(e, '2026-08-10'));
+    expect(useCalendar.getState().undoStack).toHaveLength(1);
+
+    const again = useCalendar.getState().overrides[0];
+    await useCalendar.getState().cancelOccurrence(occurrenceOf(e, '2026-08-10'));
+
+    expect(useCalendar.getState().overrides[0]).toEqual(again);
+    expect(useCalendar.getState().undoStack).toHaveLength(1);
   });
 });
 

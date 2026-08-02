@@ -309,7 +309,7 @@ describe('reminderText', () => {
       startDate: '1974-06-14',
       endDate: '1974-06-14',
       anchorDate: '1974-06-14',
-      displayTemplate: '{title} · {yearsSince}',
+      displayTemplate: '{title} > {yearsSince}',
       recurrence: { freq: 'YEARLY', interval: 1, onInvalid: 'clamp' },
       reminders: [{ minutes: 900 }],
     });
@@ -320,7 +320,7 @@ describe('reminderText', () => {
       new Date(Date.UTC(2026, 6, 1)),
     );
 
-    expect(reminderText(due).title).toBe('Mom · 52');
+    expect(reminderText(due).title).toBe('Mom > 52');
     expect(reminderText(due).body).toBe('tomorrow');
   });
 

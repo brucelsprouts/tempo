@@ -135,6 +135,23 @@ const snapshotSchema = z.object({
   overrides: z.array(overrideSchema),
 });
 
+/**
+ * One spelling for one moment.
+ *
+ * Postgres hands back `2026-08-10T13:00:00+00:00`; everything this app writes
+ * goes through `toISOString`, which spells the same instant `…13:00:00.000Z`.
+ * Nothing that *reads* an instant cares — they are parsed either way — but the
+ * store compares events as data, to tell an edit from a form that was only
+ * opened, and two spellings of one moment make every timed entry look changed.
+ * An unparseable value is left exactly as it came, since a `null` here would
+ * quietly turn a timed entry into an all-day one.
+ */
+function instant(value: string | null): string | null {
+  if (!value) return value;
+  const at = new Date(value);
+  return Number.isNaN(at.getTime()) ? value : at.toISOString();
+}
+
 export function eventFromRow(row: EventRow): TempoEvent {
   return {
     id: row.id,
@@ -143,15 +160,18 @@ export function eventFromRow(row: EventRow): TempoEvent {
     kind: row.kind,
     categoryId: row.category_id,
     allDay: row.all_day,
-    startsAt: row.starts_at,
-    endsAt: row.ends_at,
+    startsAt: instant(row.starts_at),
+    endsAt: instant(row.ends_at),
     startDate: row.start_date,
     endDate: row.end_date,
     timezone: row.timezone,
     recurrence: parseRecurrence(row.recurrence),
     reminders: parseReminders(row.reminders),
     anchorDate: row.anchor_date,
-    displayTemplate: row.display_template,
+    displayTemplate: row.display_template === '{title} · {yearsSince}'
+        || row.display_template === '{title} → {yearsSince}'
+      ? '{title} > {yearsSince}'
+      : row.display_template,
     status: row.status,
     notify: row.notify,
     source: row.source,

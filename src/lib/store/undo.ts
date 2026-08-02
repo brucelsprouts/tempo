@@ -70,6 +70,36 @@ export function planRows<T extends { id: string }>(
 }
 
 /**
+ * Did the action move anything at all?
+ *
+ * The same diff that undoes an action decides whether there was one. A form
+ * commits whether or not you typed in it, a status is set to what it already
+ * was, an instance is skipped twice — and an entry on the stack for any of
+ * those offers to take back a change the calendar never made. Read right after
+ * an undo, where the next toast reads as the undo having been reversed, that is
+ * not just noise but a lie about the state of the calendar.
+ */
+export function movedNothing(before: Snapshot, live: Snapshot, touched: Touched): boolean {
+  return (
+    // Live and trashed as one set, for the same reason `undo` merges them: a
+    // soft delete moves a row between the two lists without inserting anything.
+    empty(
+      planRows(
+        [...before.events, ...before.deleted],
+        [...live.events, ...live.deleted],
+        touched.events,
+      ),
+    ) &&
+    empty(planRows(before.overrides, live.overrides, touched.overrides)) &&
+    empty(planRows(before.categories, live.categories, touched.categories))
+  );
+}
+
+function empty<T>(plan: Plan<T>): boolean {
+  return plan.insert.length === 0 && plan.update.length === 0 && plan.remove.length === 0;
+}
+
+/**
  * Structural equality over the row's own fields.
  *
  * `JSON.stringify` on sorted keys rather than a deep walk: these are plain data
@@ -77,7 +107,7 @@ export function planRows<T extends { id: string }>(
  * cycles, no dates and no class instances, so the cheap version is the correct
  * one here.
  */
-function same(a: unknown, b: unknown): boolean {
+export function same(a: unknown, b: unknown): boolean {
   return stable(a) === stable(b);
 }
 
