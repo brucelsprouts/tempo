@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCalendar } from '@/lib/store/calendar-store';
-import { diffDays, type CivilDate } from '@/lib/tempo/civil';
+import type { CivilDate } from '@/lib/tempo/civil';
+import { parts } from '@/lib/tempo/civil';
 import type { Occurrence } from '@/lib/tempo/types';
-import { DEFAULT_CATEGORY_COLOR } from './constants';
+import { DEFAULT_CATEGORY_COLOR, HOUR_H_DEFAULT, MONTHS } from './constants';
+import { DAY_MINUTES, daySegment, placeSegments, type DaySegment } from './timeline';
 
 /**
  * The 24-hour timeline: where time-of-day lives.
@@ -18,9 +20,8 @@ import { DEFAULT_CATEGORY_COLOR } from './constants';
  * chrome lives in one place rather than being negotiated between them.
  */
 
-const HOUR_H = 44;
+const HOUR_H = HOUR_H_DEFAULT;
 const SNAP_MINUTES = 15;
-const DAY_MINUTES = 24 * 60;
 
 interface Props {
   date: CivilDate;
@@ -28,29 +29,6 @@ interface Props {
   occurrences: Occurrence[];
   onOpen: (occ: Occurrence) => void;
   onNew: (date: CivilDate, startMinutes?: number) => void;
-}
-
-/** Side-by-side lanes for timed blocks that overlap in the column. */
-function packLanes(items: Occurrence[]): Map<string, { lane: number; of: number }> {
-  const sorted = [...items].sort((a, b) => (a.startMinutes ?? 0) - (b.startMinutes ?? 0));
-  const laneEnds: number[] = [];
-  const assignment = new Map<string, number>();
-
-  for (const occ of sorted) {
-    const start = occ.startMinutes ?? 0;
-    const end = occ.endMinutes ?? start + 30;
-    let lane = laneEnds.findIndex((e) => e <= start);
-    if (lane === -1) {
-      lane = laneEnds.length;
-      laneEnds.push(end);
-    } else {
-      laneEnds[lane] = end;
-    }
-    assignment.set(occ.key, lane);
-  }
-
-  const total = Math.max(1, laneEnds.length);
-  return new Map([...assignment].map(([k, lane]) => [k, { lane, of: total }]));
 }
 
 export function DayView({ date, occurrences, onOpen, onNew }: Props) {
@@ -62,9 +40,24 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
     null,
   );
 
-  const bars = occurrences.filter((o) => o.allDay || diffDays(o.endDate, o.date) > 0);
-  const timed = occurrences.filter((o) => !o.allDay && diffDays(o.endDate, o.date) === 0);
-  const lanes = useMemo(() => packLanes(timed), [timed]);
+  /**
+   * The strip holds only what genuinely has no time of day. A multi-day *timed*
+   * entry used to land here too, which is why an overnight shift showed as a
+   * chip with no position and left the morning it ate looking free.
+   */
+  const bars = occurrences.filter((o) => o.allDay);
+
+  /** Every timed entry that touches this day, clipped to it. */
+  const placed = useMemo(() => {
+    const segments = occurrences
+      .map((occ) => ({ occ, segment: daySegment(occ, date) }))
+      .filter((s): s is { occ: Occurrence; segment: DaySegment } => s.segment !== null);
+
+    const byKey = new Map(segments.map((s) => [s.occ.key, s.occ]));
+    return placeSegments(segments.map((s) => ({ key: s.occ.key, segment: s.segment }))).map(
+      (p) => ({ ...p, occ: byKey.get(p.key)! }),
+    );
+  }, [occurrences, date]);
 
   const colorFor = (id: string | null) =>
     categories.find((c) => c.id === id)?.color ?? DEFAULT_CATEGORY_COLOR;
@@ -74,7 +67,12 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
     if (gridRef.current) gridRef.current.scrollTop = 7 * HOUR_H;
   }, [date]);
 
-  function beginTimeDrag(e: React.PointerEvent, occ: Occurrence, mode: 'move' | 'resize') {
+  function beginTimeDrag(
+    e: React.PointerEvent,
+    occ: Occurrence,
+    segment: DaySegment,
+    mode: 'move' | 'resize',
+  ) {
     e.stopPropagation();
     e.preventDefault();
     if (occ.readOnly) return;
@@ -87,11 +85,7 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
 
     const move = (ev: PointerEvent) => {
       const d = snap(ev.clientY - originY);
-      setDrag({
-        key: occ.key,
-        startDelta: mode === 'move' ? d : 0,
-        endDelta: d,
-      });
+      setDrag({ key: occ.key, startDelta: mode === 'move' ? d : 0, endDelta: d });
     };
 
     const finish = (ev: PointerEvent) => {
@@ -100,8 +94,8 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
       const d = snap(ev.clientY - originY);
       if (d === 0) return;
 
-      const start = (occ.startMinutes ?? 0) + (mode === 'move' ? d : 0);
-      const end = (occ.endMinutes ?? 60) + d;
+      const start = segment.top + (mode === 'move' ? d : 0);
+      const end = segment.bottom + d;
       if (start < 0 || end > DAY_MINUTES || end <= start) return;
 
       setOccurrenceTime(occ, start, end, ev.shiftKey ? 'series' : 'occurrence');
@@ -145,39 +139,55 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
           ))}
 
           <div className="absolute inset-y-0 left-11 right-2">
-            {timed.map((occ) => {
-              const lane = lanes.get(occ.key) ?? { lane: 0, of: 1 };
-              const active = drag?.key === occ.key ? drag : null;
-              const start = (occ.startMinutes ?? 0) + (active?.startDelta ?? 0);
-              const end = (occ.endMinutes ?? 60) + (active?.endDelta ?? 0);
+            {placed.map(({ key, occ, segment, lane, of }) => {
+              const active = drag?.key === key ? drag : null;
+              const top = segment.top + (active?.startDelta ?? 0);
+              const bottom = segment.bottom + (active?.endDelta ?? 0);
               const color = colorFor(occ.categoryId);
+              const height = Math.max(18, ((bottom - top) / 60) * HOUR_H - 2);
 
               return (
                 <div
-                  key={occ.key}
-                  onPointerDown={(e) => beginTimeDrag(e, occ, 'move')}
+                  key={key}
+                  onPointerDown={(e) => beginTimeDrag(e, occ, segment, 'move')}
                   onClick={() => !drag && onOpen(occ)}
                   style={{
                     position: 'absolute',
-                    top: (start / 60) * HOUR_H,
-                    height: Math.max(18, ((end - start) / 60) * HOUR_H - 2),
-                    left: `${(lane.lane / lane.of) * 100}%`,
-                    width: `calc(${100 / lane.of}% - 3px)`,
+                    top: (top / 60) * HOUR_H,
+                    height,
+                    left: `${(lane / of) * 100}%`,
+                    width: `calc(${100 / of}% - 3px)`,
                     borderLeft: `2px solid ${color}`,
                     zIndex: active ? 20 : 1,
                   }}
-                  className="group overflow-hidden border-y border-r border-hair bg-raised px-1.5 py-1 text-[11px] text-ink transition-colors hover:border-hairlit hover:bg-sunken"
+                  className={[
+                    'group overflow-hidden border-r border-hair bg-raised px-1.5 py-1',
+                    'text-[11px] text-ink transition-colors hover:border-hairlit hover:bg-sunken',
+                    // A cut edge gets no border: a block ending flush at the
+                    // bottom of the column would otherwise be indistinguishable
+                    // from one that genuinely ends at midnight.
+                    segment.continuesBefore ? '' : 'border-t',
+                    segment.continuesAfter ? '' : 'border-b',
+                  ].join(' ')}
                 >
+                  {segment.continuesBefore && (
+                    <div className="label leading-none opacity-70">↑ FROM {shortDate(occ.date)}</div>
+                  )}
                   <div className="truncate leading-tight">{occ.title}</div>
-                  <div className="label mt-0.5">
-                    {String(Math.floor(start / 60)).padStart(2, '0')}:
-                    {String(start % 60).padStart(2, '0')}
-                  </div>
-                  <span
-                    onPointerDown={(e) => beginTimeDrag(e, occ, 'resize')}
-                    className="absolute inset-x-0 bottom-0 h-1.5 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"
-                    style={{ background: `linear-gradient(0deg, ${color}, transparent)` }}
-                  />
+                  <div className="label mt-0.5">{clockLabel(top)}</div>
+                  {segment.continuesAfter && (
+                    <div className="label absolute inset-x-1.5 bottom-0.5 leading-none opacity-70">
+                      ↓ TO {shortDate(occ.endDate)}
+                    </div>
+                  )}
+                  {/* Nothing to grab on an edge that is a clip rather than an end. */}
+                  {!segment.continuesAfter && (
+                    <span
+                      onPointerDown={(e) => beginTimeDrag(e, occ, segment, 'resize')}
+                      className="absolute inset-x-0 bottom-0 h-1.5 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"
+                      style={{ background: `linear-gradient(0deg, ${color}, transparent)` }}
+                    />
+                  )}
                 </div>
               );
             })}
@@ -186,4 +196,15 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
       </div>
     </div>
   );
+}
+
+/** `2026-08-11` → `AUG 11`. What a continuation chevron points at. */
+function shortDate(d: CivilDate): string {
+  const { month, day } = parts(d);
+  return `${MONTHS[month - 1]} ${day}`;
+}
+
+function clockLabel(minutes: number): string {
+  const m = ((minutes % DAY_MINUTES) + DAY_MINUTES) % DAY_MINUTES;
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 }
