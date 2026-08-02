@@ -1,5 +1,12 @@
 import type { CivilDate } from '@/lib/tempo/civil';
 import type { Occurrence } from '@/lib/tempo/types';
+import {
+  HALF_HOUR_FLOOR,
+  HOUR_H_MAX,
+  HOUR_H_MIN,
+  HOUR_LABEL_FLOOR,
+  ZOOM_STEP,
+} from './constants';
 
 /**
  * The arithmetic behind the 24-hour column.
@@ -178,4 +185,43 @@ export function applyDrag({
     Math.max(0, snapMinutes(start + deltaMinutes, step)),
   );
   return { start: nextStart, end: nextStart + duration };
+}
+
+/**
+ * How tall an hour is, or the instruction to work it out from the pane.
+ *
+ * `'fit'` is deliberately not a number. Storing the resolved height would
+ * freeze the fit at whatever the window happened to be when it was chosen, and
+ * it would silently stop being a fit on the next resize.
+ */
+export type ZoomMode = 'fit' | number;
+
+function clampHeight(h: number): number {
+  return Math.min(HOUR_H_MAX, Math.max(HOUR_H_MIN, h));
+}
+
+export function resolveHourHeight(mode: ZoomMode, paneHeight: number): number {
+  if (mode === 'fit') return clampHeight(paneHeight / 24);
+  return clampHeight(mode);
+}
+
+export function zoomIn(mode: ZoomMode, paneHeight: number): number {
+  return clampHeight(resolveHourHeight(mode, paneHeight) + ZOOM_STEP);
+}
+
+export function zoomOut(mode: ZoomMode, paneHeight: number): number {
+  return clampHeight(resolveHourHeight(mode, paneHeight) - ZOOM_STEP);
+}
+
+/**
+ * Label every Nth hour. Twenty-four labels stacked at 20px is a grey texture
+ * rather than a scale, so below the floor only every third hour is named — the
+ * rules stay, which is what carries the rhythm.
+ */
+export function labelEvery(hourHeight: number): number {
+  return hourHeight >= HOUR_LABEL_FLOOR ? 1 : 3;
+}
+
+export function showsHalfHours(hourHeight: number): boolean {
+  return hourHeight >= HALF_HOUR_FLOOR;
 }

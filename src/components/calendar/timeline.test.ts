@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { applyDrag, daySegment, placeSegments, snapMinutes } from './timeline';
+import {
+  applyDrag,
+  daySegment,
+  labelEvery,
+  placeSegments,
+  resolveHourHeight,
+  showsHalfHours,
+  snapMinutes,
+  zoomIn,
+  zoomOut,
+} from './timeline';
+import { HOUR_H_MAX, HOUR_H_MIN } from './constants';
 import type { Occurrence, TempoEvent } from '@/lib/tempo/types';
 import type { CivilDate } from '@/lib/tempo/civil';
 
@@ -277,5 +288,67 @@ describe('applyDrag', () => {
     expect(
       applyDrag({ start: 22 * 60, end: 6 * 60, deltaMinutes: 120, mode: 'move', lockDates: true }),
     ).toEqual({ start: 22 * 60, end: 6 * 60 });
+  });
+});
+
+describe('resolveHourHeight', () => {
+  /**
+   * FIT is a mode rather than a stored pixel height. Storing the resolved
+   * number would freeze it at whatever the window was when it was chosen, and
+   * it would stop being a fit the moment the window resized.
+   */
+  it('divides the pane across 24 hours in fit mode', () => {
+    expect(resolveHourHeight('fit', 720)).toBe(30);
+  });
+
+  it('never fits below the floor', () => {
+    expect(resolveHourHeight('fit', 24)).toBe(HOUR_H_MIN);
+  });
+
+  it('returns a manual height unchanged', () => {
+    expect(resolveHourHeight(44, 720)).toBe(44);
+  });
+
+  it('clamps a manual height to the range', () => {
+    expect(resolveHourHeight(500, 720)).toBe(HOUR_H_MAX);
+    expect(resolveHourHeight(1, 720)).toBe(HOUR_H_MIN);
+  });
+});
+
+describe('zoomIn / zoomOut', () => {
+  it('steps up from a manual height', () => {
+    expect(zoomIn(44, 720)).toBeGreaterThan(44);
+  });
+
+  it('steps down from a manual height', () => {
+    expect(zoomOut(44, 720)).toBeLessThan(44);
+  });
+
+  /** Zooming out of FIT has nowhere to go; zooming in leaves it. */
+  it('leaves fit mode by resolving it first', () => {
+    expect(zoomIn('fit', 720)).toBeGreaterThan(30);
+  });
+
+  it('does not exceed the ceiling', () => {
+    expect(zoomIn(HOUR_H_MAX, 720)).toBe(HOUR_H_MAX);
+  });
+
+  it('does not fall below the floor', () => {
+    expect(zoomOut(HOUR_H_MIN, 720)).toBe(HOUR_H_MIN);
+  });
+});
+
+describe('labelEvery / showsHalfHours', () => {
+  it('labels every hour when there is room', () => {
+    expect(labelEvery(44)).toBe(1);
+  });
+
+  it('thins labels when there is not', () => {
+    expect(labelEvery(20)).toBe(3);
+  });
+
+  it('draws half-hour rules only when they can be told apart', () => {
+    expect(showsHalfHours(44)).toBe(true);
+    expect(showsHalfHours(20)).toBe(false);
   });
 });

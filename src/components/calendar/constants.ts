@@ -198,6 +198,26 @@ export const KIND_GLYPH: Record<EventKind, string> = {
 };
 
 /**
+ * The 24-hour column's scale, and the thresholds that depend on it.
+ *
+ * Here rather than in `DayView` because three separate decisions read the same
+ * number and have to agree about it: how tall an hour row is, whether a
+ * half-hour rule is distinguishable, and whether there is room to label every
+ * hour. Two of those living inline is how they drift.
+ */
+export const HOUR_H_DEFAULT = 44;
+/** Below this an hour row is thinner than the text in it. */
+export const HOUR_H_MIN = 8;
+/** Above this a single event needs scrolling to read, which defeats the column. */
+export const HOUR_H_MAX = 120;
+/** One click of + or -. */
+export const ZOOM_STEP = 6;
+/** Half-hour rules appear at or above this; below it they are noise. */
+export const HALF_HOUR_FLOOR = 34;
+/** Every hour is labelled at or above this; below it, every third. */
+export const HOUR_LABEL_FLOOR = 26;
+
+/**
  * When something happened, as a clock reading rather than an age.
  *
  * "4M AGO" would be the friendlier phrasing and is the wrong one here: it is
