@@ -119,3 +119,63 @@ export function placeSegments(items: Array<{ key: string; segment: DaySegment }>
 
   return out;
 }
+
+/** The grid a dragged edge lands on. */
+export const SNAP_MINUTES = 15;
+/** What Alt buys: deliberate, off-grid placement. */
+export const FINE_MINUTES = 1;
+
+/** Round a time onto the grid. The *time*, not the distance travelled. */
+export function snapMinutes(minutes: number, step: number = SNAP_MINUTES): number {
+  return Math.round(minutes / step) * step;
+}
+
+export interface DragResult {
+  start: number;
+  end: number;
+}
+
+/**
+ * Where a drag leaves a block.
+ *
+ * Snapping applies to the resulting time rather than to the delta, which is the
+ * defect this replaces: snapping a distance preserves whatever offset the block
+ * already had, so an entry starting at 09:07 could step in perfect quarter-hours
+ * and never once be on the grid.
+ *
+ * Out-of-range clamps rather than returning nothing. The old guard discarded the
+ * whole gesture at either end of the day, which reads as the drag having failed
+ * for no reason.
+ */
+export function applyDrag({
+  start,
+  end,
+  deltaMinutes,
+  mode,
+  step = SNAP_MINUTES,
+  lockDates = false,
+}: {
+  start: number;
+  end: number;
+  deltaMinutes: number;
+  mode: 'move' | 'resize';
+  step?: number;
+  lockDates?: boolean;
+}): DragResult {
+  // A block whose end reads earlier than its start crosses midnight. It has no
+  // room to move inside one day, and the store cannot express a date change
+  // from a time drag, so it stays put.
+  if (lockDates) return { start, end };
+
+  if (mode === 'resize') {
+    const nextEnd = Math.min(DAY_MINUTES, Math.max(start + step, snapMinutes(end + deltaMinutes, step)));
+    return { start, end: nextEnd };
+  }
+
+  const duration = end - start;
+  const nextStart = Math.min(
+    DAY_MINUTES - duration,
+    Math.max(0, snapMinutes(start + deltaMinutes, step)),
+  );
+  return { start: nextStart, end: nextStart + duration };
+}

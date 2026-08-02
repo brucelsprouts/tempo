@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { daySegment, placeSegments } from './timeline';
+import { applyDrag, daySegment, placeSegments, snapMinutes } from './timeline';
 import type { Occurrence, TempoEvent } from '@/lib/tempo/types';
 import type { CivilDate } from '@/lib/tempo/civil';
 
@@ -174,5 +174,108 @@ describe('placeSegments', () => {
 
   it('returns an empty list unchanged', () => {
     expect(placeSegments([])).toEqual([]);
+  });
+});
+
+/**
+ * The old code snapped the *distance travelled*, which meant an entry starting
+ * at 09:07 moved in clean quarter-hours and was therefore at 09:07, 09:22,
+ * 09:37 forever — it could never reach the grid, which is the opposite of what
+ * snapping is for.
+ */
+describe('snapMinutes', () => {
+  it('pulls a time down to the nearest quarter hour', () => {
+    expect(snapMinutes(9 * 60 + 7)).toBe(9 * 60);
+  });
+
+  it('pulls a time up to the nearest quarter hour', () => {
+    expect(snapMinutes(9 * 60 + 8)).toBe(9 * 60 + 15);
+  });
+
+  it('leaves a time already on the grid alone', () => {
+    expect(snapMinutes(9 * 60 + 15)).toBe(9 * 60 + 15);
+  });
+
+  it('honours a finer step', () => {
+    expect(snapMinutes(9 * 60 + 7, 1)).toBe(9 * 60 + 7);
+  });
+});
+
+describe('applyDrag', () => {
+  const base = { start: 9 * 60, end: 10 * 60 };
+
+  it('moves both edges and preserves the duration', () => {
+    expect(applyDrag({ ...base, deltaMinutes: 37, mode: 'move' })).toEqual({
+      start: 9 * 60 + 30,
+      end: 10 * 60 + 30,
+    });
+  });
+
+  it('pulls an off-grid start onto the grid when moved', () => {
+    expect(applyDrag({ start: 9 * 60 + 7, end: 10 * 60 + 7, deltaMinutes: 5, mode: 'move' })).toEqual({
+      start: 9 * 60 + 15,
+      end: 10 * 60 + 15,
+    });
+  });
+
+  it('moves only the end when resizing', () => {
+    expect(applyDrag({ ...base, deltaMinutes: 37, mode: 'resize' })).toEqual({
+      start: 9 * 60,
+      end: 10 * 60 + 30,
+    });
+  });
+
+  it('refuses to resize an end above its start', () => {
+    expect(applyDrag({ ...base, deltaMinutes: -600, mode: 'resize' })).toEqual({
+      start: 9 * 60,
+      end: 9 * 60 + 15,
+    });
+  });
+
+  /**
+   * The old code discarded the whole gesture on an overshoot and sprang the
+   * block back with no explanation. Clamping is the feedback.
+   */
+  it('clamps a move at the end of the day instead of discarding it', () => {
+    // 20 hours past 09:00 is well off the end of the column; a delta small
+    // enough to land inside the day would assert nothing about clamping.
+    expect(applyDrag({ ...base, deltaMinutes: 20 * 60, mode: 'move' })).toEqual({
+      start: 23 * 60,
+      end: 24 * 60,
+    });
+  });
+
+  it('clamps a move at the start of the day', () => {
+    expect(applyDrag({ ...base, deltaMinutes: -10 * 60, mode: 'move' })).toEqual({
+      start: 0,
+      end: 60,
+    });
+  });
+
+  it('clamps a resize at the end of the day', () => {
+    expect(applyDrag({ ...base, deltaMinutes: 20 * 60, mode: 'resize' })).toEqual({
+      start: 9 * 60,
+      end: 24 * 60,
+    });
+  });
+
+  it('takes a fine step when asked', () => {
+    expect(applyDrag({ ...base, deltaMinutes: 7, mode: 'move', step: 1 })).toEqual({
+      start: 9 * 60 + 7,
+      end: 10 * 60 + 7,
+    });
+  });
+
+  /**
+   * A block crossing midnight is longer than a day, so the ordinary clamp would
+   * squash it. `lockDates` holds both edges still instead, because
+   * `setOccurrenceTime` speaks only minutes and cannot say "and also move it a
+   * day" — a drag that appeared to work and silently truncated the event would
+   * be worse than one that does not move.
+   */
+  it('refuses to move a block that would have to change dates', () => {
+    expect(
+      applyDrag({ start: 22 * 60, end: 6 * 60, deltaMinutes: 120, mode: 'move', lockDates: true }),
+    ).toEqual({ start: 22 * 60, end: 6 * 60 });
   });
 });
