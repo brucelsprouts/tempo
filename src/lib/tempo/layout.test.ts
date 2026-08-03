@@ -79,16 +79,16 @@ describe('week layout', () => {
     expect(layoutWeek(WEEK_START, [occ('a', '2026-09-01')]).segments).toHaveLength(0);
   });
 
-  it('rolls anything past the pixel budget into a per-day overflow count', () => {
+  it('does not hide segments past the pixel budget and calculates contentHeight', () => {
     const many = Array.from({ length: 6 }, (_, i) => occ(`e${i}`, '2026-07-29'));
-    const { segments, overflow, laneCount } = layoutWeek(WEEK_START, many, BUDGET);
+    const { segments, overflow, laneCount, contentHeight } = layoutWeek(WEEK_START, many, BUDGET);
 
-    // 28px events at a 4px gap: lanes start at 0, 32, 64, 96, 128. The fifth
-    // would end at 156, past 141, so four are drawn and two roll up.
-    expect(laneCount).toBe(4);
-    expect(segments.filter((s) => s.hidden)).toHaveLength(2);
-    expect(overflow[3]).toBe(2); // Wednesday column
-    expect(overflow[0]).toBe(0);
+    // 28px events at a 4px gap: lanes start at 0, 32, 64, 96, 128, 160.
+    // Bottom of the last segment is 160 + 28 = 188.
+    expect(laneCount).toBe(6);
+    expect(segments.filter((s) => s.hidden)).toHaveLength(0);
+    expect(overflow[3]).toBe(0);
+    expect(contentHeight).toBe(188);
   });
 
   it('gives long bars the top lanes so rows stay stable across boundaries', () => {
@@ -151,8 +151,8 @@ describe('variable bar heights', () => {
     expect(drawn(segments)).toBe(3);
   });
 
-  it('draws three and one "+1" for two tasks plus two events', () => {
-    const { segments, overflow } = layoutWeek(
+  it('draws all four events/tasks and sets contentHeight to 152', () => {
+    const { segments, overflow, contentHeight } = layoutWeek(
       WEEK_START,
       [
         kinded('t0', 'assignment'),
@@ -163,13 +163,11 @@ describe('variable bar heights', () => {
       BUDGET,
     );
     // Four bars on one day is 28 + 28 + 42 + 42 of bar and three 4px gaps, so
-    // the last lane ends at 152 whichever order they were assigned in — past
-    // 141, and the third ends at 106, so three draw and one counts. This is
-    // the density cost of ranking kinds by height, and it is unchanged: at the
-    // old figures the same four ended at 115 against a 103px budget.
-    expect(drawn(segments)).toBe(3);
-    expect(segments.filter((s) => s.hidden)).toHaveLength(1);
-    expect(overflow[3]).toBe(1);
+    // the last lane ends at 152.
+    expect(drawn(segments)).toBe(4);
+    expect(segments.filter((s) => s.hidden)).toHaveLength(0);
+    expect(overflow[3]).toBe(0);
+    expect(contentHeight).toBe(152);
   });
 
   it('keeps a bar at its own height, not its lane’s', () => {
@@ -320,16 +318,15 @@ describe('lasso hit-testing', () => {
     expect(hits.size).toBe(0);
   });
 
-  it('skips bars that rolled into a "+N" chip instead of being drawn', () => {
-    // Six on one day: four are drawn and two are counted, and a chip has no
-    // outline to light.
+  it('includes all bars since none are rolled into a chip anymore', () => {
     const many = Array.from({ length: 6 }, (_, i) => occ(`e${i}`, '2026-07-29'));
     const hits = occurrencesInMarquee(
-      { x0: 0, y0: at(10, 0), x1: 7 * COL_W, y1: at(10, ROW_H) },
+      { x0: 0, y0: at(10, 0), x1: 7 * COL_W, y1: at(10, 250) },
       grid(many),
       METRICS,
+      (y0, y1) => [{ index: 10, start: 10 * ROW_H, end: 10 * ROW_H + 250 }],
     );
-    expect(hits.size).toBe(4);
+    expect(hits.size).toBe(6);
   });
 
   it('skips read-only instances, which refuse everything a selection can do', () => {

@@ -347,10 +347,21 @@ export function ContinuousCalendar({
   // overscan, which would make the readout claim a month you can't see.
   const clampIndex = (n: number) => Math.min(WEEK_COUNT - 1, Math.max(0, n));
   const scrollOffset = virtualizer.scrollOffset ?? TODAY_OFFSET;
-  const topIndex = clampIndex(Math.floor(scrollOffset / ROW_H));
-  const bottomIndex = clampIndex(
-    Math.floor((scrollOffset + Math.max(viewportH, ROW_H) - 1) / ROW_H),
-  );
+
+  const [topIndex, bottomIndex] = useMemo(() => {
+    const visible = items.filter(
+      (item) => item.start < scrollOffset + viewportH && item.end > scrollOffset
+    );
+    if (visible.length === 0) {
+      const estTop = clampIndex(Math.floor(scrollOffset / ROW_H));
+      const estBottom = clampIndex(
+        Math.floor((scrollOffset + Math.max(viewportH, ROW_H) - 1) / ROW_H)
+      );
+      return [estTop, estBottom];
+    }
+    return [visible[0].index, visible[visible.length - 1].index];
+  }, [items, scrollOffset, viewportH]);
+
   const bucket = Math.floor(topIndex / BUCKET) * BUCKET;
 
   const rangeFrom = useMemo(
@@ -592,6 +603,20 @@ export function ContinuousCalendar({
     const el = scrollRef.current;
     if (!gesture || !el) return;
 
+    const getWeekRange = (y0: number, y1: number) => {
+      const measurements = (virtualizer as any).getMeasurements();
+      const result = [];
+      const estStart = Math.max(0, Math.floor(y0 / ROW_H) - 10);
+      for (let i = estStart; i < measurements.length; i++) {
+        const m = measurements[i];
+        if (m.start > y1) break;
+        if (m.end >= y0) {
+          result.push({ index: m.index, start: m.start, end: m.end });
+        }
+      }
+      return result;
+    };
+
     const apply = () => {
       const { x, y } = pointer.current;
 
@@ -617,11 +642,16 @@ export function ContinuousCalendar({
       const rect = { x0: gesture.origin.x, y0: gesture.origin.y, x1: at.x, y1: at.y };
       setMarquee(rect);
       setSelection(
-        occurrencesInMarquee(rect, layoutOf, {
-          colWidth: liveColWidth(),
-          rowH: ROW_H,
-          headerH: DAY_HEADER_H,
-        }),
+        occurrencesInMarquee(
+          rect,
+          layoutOf,
+          {
+            colWidth: liveColWidth(),
+            rowH: ROW_H,
+            headerH: DAY_HEADER_H,
+          },
+          getWeekRange,
+        ),
       );
     };
 
@@ -800,17 +830,16 @@ export function ContinuousCalendar({
   }, [duplicateOccurrences, pasteTarget, selectCopies]);
 
   const jumpToToday = useCallback(() => {
-    scrollRef.current?.scrollTo({ top: TODAY_OFFSET, behavior: 'smooth' });
-  }, []);
+    virtualizer.scrollToIndex(WEEKS_BEFORE, { align: 'start', behavior: 'smooth' });
+  }, [virtualizer]);
 
   // Fixed row height again: the target week is arithmetic, not a search.
   const jumpTo = useCallback(
     (date: CivilDate) => {
       const week = Math.floor(diffDays(startOfWeek(date), epochStart) / 7);
-      const top = Math.min(TOTAL_H - ROW_H, Math.max(0, week * ROW_H));
-      scrollRef.current?.scrollTo({ top, behavior: 'smooth' });
+      virtualizer.scrollToIndex(week, { align: 'start', behavior: 'smooth' });
     },
-    [epochStart],
+    [epochStart, virtualizer],
   );
 
   useImperativeHandle(
@@ -899,13 +928,15 @@ export function ContinuousCalendar({
           onPointerDown={handleGridPointerDown}
           className="relative flex-1 overflow-y-auto overflow-x-hidden"
         >
-          <div className="relative w-full" style={{ height: TOTAL_H }}>
+          <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {items.map((item) => {
               const layout = layoutOf(item.index);
               if (!layout) return null;
               return (
                 <div
                   key={item.key}
+                  ref={virtualizer.measureElement}
+                  data-index={item.index}
                   className="absolute inset-x-0 top-0"
                   style={{ transform: `translateY(${item.start}px)` }}
                 >

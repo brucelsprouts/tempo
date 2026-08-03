@@ -42,7 +42,8 @@ export const WEEK_COUNT = WEEKS_BEFORE + WEEKS_AFTER;
  * divides by it, and the entry modal's cut scrim can locate a week row without
  * finding it in the DOM.
  */
-export const ROW_H = 190;
+export const MIN_ROW_H = 190;
+export const ROW_H = MIN_ROW_H;
 
 /**
  * Known statically, because every row is the same height. The scroll container
@@ -51,8 +52,8 @@ export const ROW_H = 190;
  * zero-height element silently clamps to 0 — which lands the app on the wrong
  * date instead of today.
  */
-export const TOTAL_H = WEEK_COUNT * ROW_H;
-export const TODAY_OFFSET = WEEKS_BEFORE * ROW_H;
+export const TOTAL_H = WEEK_COUNT * MIN_ROW_H;
+export const TODAY_OFFSET = WEEKS_BEFORE * MIN_ROW_H;
 /**
  * 34 rather than 30. The day number went to 12px and the strip was still sized
  * for the 11px it used to be, so the one number every cell always shows was
@@ -63,12 +64,6 @@ export const TODAY_OFFSET = WEEKS_BEFORE * ROW_H;
  * and the number is what you navigate by.
  */
 export const DAY_HEADER_H = 34;
-/**
- * Room for the "+N" chip at the foot of a cell: 10px of text sitting 4px off
- * the bottom edge, with a pixel of slack. At 13 the chip's own box was flush
- * with the last lane's budget line.
- */
-export const OVERFLOW_H = 15;
 
 /**
  * What a row will spend on bars, in pixels rather than in lanes.
@@ -82,7 +77,7 @@ export const OVERFLOW_H = 15;
  * a different decision. That day stays fully readable in the day modal's task
  * pane, and the "+1" chip is the link to it.
  */
-export const LANE_BUDGET = ROW_H - DAY_HEADER_H - OVERFLOW_H;
+export const LANE_BUDGET = MIN_ROW_H - DAY_HEADER_H;
 
 export const GUTTER_W = 58;
 

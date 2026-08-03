@@ -151,15 +151,6 @@ function DayCell({
           +
         </button>
       </div>
-
-      {overflow > 0 && (
-        <button
-          onClick={() => onDayOpen(date)}
-          className="absolute bottom-1 left-1.5 text-[10px] tracking-[0.1em] text-mute hover:text-dim"
-        >
-          +{overflow}
-        </button>
-      )}
     </div>
   );
 }
@@ -221,7 +212,7 @@ function WeekRowImpl({
   const monthStartDay = days.find(isFirstOfMonth);
 
   return (
-    <div className="flex border-b border-hair" style={{ height: ROW_H }}>
+    <div className="flex border-b border-hair" style={{ height: Math.max(ROW_H, layout.contentHeight + DAY_HEADER_H) }}>
       <div
         className="relative shrink-0 select-none pt-1.5 pr-2 text-right"
         style={{ width: GUTTER_W }}
@@ -282,7 +273,6 @@ function WeekRowImpl({
         >
           <div className="relative h-full">
             {segments
-              .filter((s) => !s.hidden)
               .map((segment) => (
                 <EventBar
                   key={segment.occurrence.key}

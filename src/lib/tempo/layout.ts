@@ -73,6 +73,8 @@ export interface WeekLayout {
   laneTops: number[];
   /** Per column, how many occurrences were suppressed. */
   overflow: number[];
+  /** The total height of the content in the lane area. */
+  contentHeight: number;
 }
 
 /**
@@ -200,6 +202,7 @@ export function layoutWeek(
   const segments: WeekSegment[] = [];
   const overflow = new Array<number>(DAYS_PER_WEEK).fill(0);
   let laneCount = 0;
+  let contentHeight = 0;
 
   for (const a of assigned) {
     const h = KIND_HEIGHT[a.occurrence.kind];
@@ -210,12 +213,9 @@ export function layoutWeek(
       segmentTop = Math.max(segmentTop, colTops[col][a.lane] ?? 0);
     }
 
-    const hidden = segmentTop + h > budget;
-    if (hidden) {
-      for (let col = a.startCol; col <= a.endCol; col++) overflow[col] += 1;
-    } else {
-      laneCount = Math.max(laneCount, a.lane + 1);
-    }
+    const hidden = false;
+    laneCount = Math.max(laneCount, a.lane + 1);
+    contentHeight = Math.max(contentHeight, segmentTop + h);
 
     segments.push({
       ...a,
@@ -225,7 +225,7 @@ export function layoutWeek(
     });
   }
 
-  return { weekStart, weekEnd, days, segments, laneCount, laneHeights, laneTops, overflow };
+  return { weekStart, weekEnd, days, segments, laneCount, laneHeights, laneTops, overflow, contentHeight };
 }
 
 function bySpanThenStart(
@@ -292,6 +292,7 @@ export function occurrencesInMarquee(
   rect: MarqueeRect,
   layoutOf: (weekIndex: number) => WeekLayout | null,
   { colWidth, rowH, headerH }: GridMetrics,
+  getWeekRange?: (y0: number, y1: number) => Array<{ index: number; start: number; end: number }>,
 ): Set<string> {
   const hits = new Set<string>();
   if (colWidth <= 0 || rowH <= 0) return hits;
@@ -307,13 +308,25 @@ export function occurrencesInMarquee(
   const lastCol = Math.floor(right / colWidth);
   if (lastCol < 0 || firstCol > DAYS_PER_WEEK - 1) return hits;
 
-  for (let week = Math.floor(top / rowH); week <= Math.floor(bottom / rowH); week++) {
+  let weeksToOverlap: Array<{ index: number; start: number; end: number }> = [];
+  if (getWeekRange) {
+    weeksToOverlap = getWeekRange(top, bottom);
+  } else {
+    const startWeek = Math.floor(top / rowH);
+    const endWeek = Math.floor(bottom / rowH);
+    for (let w = startWeek; w <= endWeek; w++) {
+      weeksToOverlap.push({ index: w, start: w * rowH, end: (w + 1) * rowH });
+    }
+  }
+
+  for (const { index: week, start: weekStart, end: weekEnd } of weeksToOverlap) {
     const layout = layoutOf(week);
     if (!layout) continue;
 
+    const rowHeight = weekEnd - weekStart;
     // The marquee's band clipped to this row, in row-local pixels.
-    const bandTop = Math.max(top - week * rowH, 0);
-    const bandBottom = Math.min(bottom - week * rowH, rowH);
+    const bandTop = Math.max(top - weekStart, 0);
+    const bandBottom = Math.min(bottom - weekStart, rowHeight);
 
     for (const segment of layout.segments) {
       // A hidden segment is a "+N" chip, not a bar. Selecting something with no
