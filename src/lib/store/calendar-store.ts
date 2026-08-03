@@ -1508,7 +1508,7 @@ export const useCalendar = create<CalendarState>((set, get) => {
     },
 
     cancelOccurrence: async (occ) => {
-      if (occ.readOnly) return;
+      if (occ.event.source === 'google') return;
       // A one-off has nothing to except out of; delete the row instead — which
       // takes its own snapshot, under the same reason this one would use.
       if (!occ.event.recurrence) {
@@ -1523,7 +1523,7 @@ export const useCalendar = create<CalendarState>((set, get) => {
     },
 
     setStatus: async (occ, status) => {
-      if (occ.readOnly) return;
+      if (occ.event.source === 'google') return;
       captureVersion(occ.eventId, 'status');
       const label = `Marked ${occ.title} ${status}`;
       if (occ.event.recurrence) {

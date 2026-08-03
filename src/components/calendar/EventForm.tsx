@@ -117,7 +117,7 @@ export function EventForm({
   const isOffline = useCalendar((s) => s.isOffline);
 
   const existing = occurrence?.event;
-  const readOnly = occurrence?.readOnly || isOffline;
+  const readOnly = occurrence?.event.source === 'google' || isOffline;
   const today = todayIn(timezone);
   const from = seed?.start ?? occurrence?.date ?? today;
 

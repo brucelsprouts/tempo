@@ -225,6 +225,7 @@ function WeekRowImpl({
       <div
         className="relative shrink-0 select-none pt-1.5 pr-2 text-right"
         style={{ width: GUTTER_W }}
+        data-date={weekStart}
       >
         {monthStartDay ? (
           <div className="text-[10px] leading-tight tracking-[0.12em] text-dim">
