@@ -47,6 +47,9 @@ const STATUS_GLYPH = { todo: '[ ]', doing: '[~]', done: '[x]' } as const;
  * not deserve. The cost is paid by the move, which keeps everything between the
  * two: 135px of it on the narrowest column this layout produces, so the easier
  * gesture is still by far the larger target.
+ *
+ * On a coarse pointer `.bar-grip` narrows this to 12px and stops hiding it —
+ * see the grip rules in globals.css.
  */
 const HANDLE_W = 'w-4';
 
@@ -136,6 +139,10 @@ export function EventBar({
         // The bars sit in a pointer-events-none overlay so empty day space falls
         // through to the cell underneath; each bar opts itself back in.
         'pointer-events-auto',
+        // Its own container, so everything inside can size itself against the
+        // room this bar actually has rather than against the window. See the
+        // `.tempo-bar` rules in globals.css.
+        'tempo-bar',
         'group ml-[4px] flex items-center gap-1 overflow-hidden bg-raised pr-1',
         tick ? 'text-[11px]' : 'text-[12px]',
         'border-y border-r border-hair transition-colors',
@@ -179,7 +186,7 @@ export function EventBar({
       {continuesBefore && <span className="shrink-0 text-mute">‹</span>}
       {tick && <span className="shrink-0 text-mute">◆</span>}
 
-      <div className="min-w-0 flex-1">
+      <div className="bar-body min-w-0 flex-1">
         {twoLine ? (
           <>
             <div className={`truncate leading-tight ${done ? 'text-mute line-through' : 'text-ink'}`}>
@@ -187,16 +194,37 @@ export function EventBar({
             </div>
             {/* The second line is what the extra height was spent on: status and
                 when it is due, which are the two things you check without
-                opening anything. */}
-            <div className="flex items-center gap-1 text-[11px] leading-tight text-mute">
-              {glyph && <span className="shrink-0">{glyph}</span>}
-              <span className="truncate tabular-nums">{time ?? `DUE ${occ.endDate.slice(5)}`}</span>
+                opening anything.
+
+                `DUE ` is its own element so a narrow bar can drop the word and
+                keep the date — three characters of prose in front of a value is
+                the first thing to go when there are four characters of room. */}
+            <div className="bar-meta flex items-center gap-1 text-[11px] leading-tight text-mute">
+              {glyph && <span className="bar-glyph shrink-0">{glyph}</span>}
+              <span className="truncate tabular-nums">
+                {time ?? (
+                  <>
+                    <span className="bar-due">DUE </span>
+                    {occ.endDate.slice(5)}
+                  </>
+                )}
+              </span>
             </div>
           </>
         ) : (
-          <div className="flex items-center gap-1.5">
-            {time && <span className="shrink-0 tabular-nums text-mute">{time}</span>}
-            <span className={`truncate ${done ? 'text-mute line-through' : 'text-ink'}`}>
+          /* One line where there is room for one, two where there is not: below
+             ~90px of content `.bar-line` turns the column and the time moves
+             above the title instead of in front of it.
+
+             Except on a mark, which `bar-tick` holds at one line. A mark's bar
+             is 20px — it is a tick, not a span — and there is no second line to
+             be had inside it: turning the column there would push the title out
+             through the bottom of a bar that clips. It gives up the clock
+             instead, which is the right thing for it to give up, since a mark is
+             a date rather than a time. */
+          <div className={`bar-line ${tick ? 'bar-tick' : ''} flex items-center gap-1.5`}>
+            {time && <span className="bar-time shrink-0 tabular-nums text-mute">{time}</span>}
+            <span className={`bar-title truncate ${done ? 'text-mute line-through' : 'text-ink'}`}>
               {occ.title}
             </span>
           </div>
@@ -210,12 +238,16 @@ export function EventBar({
           cross-week gesture unambiguous: there is exactly one handle per end of
           an entry, however many rows the entry spans.
 
-          `hover-only` takes them off touch screens entirely rather than leaving
-          them invisible-but-live. Two reasons, and the second is the deciding
-          one: there is no hover to reveal them by, and at 16px a side they would
-          own 32 of the ~41px a one-day bar gets on a 375px-wide phone — so the
-          gesture nobody could see would be sitting on top of the two that matter.
-          Resize on touch is the date fields in the entry form, which a tap opens.
+          `bar-grip` is what makes them exist on a touch screen. They were
+          `hover-only` — removed outright on a coarse pointer, on the grounds
+          that there is no hover to reveal them by and that at 16px a side they
+          would own 32 of the ~37px a one-day bar gets on a 375px phone. The
+          first half was answered by showing them rather than waiting to be
+          hovered; the second half was only ever true of a *narrow* bar, so the
+          grip rules turn on the bar's own width instead of on the input. A bar
+          with room keeps both grips and ~30px of middle to tap; a one-day bar
+          keeps neither, and the entry form's date fields stay the way to
+          restretch it.
 
           `stopPropagation` now has to be said on the mouse and touch events as
           well as the pointer one. `beginResize` stops `pointerdown`, and that used
@@ -231,7 +263,7 @@ export function EventBar({
           }}
           onMouseDown={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
-          className={`hover-only absolute left-0 top-0 h-full ${HANDLE_W} cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100`}
+          className={`bar-grip absolute left-0 top-0 h-full ${HANDLE_W} cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100`}
           style={{ background: `linear-gradient(90deg, ${color}, transparent)` }}
         />
       )}
@@ -243,7 +275,7 @@ export function EventBar({
           }}
           onMouseDown={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
-          className={`hover-only absolute right-0 top-0 h-full ${HANDLE_W} cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100`}
+          className={`bar-grip absolute right-0 top-0 h-full ${HANDLE_W} cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100`}
           style={{ background: `linear-gradient(270deg, ${color}, transparent)` }}
         />
       )}

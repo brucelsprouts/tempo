@@ -41,9 +41,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} app-vh antialiased`}
     >
-      <body className="h-full overflow-hidden bg-void text-ink">
+      <body className="app-vh overflow-hidden bg-void text-ink">
         {children}
         <ServiceWorkerRegistrar />
       </body>

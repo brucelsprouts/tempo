@@ -702,7 +702,17 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
           long: it takes a line of its own below the buttons rather than
           competing with them for a row that is already spoken for.
         */}
-        <footer className="chrome-tight flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-hair px-3 py-2 sm:px-4">
+        {/* `safe-foot` carries the home-indicator inset, which the shell used to
+            hold — see globals.css. Held there it stopped this bar short of the
+            screen and left the strip underneath it bare, which is the empty band
+            an installed PWA was showing below the buttons.
+
+            `bg-panel` is the other half of that, and the half that makes it
+            visible: the bar was transparent, so even once it reached the bottom
+            edge the inset was still whatever happened to be behind it. It is a
+            surface now, the same one the weekday strip is, so the interface ends
+            at the edge of the screen rather than a short distance above it. */}
+        <footer className="chrome-tight safe-foot flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-hair bg-panel px-3 pt-2 sm:px-4">
           <div className="flex w-full items-center gap-2 sm:hidden">
             <Actions
               isOffline={isOffline}

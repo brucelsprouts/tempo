@@ -243,15 +243,47 @@ body {
     outline-offset: 1px;
   }
 
+  /* The window, whatever the window currently is.
+
+     `height: 100%` resolves against the initial containing block, which is not
+     reliably what an installed PWA is actually showing — a shell an inch short
+     of the window is one of the two ways the bottom of this app went blank.
+     Written without a `100%` fallback underneath it on purpose: Lightning CSS
+     collapses two declarations of one property down to the last, so the fallback
+     never reached the stylesheet, and `dvh` has been in every engine since 2022.
+
+     It cannot thrash the way `dvh` does on a scrolling page. The body is
+     `overflow: hidden` and every scroll in the app happens inside a container,
+     so there is no page scroll to retract a URL bar with — the dynamic viewport
+     here is a constant. */
+  .app-vh {
+    height: 100dvh;
+  }
+
   /* The app shell's own inset. Padding rather than a margin so `h-full` still
      describes the window, and applied at the root so the header, the grid and
      the footer are all inside it at once — there is no arrangement where one of
-     them is under the clock and the others are not. */
+     them is under the clock and the others are not.
+
+     Three sides, not four. The bottom inset belongs to the footer instead — see
+     `.safe-foot`. Held here it padded the *shell*, so the footer's surface and
+     its top hairline stopped short of the screen and the home-indicator strip
+     under them was bare page background: a dead band below the interface, and
+     on a phone whose system bar is not dark, a white one. */
   .safe-shell {
     padding-top: var(--safe-t);
     padding-right: var(--safe-r);
-    padding-bottom: var(--safe-b);
     padding-left: var(--safe-l);
+  }
+
+  /* The bottom inset, carried by the bar that sits on it.
+     The footer's own padding rather than the shell's, so its background and its
+     rule run to the bottom edge of the screen and the buttons are lifted clear
+     of the home indicator by the same declaration. `.chrome-tight` also writes
+     a `padding-bottom` on this element, so the short-screen case restates this
+     one inside that media query rather than relying on which came first. */
+  .safe-foot {
+    padding-bottom: calc(0.5rem + var(--safe-b));
   }
 
   /* Overlays are `fixed`, so they escape `.safe-shell` and have to say it
@@ -291,6 +323,11 @@ body {
     .chrome-tight {
       padding-top: 0.25rem;
       padding-bottom: 0.25rem;
+    }
+    /* Restated rather than left to `.chrome-tight`: the inset is not the app's
+       to tighten, only the padding above it is. */
+    .safe-foot {
+      padding-bottom: calc(0.25rem + var(--safe-b));
     }
   }
 
@@ -336,6 +373,114 @@ body {
   @media (pointer: coarse) {
     .hover-only {
       display: none;
+    }
+  }
+
+  /* ------------------------------------------------------------- event bars
+   *
+   * A bar's problem is its own width, not the window's.
+   *
+   * On a 375px phone the seven columns are 45px each, so a one-day bar is 37px
+   * wide — and it was drawing a 12px title behind a 36px time on one line, which
+   * is why entries read as "ro…" and "ch…". But a five-day bar on that same
+   * phone is 265px and has room to spare, and a one-day bar on a wide desktop
+   * window is 183px. A viewport media query would answer for all three at once
+   * and be wrong about two of them.
+   *
+   * So the bar is its own container and the rules below ask it how much room it
+   * has. Every threshold is against the *content* box — the borders and padding
+   * are already subtracted — so a 37px bar asks with 23px and a two-day bar with
+   * 68px.
+   */
+  .tempo-bar {
+    container-type: inline-size;
+  }
+
+  /* Under ~90px of content there is not room for a time and a title side by
+     side, so the time takes a line of its own above the title and the title
+     gets the full width. The line heights are what keep two lines inside a
+     28px bar: the row geometry is a compile-time constant that the lasso hit
+     test and the scroll arithmetic both read, so this buys legibility out of
+     the leading rather than out of the layout. */
+  @container (max-width: 90px) {
+    /* The padding, borrowed back.
+     *
+     * A one-day bar is 37px and spends 14 of them on two 2px category borders
+     * and 10px of padding — 38% of the bar, on a bar whose whole problem is
+     * width. The borders are the bar's identity and stay; the padding is lent to
+     * the text, which is what the reader came for. A negative margin rather than
+     * less padding on the bar itself: the bar is the query container, and a rule
+     * inside `@container` that resizes its own container's content box is the
+     * one construction that can make the query oscillate. Nothing overflows —
+     * `overflow: hidden` clips at the padding box, which is exactly where the
+     * borrowed room ends.
+     */
+    .bar-body {
+      margin-inline: -3px;
+    }
+    .bar-line {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0;
+    }
+    /* 9px, not 10. `09:00` is five zero-padded characters and has to fit whole —
+     * a clipped time is not a smaller time, it is the wrong time. */
+    .bar-time {
+      font-size: 9px;
+      line-height: 1.1;
+    }
+    .bar-title {
+      line-height: 1.15;
+    }
+    /* A mark has no room to stack into — see `bar-tick` in EventBar. Compounded
+       so it beats `.bar-line` above on specificity rather than on source order. */
+    .bar-line.bar-tick {
+      flex-direction: row;
+      align-items: center;
+      gap: 0.375rem;
+    }
+    .bar-line.bar-tick .bar-time {
+      display: none;
+    }
+    /* A task's second line, same problem. The status glyph and the word DUE are
+       the two things that lose: `[x]` is three characters of a bar that fits
+       about four, and a due date on a bar drawn inside its own day column is
+       being said twice — the column is the date. A finished task still reads as
+       one, by the strike-through and the dimming it already wears. */
+    .bar-meta {
+      font-size: 9px;
+    }
+    .bar-glyph,
+    .bar-due {
+      display: none;
+    }
+  }
+
+  /* Resize, on a screen with no hover to reveal it.
+   *
+   * The handles used to be `.hover-only` — removed outright on touch, because at
+   * 16px a side they would have owned 32 of the 37px a one-day bar gets, leaving
+   * the gesture nobody could see sitting on top of the two that matter. That
+   * reasoning holds for a one-day bar and only for a one-day bar, so the width
+   * is what the rule turns on now rather than the input: a bar with 40px of
+   * content or more is at least 54px wide, which is two 12px grips and still
+   * ~30px of middle to tap. Below that they stay gone and the entry form's date
+   * fields remain the way to restretch a single-day entry.
+   *
+   * `touch-action: none` is what makes the drag work at all. The grid scrolls
+   * vertically under these, and without it the browser claims the gesture as a
+   * scroll the moment the finger drifts off the horizontal. */
+  @media (pointer: coarse) {
+    .bar-grip {
+      display: none;
+    }
+    @container (min-width: 40px) {
+      .bar-grip {
+        display: block;
+        width: 12px;
+        opacity: 0.5;
+        touch-action: none;
+      }
     }
   }
 }
