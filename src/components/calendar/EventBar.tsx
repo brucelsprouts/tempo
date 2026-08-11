@@ -151,11 +151,14 @@ export function EventBar({
       // ahead of anything you would actually want to reach with Tab. Modal's
       // `trapTab` filters on `tabIndex >= 0`, so it needs nothing from this.
       tabIndex={-1}
-      // Also after the spread, and it must forward: this is dnd-kit's only
-      // listener on the bar, so replacing it outright would disable dragging.
-      onPointerDown={(e) => {
+      // Also after the spread. It no longer has to forward anything — dnd-kit's
+      // listeners are `onMouseDown` and `onTouchStart` now, and the spread above
+      // has already attached both — so this is purely the flag reset, and
+      // `pointerdown` is still the right event to hang it on: it precedes both of
+      // them on either input, so the flag is always cleared before the gesture
+      // that might set it.
+      onPointerDown={() => {
         fromHandle.current = false;
-        listeners?.onPointerDown?.(e);
       }}
       onClick={(e) => {
         e.stopPropagation();
@@ -205,14 +208,30 @@ export function EventBar({
       {/* Resize handles. Hidden on a clipped edge — you can only lengthen a bar
           from an end that is actually in this row, which is also what makes the
           cross-week gesture unambiguous: there is exactly one handle per end of
-          an entry, however many rows the entry spans. */}
+          an entry, however many rows the entry spans.
+
+          `hover-only` takes them off touch screens entirely rather than leaving
+          them invisible-but-live. Two reasons, and the second is the deciding
+          one: there is no hover to reveal them by, and at 16px a side they would
+          own 32 of the ~41px a one-day bar gets on a 375px-wide phone — so the
+          gesture nobody could see would be sitting on top of the two that matter.
+          Resize on touch is the date fields in the entry form, which a tap opens.
+
+          `stopPropagation` now has to be said on the mouse and touch events as
+          well as the pointer one. `beginResize` stops `pointerdown`, and that used
+          to be enough because it was also dnd-kit's activator — but `mousedown`
+          and `touchstart` are separate events that bubble on their own, so with
+          the sensors split a mouse on this handle would start a resize and a move
+          at the same time. */}
       {!occ.readOnly && !isOffline && !continuesBefore && (
         <span
           onPointerDown={(e) => {
             fromHandle.current = true;
             onResizeStart(occ, 'start', e);
           }}
-          className={`absolute left-0 top-0 h-full ${HANDLE_W} cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100`}
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          className={`hover-only absolute left-0 top-0 h-full ${HANDLE_W} cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100`}
           style={{ background: `linear-gradient(90deg, ${color}, transparent)` }}
         />
       )}
@@ -222,7 +241,9 @@ export function EventBar({
             fromHandle.current = true;
             onResizeStart(occ, 'end', e);
           }}
-          className={`absolute right-0 top-0 h-full ${HANDLE_W} cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100`}
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          className={`hover-only absolute right-0 top-0 h-full ${HANDLE_W} cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100`}
           style={{ background: `linear-gradient(270deg, ${color}, transparent)` }}
         />
       )}

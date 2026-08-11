@@ -3,7 +3,8 @@
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   pointerWithin,
   useSensor,
   useSensors,
@@ -11,6 +12,7 @@ import {
   type DragOverEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
+import { getEventCoordinates } from '@dnd-kit/utilities';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   useCallback,
@@ -74,6 +76,32 @@ const PAD_AFTER = 24;
 const GESTURE_SLOP = 4;
 
 /**
+ * How long a finger has to stay put before it is moving an entry.
+ *
+ * A mouse can say "drag" with 4px of travel because a mouse has no other use
+ * for the gesture. A finger does: the same downward swipe is how the calendar
+ * is scrolled, and it is by far the more common of the two — so a distance
+ * constraint on touch meant every attempt to scroll from a bar picked the bar up
+ * instead, and every attempt to drag a bar was read as a scroll and cancelled
+ * partway. That ambiguity is why entries were not movable on a phone: not a
+ * missing handler, two gestures competing for one signal.
+ *
+ * Time is what separates them, and dnd-kit's delay constraint is what makes it
+ * safe: below the delay nothing is preventDefault-ed, so a swipe scrolls
+ * normally and `tolerance` cancels the pending drag outright; once the delay
+ * elapses with the finger still inside `tolerance`, every subsequent touchmove
+ * is preventDefault-ed and the scroll never starts. So the two gestures are
+ * decided before either has visibly begun, and neither can half-happen.
+ *
+ * 220ms is under the ~500ms iOS would take to raise its own callout — which is
+ * suppressed in CSS anyway — and long enough that a flick started on a bar is
+ * still a scroll. 8px of tolerance rather than the mouse's 4: a thumb resting
+ * still is not still.
+ */
+const TOUCH_HOLD_MS = 220;
+const TOUCH_HOLD_TOLERANCE = 8;
+
+/**
  * Edge autoscroll, for the two gestures dnd-kit does not run.
  *
  * Without it, "extend this into a week three rows down" still means dragging
@@ -100,6 +128,10 @@ const EMPTY_GHOSTS: readonly GhostBand[] = [];
  * The whole hit stack is inspected because a day cell sits *behind* the bars.
  */
 function dateUnderPointer(clientX: number, clientY: number): CivilDate | null {
+  // `elementsFromPoint` throws on a non-finite double rather than missing, and
+  // every caller here is handing it a coordinate read off an event — so the one
+  // place that can turn a malformed press into a thrown exception guards instead.
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
   const hit = document
     .elementsFromPoint(clientX, clientY)
     .find((el) => el.hasAttribute('data-date'));
@@ -459,8 +491,21 @@ export function ContinuousCalendar({
     [selection, selected],
   );
 
+  /**
+   * Two sensors rather than one, because the two inputs need opposite
+   * activations — see `TOUCH_HOLD_MS`. `PointerSensor` could only ever have had
+   * one constraint for both, and the one it had was the mouse's.
+   *
+   * They cannot both fire for the same gesture: `MouseSensor` activates on
+   * `mousedown` and `TouchSensor` on `touchstart`, and a touch that also emits a
+   * compatibility `mousedown` does so only after `touchend` — by which point the
+   * drag it would start has already been completed or cancelled by the other.
+   */
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: GESTURE_SLOP } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: GESTURE_SLOP } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: TOUCH_HOLD_MS, tolerance: TOUCH_HOLD_TOLERANCE },
+    }),
   );
 
   // ------------------------------------------------------------------ moving
@@ -468,9 +513,24 @@ export function ContinuousCalendar({
   function handleDragStart(e: DragStartEvent) {
     const occ = e.active.data.current?.occurrence as Occurrence | undefined;
     if (!occ) return;
-    const pressed = e.activatorEvent as PointerEvent;
+    /**
+     * The activator event is whatever the sensor that won was listening for, and
+     * the two do not agree about where they happened: a `MouseEvent` carries
+     * `clientX`/`clientY` on itself, while a `TouchEvent` carries them one level
+     * down, on `changedTouches[0]`. This was cast to `PointerEvent` and read
+     * directly, which was true of the only sensor there used to be and became a
+     * crash the moment a touch could start a drag — `undefined` coordinates reach
+     * `elementsFromPoint`, which rejects a non-finite double and throws. The drag
+     * activated and then died here, so a phone showed a bar that lifted and
+     * instantly forgot it had been picked up.
+     *
+     * `getEventCoordinates` is dnd-kit's own normaliser — the same one the sensors
+     * use to seed `initialCoordinates` — so this reads the press exactly as
+     * whichever sensor started it did.
+     */
+    const at = getEventCoordinates(e.activatorEvent);
     // Which day of a multi-day bar was actually grabbed.
-    const grab = dateUnderPointer(pressed.clientX, pressed.clientY) ?? occ.date;
+    const grab = (at && dateUnderPointer(at.x, at.y)) ?? occ.date;
     setDrag({ occ, grab });
   }
 
@@ -575,6 +635,23 @@ export function ContinuousCalendar({
 
   function handleGridPointerDown(e: React.PointerEvent) {
     if (e.button !== 0 || gesture) return;
+
+    /**
+     * A drag across the grid is only a lasso when it was made with a pointer.
+     *
+     * On touch the identical gesture — press on empty grid, move — is how the
+     * calendar is scrolled, and it is not negotiable the way the bar drag was:
+     * there is no press-and-hold variant of "scroll", so there is nothing to
+     * separate the two with. The lasso lost, because a marquee is a
+     * multi-select for keyboard chords that a phone has none of, whereas
+     * scrolling is the one thing the view is for.
+     *
+     * This was also visible rather than merely dormant: the gesture never
+     * preventDefault-ed, so a touch swipe scrolled *and* dragged a selection
+     * rectangle over the rows it passed, arriving at the bottom with a dozen
+     * entries lit that nobody had chosen.
+     */
+    if (e.pointerType !== 'mouse') return;
 
     const target = e.target as HTMLElement;
     // The hover `+`, the "+N" chip — anything with its own answer to a click.
@@ -926,7 +1003,7 @@ export function ContinuousCalendar({
         <div
           ref={scrollRef}
           onPointerDown={handleGridPointerDown}
-          className="relative flex-1 overflow-y-auto overflow-x-hidden"
+          className="relative flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"
         >
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {items.map((item) => {

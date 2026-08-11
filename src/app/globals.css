@@ -77,6 +77,59 @@ body {
 }
 
 /**
+ * What a finger must not be allowed to do.
+ *
+ * Three separate iOS behaviours, all of which fire on a press the app already
+ * has its own meaning for. The grey flash is WebKit guessing that a tap is a
+ * link activation; the callout is the share/copy bubble a long press raises;
+ * and the selection is the one the user reported — a long press on a bar, which
+ * is now how a drag *starts*, was being answered by highlighting the bar's
+ * title and putting selection handles on either side of it.
+ *
+ * The first two are unconditional because they only exist on touch at all. The
+ * selection lock is behind `pointer: coarse` deliberately: on a desktop the
+ * grid is genuinely selectable text and ⌘C reads `window.getSelection()` to
+ * decide whether it is copying a title or copying entries, so a blanket rule
+ * here would quietly delete a real feature to fix a problem that platform does
+ * not have.
+ */
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+@media (pointer: coarse) {
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  /* A value that cannot be selected cannot be corrected — fields opt back in,
+     and they are the only place typed text lives. */
+  input,
+  textarea,
+  select,
+  [contenteditable] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
+/**
+ * An installed PWA has no browser chrome to rubber-band against.
+ *
+ * Overscrolling the grid in a tab bounces Safari's own viewport, which looks
+ * like the page. Standalone there is nothing behind the app but black, so the
+ * same gesture drags the entire interface down off the top of the screen and
+ * holds it there for the length of the animation. `none` on the body stops the
+ * chain at the root; the scroll containers inside say `overscroll-contain`
+ * themselves so a flick that reaches the end of the calendar does not hand the
+ * remainder of its momentum up to this element.
+ */
+body {
+  overscroll-behavior: none;
+}
+
+/**
  * Scrollbars are hidden, not styled.
  *
  * They used to be thin instrument-panel rails, on the theory that a scroll
@@ -262,6 +315,27 @@ body {
   @media (pointer: coarse) and (max-height: 500px) {
     .tap {
       min-height: 32px;
+    }
+  }
+
+  /* A control whose only affordance is hover.
+
+     The grid is full of these — the day cell's `+`, the two resize handles on
+     every bar — and they are all built the same way: `opacity-0` lifted by
+     `group-hover`. On a touch screen there is no hover state to lift them, so
+     they are not subtle, they are absent: invisible, and yet still holding the
+     pixels a real gesture wants. The `+` sits over the top-right corner of every
+     day, and the handles own 16px of each end of a bar, which on a 45px phone
+     column is most of it.
+
+     So they are removed on coarse pointers rather than left hidden, and the
+     gestures they carried are re-homed onto things a finger can find: a tap on
+     an empty day opens that day, and resize is the date fields in the entry
+     form. What is left on the bar itself is one target with one meaning — tap to
+     open, press and hold to move. */
+  @media (pointer: coarse) {
+    .hover-only {
+      display: none;
     }
   }
 }

@@ -135,6 +135,25 @@ function yearsFrom(first: number, last: number, include?: number): number[] {
  */
 export const UNTITLED = 'UNTITLED';
 
+/**
+ * Whether the thing pointing at the app is a finger.
+ *
+ * Asked at the moment of the gesture rather than subscribed to, which is what
+ * keeps it free: the grid draws dozens of day cells per screen, and a
+ * `matchMedia` listener per cell would be dozens of subscriptions to answer a
+ * question only a tap ever asks. Reading it live also means an iPad that has
+ * just had a trackpad attached gets the right answer on the next tap instead of
+ * on the next mount.
+ *
+ * Everything that can be settled in CSS is — `.tap`, `.hover-only` and the
+ * selection lock are all media queries. This exists for the cases where the
+ * *behaviour* differs rather than the styling, and a media query cannot rebind a
+ * handler.
+ */
+export function isCoarsePointer(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+}
+
 export const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'] as const;
 
 export const MONTHS = [

@@ -16,7 +16,15 @@ import {
 import { DAYS_PER_WEEK, KIND_HEIGHT, LANE_GAP, type WeekLayout } from '@/lib/tempo/layout';
 import type { Occurrence } from '@/lib/tempo/types';
 import { EventBar } from './EventBar';
-import { DAY_HEADER_H, GUTTER_W, LANE_BUDGET, MONTHS, ROW_H, UNTITLED } from './constants';
+import {
+  DAY_HEADER_H,
+  GUTTER_W,
+  isCoarsePointer,
+  LANE_BUDGET,
+  MONTHS,
+  ROW_H,
+  UNTITLED,
+} from './constants';
 
 /**
  * A footprint in a row that no entry occupies yet.
@@ -87,6 +95,22 @@ function DayCell({
       ref={setNodeRef}
       data-date={date}
       onDoubleClick={() => onDayOpen(date)}
+      /**
+       * One tap opens the day, but only for a finger.
+       *
+       * A double-click is the desktop gesture because a single click on empty
+       * grid is already spoken for there: it is what drops the lasso selection.
+       * Neither of those exists on touch — the lasso is pointer-only now, and a
+       * reliable double-*tap* is not a thing to ask of anyone — so on a phone the
+       * press does the obvious thing instead of nothing.
+       *
+       * This is also the day cell's replacement for the hover `+`, which
+       * `hover-only` removes below: the day modal is where an entry gets added to
+       * a particular date now, and one tap is how it is reached.
+       */
+      onClick={() => {
+        if (isCoarsePointer()) onDayOpen(date);
+      }}
       className={[
         // Unselectable, because a drag across the grid is a lasso: without this
         // the browser would answer the same gesture by highlighting the day
@@ -146,7 +170,7 @@ function DayCell({
           onDoubleClick={(e) => e.stopPropagation()}
           title="New entry"
           aria-label={`New entry on ${date}`}
-          className="ml-auto flex h-[17px] w-[17px] shrink-0 self-center items-center justify-center border border-hair bg-panel text-[12px] leading-none text-mute opacity-0 transition-opacity hover:border-hairlit hover:text-bright focus-visible:opacity-100 group-hover/day:opacity-100"
+          className="hover-only ml-auto flex h-[17px] w-[17px] shrink-0 self-center items-center justify-center border border-hair bg-panel text-[12px] leading-none text-mute opacity-0 transition-opacity hover:border-hairlit hover:text-bright focus-visible:opacity-100 group-hover/day:opacity-100"
         >
           +
         </button>

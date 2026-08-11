@@ -70,6 +70,54 @@ interface Props {
   banner?: string;
 }
 
+/**
+ * The three doors out of the calendar, in whichever bar is holding them.
+ *
+ * Written once and rendered twice — the header at `sm` and up, the footer below
+ * it — because they are the same three buttons and the responsive move is about
+ * *where* they sit, not what they are. Two copies of the markup is how the
+ * disabled-while-offline rule ends up applying on one screen size and not the
+ * other.
+ *
+ * `flex-1` unconditionally: in the footer it splits the phone's row three ways,
+ * and in the header the parent is an intrinsically-sized flex row, so there is no
+ * free space for it to divide and each button falls back to its label width.
+ */
+function Actions({
+  isOffline,
+  onNew,
+  onHistory,
+  onSettings,
+}: {
+  isOffline: boolean;
+  onNew: () => void;
+  onHistory: () => void;
+  onSettings: () => void;
+}) {
+  const base = 'tap label flex-1 border border-hair px-2.5 py-1.5 transition-colors';
+  const lit = 'hover:border-hairlit hover:text-ink';
+  return (
+    <>
+      <button
+        onClick={onNew}
+        disabled={isOffline}
+        className={`${base} ${isOffline ? 'cursor-default opacity-50' : lit}`}
+      >
+        + NEW
+      </button>
+      {/* Beside SETTINGS rather than inside it. The recovery pool lived in
+          settings once and was not found, which is the whole reason this has a
+          door of its own. */}
+      <button onClick={onHistory} className={`${base} ${lit}`}>
+        HISTORY
+      </button>
+      <button onClick={onSettings} className={`${base} ${lit}`}>
+        SETTINGS
+      </button>
+    </>
+  );
+}
+
 export function CalendarShell({ email, onSignOut, banner }: Props) {
   const status = useCalendar((s) => s.status);
   const error = useCalendar((s) => s.error);
@@ -505,18 +553,23 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
         </div>
       )}
       {/*
-        Two rows on a phone, one everywhere else.
+        One row, on every screen.
 
-        The row is brand · views · actions, and on a 393px screen those three
-        want about 480px between them — so the last group in the row was simply
-        off the edge, and SETTINGS was the last button in it. Wrapping is what
-        puts it back on screen; `w-full` below `sm` is what makes the wrap
-        deterministic rather than a thing that depends on how wide a font
-        happened to render, and the three buttons split that row evenly because
-        a row of its own is the one place they can afford to be thumb-sized.
+        It was two on a phone, because brand · views · actions want about 480px
+        and a phone has 375 — so the actions wrapped onto a line of their own.
+        That worked, and cost more than it looks: 101px of a 812px screen went to
+        the top bar, the wrapped row put the three things you press furthest from
+        the thumb, and it left ~98px of dead space beside the view nav on the
+        first line. Meanwhile the footer was a full bar holding two 10px labels,
+        and in the installed PWA it also carries the home-indicator inset — so the
+        most reachable strip on the screen was the emptiest.
+
+        So the actions move down there instead of wrapping. The header keeps
+        brand · views and fits in one row at 375px; the footer gets the three
+        buttons at thumb height, sitting on padding it was reserving anyway.
       */}
-      <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-hair px-3 py-2 sm:px-4">
-        <div className="flex items-center gap-2">
+      <header className="flex shrink-0 items-center gap-3 border-b border-hair px-3 py-2 sm:px-4">
+        <div className="flex shrink-0 items-center gap-2">
           <svg viewBox="0 0 64 64" className="h-4 w-4 shrink-0" aria-hidden="true">
             <defs>
               <clipPath id="tile">
@@ -536,14 +589,19 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
         </div>
         <span className="hidden text-hair sm:inline">│</span>
 
-        <nav className="flex border border-hair" aria-label="View">
+        {/* Takes the row's slack on a phone so the three views split it evenly
+            and the nav ends where the padding does — it used to be intrinsically
+            sized, which left it stranded mid-row with ~98px of nothing after it.
+            At `sm` it goes back to hugging its labels, because there the actions
+            are in this row and want the rest. */}
+        <nav className="flex min-w-0 flex-1 border border-hair sm:flex-none" aria-label="View">
           {VIEWS.map((v) => (
             <button
               key={v.value}
               onClick={() => setViewPreference(v.value)}
               aria-current={view === v.value}
               className={[
-                'tap flex items-center gap-1.5 px-2.5 py-1 text-[10px] tracking-[0.12em] transition-colors',
+                'tap flex flex-1 items-center justify-center gap-1.5 px-2.5 py-1 text-[10px] tracking-[0.12em] transition-colors sm:flex-none sm:justify-start',
                 view === v.value
                   ? 'bg-raised text-bright'
                   : 'text-mute hover:bg-sunken hover:text-dim',
@@ -559,31 +617,27 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
 
         {banner && <span className="label ml-1 hidden lg:inline">{banner}</span>}
 
-        <div className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto">
-          <button
-            onClick={() => newEntry()}
-            disabled={isOffline}
-            className={`tap label flex-1 border border-hair px-2.5 py-1.5 transition-colors sm:flex-none ${
-              isOffline ? 'opacity-50 cursor-default' : 'hover:border-hairlit hover:text-ink'
-            }`}
-          >
-            + NEW
-          </button>
-          {/* Beside SETTINGS rather than inside it. The recovery pool lived in
-              settings once and was not found, which is the whole reason this
-              has a door of its own. */}
-          <button
-            onClick={() => push({ kind: 'history' })}
-            className="tap label flex-1 border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink sm:flex-none"
-          >
-            HISTORY
-          </button>
-          <button
-            onClick={() => push({ kind: 'settings' })}
-            className="tap label flex-1 border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink sm:flex-none"
-          >
-            SETTINGS
-          </button>
+        {/* The status word, on the phone only and only when it is not the
+            expected one. It lives in the footer at `sm` and up, which is where
+            the count stays; here there is one row to spend and a steady ONLINE
+            is not worth a slot in it, whereas SYNCING and ERROR are the two
+            states you would want to know about without going looking. OFFLINE has
+            the banner above and is left out rather than said twice. */}
+        {(status === 'loading' || status === 'error') && !isOffline && (
+          <span className="label shrink-0 sm:hidden">
+            {status === 'loading' ? 'SYNCING' : 'ERROR'}
+          </span>
+        )}
+
+        {/* Desktop keeps the actions in the top bar; the phone's copy is in the
+            footer, within reach of a thumb. */}
+        <div className="ml-auto hidden shrink-0 items-center gap-2 sm:flex">
+          <Actions
+            isOffline={isOffline}
+            onNew={() => newEntry()}
+            onHistory={() => push({ kind: 'history' })}
+            onSettings={() => push({ kind: 'settings' })}
+          />
         </div>
       </header>
 
@@ -635,14 +689,42 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
           />
         )}
 
-        <footer className="chrome-tight flex items-center gap-4 border-t border-hair px-3 py-2 sm:px-4">
-          <span className="label">
+        {/*
+          The bar that was empty.
+
+          It held two 10px labels and, in the installed PWA, the home-indicator
+          inset underneath them — so the strip a thumb reaches without moving the
+          hand was the one carrying the least. It now carries the three actions on
+          a phone, and goes back to being a status line at `sm`, where the actions
+          are in the header and a mouse does not care how far it travels.
+
+          `flex-wrap` is for the error, which is the one thing here that can be
+          long: it takes a line of its own below the buttons rather than
+          competing with them for a row that is already spoken for.
+        */}
+        <footer className="chrome-tight flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-hair px-3 py-2 sm:px-4">
+          <div className="flex w-full items-center gap-2 sm:hidden">
+            <Actions
+              isOffline={isOffline}
+              onNew={() => newEntry()}
+              onHistory={() => push({ kind: 'history' })}
+              onSettings={() => push({ kind: 'settings' })}
+            />
+          </div>
+
+          {/* Both hidden on a phone: the header says the status when it is worth
+              saying, and a live count of entries is something to glance at on a
+              desk rather than to spend a row of a 375px screen on. */}
+          <span className="label hidden sm:inline">
             {isOffline ? 'OFFLINE' : (status === 'loading' ? 'SYNCING' : status === 'error' ? 'ERROR' : 'ONLINE')}
           </span>
-          <span className="label">{eventCount} ENTRIES</span>
+          <span className="label hidden sm:inline">{eventCount} ENTRIES</span>
 
           {error && (
-            <button onClick={dismissError} className="label ml-auto text-dim hover:text-ink">
+            <button
+              onClick={dismissError}
+              className="label w-full text-left text-dim hover:text-ink sm:ml-auto sm:w-auto sm:text-right"
+            >
               ! {error.slice(0, 60).toUpperCase()} — DISMISS
             </button>
           )}
