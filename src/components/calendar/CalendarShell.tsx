@@ -704,15 +704,16 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
         */}
         {/* `safe-foot` carries the home-indicator inset, which the shell used to
             hold — see globals.css. Held there it stopped this bar short of the
-            screen and left the strip underneath it bare, which is the empty band
-            an installed PWA was showing below the buttons.
+            screen and left the strip underneath it outside the footer entirely.
 
-            `bg-panel` is the other half of that, and the half that makes it
-            visible: the bar was transparent, so even once it reached the bottom
-            edge the inset was still whatever happened to be behind it. It is a
-            surface now, the same one the weekday strip is, so the interface ends
-            at the edge of the screen rather than a short distance above it. */}
-        <footer className="chrome-tight safe-foot flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-hair bg-panel px-3 pt-2 sm:px-4">
+            Deliberately no background. It had `bg-panel` briefly, on the theory
+            that the inset should read as the app's own surface rather than as
+            whatever was behind it — which was exactly backwards. `--panel` is a
+            step *lighter* than `--void`, so it drew the one strip we most want
+            to disappear as a distinct block sitting under the buttons. Left
+            transparent it is the same near-black as the grid above it, and the
+            bottom of the screen reads as one continuous surface. */}
+        <footer className="chrome-tight safe-foot flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-hair px-3 pt-2 sm:px-4">
           <div className="flex w-full items-center gap-2 sm:hidden">
             <Actions
               isOffline={isOffline}

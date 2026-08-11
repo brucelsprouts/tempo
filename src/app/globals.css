@@ -66,6 +66,27 @@ html {
   --safe-r: env(safe-area-inset-right, 0px);
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-l: env(safe-area-inset-left, 0px);
+
+  /**
+   * The bottom inset, believed only as far as it is plausible.
+   *
+   * The other three are taken at face value because the things they describe
+   * are physical: a notch is as tall as it is, and a value we clamp is a value
+   * that puts the interface under a camera. The bottom is different — the only
+   * thing that lives there is the home indicator, and 34px is the tallest it
+   * gets on any device Apple ships.
+   *
+   * A larger figure than that is not a home indicator, it is a *toolbar* being
+   * reserved: a web view that has been laid out with room for browser chrome it
+   * then does not draw, which is what an install from a third-party iOS browser
+   * can produce. Honoured literally, that turns into a strip of empty interface
+   * the height of a button row, sitting where the calendar should be. So the
+   * cap is the app declining to reserve space for something that is not there.
+   *
+   * Used for the app's own padding. `--safe-b` stays uncapped for anything that
+   * needs the raw figure.
+   */
+  --safe-b-capped: min(var(--safe-b), 34px);
 }
 
 body {
@@ -281,9 +302,14 @@ body {
      rule run to the bottom edge of the screen and the buttons are lifted clear
      of the home indicator by the same declaration. `.chrome-tight` also writes
      a `padding-bottom` on this element, so the short-screen case restates this
-     one inside that media query rather than relying on which came first. */
+     one inside that media query rather than relying on which came first.
+
+     `max`, not `calc`. Added to the bar's own 8px it reserved 42px on a phone
+     that needed 34 — the inset is the clearance, not something to clear *and
+     then* pad past. The 8px is the floor for a device with no indicator at
+     all. */
   .safe-foot {
-    padding-bottom: calc(0.5rem + var(--safe-b));
+    padding-bottom: max(0.5rem, var(--safe-b-capped));
   }
 
   /* Overlays are `fixed`, so they escape `.safe-shell` and have to say it
@@ -295,14 +321,14 @@ body {
   .safe-frame {
     padding-top: max(0.75rem, var(--safe-t));
     padding-right: max(0.75rem, var(--safe-r));
-    padding-bottom: max(0.75rem, var(--safe-b));
+    padding-bottom: max(0.75rem, var(--safe-b-capped));
     padding-left: max(0.75rem, var(--safe-l));
   }
   @media (min-width: 640px) {
     .safe-frame {
       padding-top: max(7vh, var(--safe-t));
       padding-right: max(1.5rem, var(--safe-r));
-      padding-bottom: max(7vh, var(--safe-b));
+      padding-bottom: max(7vh, var(--safe-b-capped));
       padding-left: max(1.5rem, var(--safe-l));
     }
   }
@@ -327,7 +353,7 @@ body {
     /* Restated rather than left to `.chrome-tight`: the inset is not the app's
        to tighten, only the padding above it is. */
     .safe-foot {
-      padding-bottom: calc(0.25rem + var(--safe-b));
+      padding-bottom: max(0.25rem, var(--safe-b-capped));
     }
   }
 
