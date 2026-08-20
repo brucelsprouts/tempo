@@ -11,6 +11,7 @@ import {
 } from '@/lib/store/view-preference';
 import { parts, todayIn, type CivilDate } from '@/lib/tempo/civil';
 import type { Occurrence } from '@/lib/tempo/types';
+import { MONTHS } from './constants';
 import { ContinuousCalendar, type CalendarHandle } from './ContinuousCalendar';
 import { DayModal } from './DayModal';
 import { EventForm, type DraftPreview, type EntryFormHandle } from './EventForm';
@@ -85,11 +86,20 @@ interface Props {
  */
 function Actions({
   isOffline,
+  target,
   onNew,
   onHistory,
   onSettings,
 }: {
   isOffline: boolean;
+  /**
+   * Where a new entry would land, said out loud. Only the footer copy passes it
+   * — that is the one a thumb uses, and on a phone the day is chosen by tapping
+   * the grid rather than by hovering it, so the button is the only thing that
+   * can confirm the tap was heard. On a desktop the pointer is already sitting
+   * on the answer.
+   */
+  target?: string;
   onNew: () => void;
   onHistory: () => void;
   onSettings: () => void;
@@ -103,7 +113,16 @@ function Actions({
         disabled={isOffline}
         className={`${base} ${isOffline ? 'cursor-default opacity-50' : lit}`}
       >
-        + NEW
+        <span className="block leading-none">+ NEW</span>
+        {/* Two lines rather than "+ NEW · 23 AUG" on one: three buttons split a
+            375px row into 111px each, and one line of that length overflows a
+            320px screen outright. Stacked, the widest thing in the button is six
+            characters and it fits inside the 38px the tap floor already reserves. */}
+        {target && (
+          <span className="mt-[3px] block text-[9px] leading-none tracking-[0.08em] text-mute">
+            {target}
+          </span>
+        )}
       </button>
       {/* Beside SETTINGS rather than inside it. The recovery pool lived in
           settings once and was not found, which is the whole reason this has a
@@ -184,6 +203,27 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
     setFocusedDay(date);
     push({ kind: 'day', date });
   }
+
+  /**
+   * A day chosen without opening it.
+   *
+   * Stable, because `WeekRow` is memoised on its props and this one is handed to
+   * every cell in every mounted row — a fresh arrow per render would re-render
+   * eight rows' worth of day cells on every keystroke in the entry form.
+   */
+  const pickDay = useCallback((date: CivilDate) => setFocusedDay(date), []);
+
+  /**
+   * Where `+ NEW` will put an entry, in six characters.
+   *
+   * Today is named rather than dated. It is the value the app starts on and the
+   * one people are on most of the time, and `19 AUG` on its own does not tell
+   * you whether that is the default or something you chose.
+   */
+  const newTarget =
+    focusedDay === today
+      ? 'TODAY'
+      : `${String(parts(focusedDay).day).padStart(2, '0')} ${MONTHS[parts(focusedDay).month - 1]}`;
 
   function goToday() {
     setFocusedDay(today);
@@ -545,6 +585,36 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
     return () => window.removeEventListener('keydown', listener);
   }, []);
 
+  /**
+   * The Home Screen icon's own "New entry", which is a launch URL.
+   *
+   * A manifest shortcut can only ask for a *page*, so the app's second entry
+   * point has to be a query parameter the shell answers on arrival. It is
+   * stripped immediately: left in the address bar it would re-open the form on
+   * every reload, and in a standalone window there is no address bar to see it
+   * in and no obvious way to get rid of it.
+   *
+   * Once, on the launch that carried it. `newEntry` reads `focusedDay`, which is
+   * today on a cold start — which is what "new entry" from a Home Screen icon
+   * means.
+   *
+   * An effect rather than a lazy `useState` initialiser, and the lint rule about
+   * setting state in one is suppressed rather than worked around: this page is
+   * server-rendered, so an initialiser that read `location` would open the modal
+   * on the client and not in the HTML, which is a hydration mismatch. The
+   * cascade the rule is guarding against is one extra render on one launch in a
+   * hundred.
+   */
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('new')) return;
+    url.searchParams.delete('new');
+    window.history.replaceState(null, '', `${url.pathname}${url.search}`);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    newEntry();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="safe-shell flex h-full flex-col">
       {isOffline && cachedAt && (
@@ -650,6 +720,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
             onOpenOccurrence={(occ) => push({ kind: 'entry', mode: 'edit', occurrence: occ })}
             onOpenDay={openDay}
             onNewOnDay={(date) => newEntry({ start: date })}
+            onPickDay={pickDay}
             selectedDay={focusedDay}
             draft={liveDraft}
           />
@@ -714,9 +785,10 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
             transparent it is the same near-black as the grid above it, and the
             bottom of the screen reads as one continuous surface. */}
         <footer className="chrome-tight safe-foot flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-hair px-3 pt-2 sm:px-4">
-          <div className="flex w-full items-center gap-2 sm:hidden">
+          <div className="flex w-full items-stretch gap-2 sm:hidden">
             <Actions
               isOffline={isOffline}
+              target={newTarget}
               onNew={() => newEntry()}
               onHistory={() => push({ kind: 'history' })}
               onSettings={() => push({ kind: 'settings' })}

@@ -376,21 +376,49 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-hair px-4 py-2.5">
+        {/*
+          Two rows on a phone, and `order` is what decides which two.
+
+          Everything here fits on one line at 640px and none of it does at 375,
+          so the bar wraps — and wrapping in DOM order put the filter and the
+          four-cell GROUP control on the same line, which left the field 68px
+          wide: a search box that shows four characters of what you typed. The
+          orders pair the filter with + NEW instead, since + NEW is the narrowest
+          thing here and the filter is the one control that actually wants the
+          width. GROUP and the count take the second line between them.
+
+          Above `sm` the orders revert and + NEW goes back to the far right.
+        */}
         <input
           ref={searchRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="FILTER…  [/]"
-          className={`${inputClass} w-[220px] py-1.5`}
+          placeholder="FILTER…"
+          // `basis-[180px]` rather than `flex-1` alone. A flex item with a zero
+          // basis contributes nothing to the line it is being fitted onto, so
+          // the field never caused a wrap — it just shrank, and everything else
+          // packed in beside it. The basis is what makes the GROUP control move
+          // to a line of its own; `flex-1` is what then lets the field take the
+          // room + NEW leaves on this one.
+          className={`${inputClass} order-1 min-w-0 flex-1 basis-[180px] py-1.5 sm:w-[220px] sm:flex-none sm:basis-auto`}
           aria-label="Filter entries"
         />
 
-        <div className="flex items-center gap-2">
-          <span className="label">GROUP</span>
+        <button
+          onClick={onNew}
+          className="tap label order-2 shrink-0 border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink sm:order-5 sm:ml-auto"
+        >
+          + NEW<span className="key-hint"> [A]</span>
+        </button>
+
+        <div className="order-3 flex items-center gap-2">
+          {/* The caption is 50px of a 343px line to name a control whose four
+              cells already say what it does. */}
+          <span className="label hidden sm:inline">GROUP</span>
           <SegmentedControl value={group} options={GROUPS} onChange={setGroup} grow={false} />
         </div>
 
-        <span className="label">
+        <span className="label order-4">
           {filtered.length} / {rows.length} ENTRIES
         </span>
 
@@ -399,22 +427,92 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
         {selectedRows.length > 0 && (
           <button
             onClick={clear}
-            className="label border border-hairlit px-2 py-1 text-dim transition-colors hover:text-ink"
+            className="label order-4 border border-hairlit px-2 py-1 text-dim transition-colors hover:text-ink"
           >
             {selectedRows.length} SELECTED · CLEAR [ESC]
           </button>
         )}
-
-        <button
-          onClick={onNew}
-          className="label ml-auto border border-hair px-2.5 py-1.5 transition-colors hover:border-hairlit hover:text-ink"
-        >
-          + NEW [A]
-        </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="w-full min-w-[860px] border-collapse text-[11px]">
+        {/*
+          The table, and below `sm` a list of the same rows.
+
+          Eight columns need 860px, so on a 375px screen the table was a
+          sideways scroll under a sticky header: the title column visible, the
+          date it happens on two swipes to the right, and the sort controls that
+          are the point of the view off the end of both. A phone cannot be given
+          a spreadsheet, so it is given the three facts the columns exist to
+          carry — what it is, when it is next, and what kind of thing it is —
+          stacked, at a tappable height.
+
+          The checkboxes do not come with it. Everything a selection is *for*
+          here is a keyboard chord — copy, duplicate, paste — so on a phone they
+          would be a column of controls whose only outcome is a count.
+        */}
+        <ul className="sm:hidden">
+          {sections.map((section) => (
+            <Fragment key={section.label ?? '·'}>
+              {section.label && (
+                <li className="border-y border-hair bg-sunken px-4 py-1.5">
+                  <span className="label text-dim">{section.label}</span>
+                  <span className="label ml-2">{section.rows.length}</span>
+                </li>
+              )}
+
+              {section.rows.map((r) => (
+                <li key={r.event.id} className="border-b border-hair">
+                  <button
+                    type="button"
+                    onClick={() => r.occ && onOpen(r.occ)}
+                    className="tap flex w-full items-start gap-2.5 px-4 py-2.5 text-left transition-colors active:bg-raised"
+                  >
+                    <span
+                      className="mt-[3px] h-3 w-[2px] shrink-0"
+                      style={{ background: r.color }}
+                      aria-hidden
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span
+                        className={`block truncate text-[12px] leading-tight ${
+                          r.event.status === 'done' ? 'text-mute line-through' : 'text-ink'
+                        }`}
+                      >
+                        {r.event.title}
+                      </span>
+                      {/* One line of metadata, in the order it gets read: when,
+                          then what. `flex-wrap` because a repeating task with a
+                          status has four things to say and a 343px row fits
+                          three of them. */}
+                      <span className="label mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                        <span className="tabular-nums text-dim">
+                          {r.next ? `${shortDate(r.next)} · ${relative(r.next, today)}` : 'PAST'}
+                        </span>
+                        <span>{KIND_LABEL[r.event.kind] ?? r.event.kind}</span>
+                        {r.repeat !== 'ONCE' && <span>{r.repeat}</span>}
+                        {r.event.status && (
+                          <span>
+                            {STATUS_GLYPH[r.event.status]} {r.event.status.toUpperCase()}
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </Fragment>
+          ))}
+
+          {filtered.length === 0 && (
+            <li className="px-4 py-16 text-center">
+              <span className="label">
+                {rows.length === 0 ? 'NO ENTRIES YET' : 'NOTHING MATCHES'}
+              </span>
+            </li>
+          )}
+        </ul>
+
+        <table className="hidden w-full min-w-[860px] border-collapse text-[11px] sm:table">
           <thead className="sticky top-0 z-10 bg-panel">
             <tr className="border-b border-hairlit">
               <th className="w-[44px] px-3 py-2 text-left font-normal">

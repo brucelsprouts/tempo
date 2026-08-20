@@ -231,6 +231,12 @@ interface Props {
   onOpenOccurrence: (occ: Occurrence) => void;
   onOpenDay: (date: CivilDate) => void;
   onNewOnDay: (date: CivilDate) => void;
+  /**
+   * A day chosen without opening it — the touch gesture, and the thing `+ NEW`
+   * then lands on. Separate from `onOpenDay` because picking is now the cheap
+   * half of what a tap used to do.
+   */
+  onPickDay: (date: CivilDate) => void;
   selectedDay: CivilDate | null;
   /**
    * The entry being written in the form, drawn where it will land and reading
@@ -245,6 +251,7 @@ export function ContinuousCalendar({
   onOpenOccurrence,
   onOpenDay,
   onNewOnDay,
+  onPickDay,
   selectedDay,
   draft,
   ref,
@@ -1029,6 +1036,7 @@ export function ContinuousCalendar({
                     onResizeStart={beginResize}
                     onDayOpen={onOpenDay}
                     onDayNew={onNewOnDay}
+                    onDayPick={onPickDay}
                     selectedDay={selectedDay}
                   />
                 </div>

@@ -145,7 +145,17 @@ export function YearView({ year, onYear, onOpenDay, selectedDay }: Props) {
       <div data-year-months className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         <div
           key={year}
-          className="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-x-5 gap-y-6"
+          /*
+            Two months across on a phone, twelve tracks of 210px above `sm`.
+
+            `auto-fill` alone resolved to a single column at 343px, which turned
+            the one view whose entire job is "what shape did this year have" into
+            a 2100px vertical scroll showing a month and a half at a time — the
+            continuous grid does that better and is one tap away. Two columns put
+            six months on screen. A month needs 7 columns of about 17px to draw a
+            day number and its dots, and half of 343 gives 23.
+          */
+          className="grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-[repeat(auto-fill,minmax(210px,1fr))] sm:gap-x-5 sm:gap-y-6"
           style={yearChanged ? { animation: 'yearFade 200ms ease-out' } : undefined}
         >
           {Array.from({ length: 12 }, (_, m) => (
@@ -180,7 +190,7 @@ function YearStep({
       onClick={onClick}
       title={title}
       aria-label={title}
-      className="border border-hair px-2 py-1 text-[12px] leading-none text-mute transition-colors hover:border-hairlit hover:text-ink"
+      className="tap border border-hair px-2.5 py-1 text-[12px] leading-none text-mute transition-colors hover:border-hairlit hover:text-ink"
     >
       {label}
     </button>

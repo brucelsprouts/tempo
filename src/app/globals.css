@@ -252,6 +252,36 @@ body {
     background: color-mix(in oklab, var(--color-raised) 72%, var(--color-void));
   }
 
+  /* The day the next entry will land on.
+   *
+   * This was `bg-sunken` — `#0a0b0d` against a `#07080a` month band, which is
+   * three points of lightness and, on an odd month, *darker* than the cells
+   * either side of it. So the one thing on the grid that says where `+ NEW`
+   * will put an entry could not be seen at all, on either platform.
+   *
+   * A ring rather than a fill, because a fill has to compete with the month and
+   * weekend banding underneath it and would have to be four values to stay
+   * legible against all four. An inset ring composes with whatever it is drawn
+   * over. Achromatic, like everything that is not a category.
+   *
+   * Louder on a touch screen, where it is carrying more: a tap is how the day is
+   * chosen and this is the only confirmation that the tap landed — whereas a
+   * mouse also has the hover `+` and a double-click, and a ring bright enough to
+   * be a *pointer* affordance would sit on the grid all day competing with today.
+   *
+   * Authored after the bands deliberately: both are single-class rules in this
+   * layer, so source order is what decides which background paints. */
+  .day-picked {
+    background: color-mix(in oklab, var(--color-raised) 40%, var(--color-void));
+    box-shadow: inset 0 0 0 1px var(--color-hairlit);
+  }
+  @media (pointer: coarse) {
+    .day-picked {
+      background: color-mix(in oklab, var(--color-raised) 75%, var(--color-void));
+      box-shadow: inset 0 0 0 1px var(--color-dim);
+    }
+  }
+
   .hairline-t {
     box-shadow: inset 0 1px 0 var(--color-hair);
   }
@@ -399,6 +429,31 @@ body {
   @media (pointer: coarse) {
     .hover-only {
       display: none;
+    }
+  }
+
+  /* The name of a key, and the thing you press when there is no keyboard to
+     press it on.
+   *
+   * The interface advertises its chords in place — `ESC` on every panel header,
+   * `[A]` beside + NEW, `[SPACE] TODAY` — which is worth a lot on a desk and is
+   * a lie on a phone: `ESC` as the only way to shut a full-screen modal is a
+   * three-character word that does nothing, sitting where a close button should
+   * be. So the key names come out on a coarse pointer and, where the hint *was*
+   * the control, a glyph takes the slot.
+   *
+   * Two rules rather than one negated media query: `pointer: none` exists (a TV,
+   * a screen reader driving a headless browser) and should see the keys, not
+   * fall between the two cases and see neither. */
+  .touch-only {
+    display: none;
+  }
+  @media (pointer: coarse) {
+    .key-hint {
+      display: none;
+    }
+    .touch-only {
+      display: inline;
     }
   }
 

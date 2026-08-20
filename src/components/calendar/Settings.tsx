@@ -104,7 +104,10 @@ export function Settings({ email, onClose, onSignOut, readOnly }: Props) {
           </span>
           <button
             onClick={() => setReveal((v) => !v)}
-            className="label shrink-0 hover:text-dim"
+            // `-my-2 py-2` is hit area rather than spacing: three characters of
+            // 10px text is a 28×10 target, which is the smallest control in the
+            // app and sits in a row a thumb has to hit exactly.
+            className="label -my-2 shrink-0 py-2 hover:text-dim"
             aria-pressed={reveal}
           >
             {reveal ? 'HIDE' : 'SHOW'}
@@ -140,7 +143,7 @@ export function Settings({ email, onClose, onSignOut, readOnly }: Props) {
       <Section label="DATA" meta={`${events.length} ENTRIES · ${overrides.length} EXCEPTIONS`}>
         <a
           href="/api/export"
-          className="inline-block border border-hair px-3 py-2 text-[10px] tracking-[0.14em] text-dim transition-colors hover:border-hairlit hover:text-ink"
+          className="tap inline-flex items-center border border-hair px-3 py-2 text-[10px] tracking-[0.14em] text-dim transition-colors hover:border-hairlit hover:text-ink"
         >
           EXPORT ALL AS JSON
         </a>
@@ -148,30 +151,41 @@ export function Settings({ email, onClose, onSignOut, readOnly }: Props) {
 
       <Notifications />
 
-      <Section label="KEYS">
-        {/* Two pairs per row rather than one long ladder. The list roughly
-            doubled when the grid gestures landed, and fifteen full-width rows
-            turned the section people read most into the longest scroll in the
-            modal. */}
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 sm:grid-cols-[auto_1fr_auto_1fr] sm:gap-x-4">
-        {/* Keyed on the meaning rather than the caps: DRAG means two different
-            things depending on what is under the pointer, so the caps stopped
-            being unique the moment the lasso landed. */}
-          {SHORTCUTS.map(({ keys, joiner, meaning }) => (
-            <div key={meaning} className="contents">
-              <dt className="flex items-center gap-1 whitespace-nowrap">
-                {keys.map((k, i) => (
-                  <span key={k} className="flex items-center gap-1">
-                    {i > 0 && joiner && <span className="text-[10px] text-mute">{joiner}</span>}
-                    <Keycap>{k}</Keycap>
-                  </span>
-                ))}
-              </dt>
-              <dd className="self-center text-[11px] leading-tight text-dim">{meaning}</dd>
-            </div>
-          ))}
-        </dl>
-      </Section>
+      {/*
+        Fifteen chords, on a device with nothing to press them with.
+
+        This is the longest block in the modal and on a phone it is the least
+        useful thing in the app — a scroll past a page of keycaps to reach the
+        bottom of settings. `.key-hint` is the same rule that takes ESC out of
+        the panel headers there; the section is unchanged everywhere a keyboard
+        exists.
+      */}
+      <div className="key-hint">
+        <Section label="KEYS">
+          {/* Two pairs per row rather than one long ladder. The list roughly
+              doubled when the grid gestures landed, and fifteen full-width rows
+              turned the section people read most into the longest scroll in the
+              modal. */}
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 sm:grid-cols-[auto_1fr_auto_1fr] sm:gap-x-4">
+          {/* Keyed on the meaning rather than the caps: DRAG means two different
+              things depending on what is under the pointer, so the caps stopped
+              being unique the moment the lasso landed. */}
+            {SHORTCUTS.map(({ keys, joiner, meaning }) => (
+              <div key={meaning} className="contents">
+                <dt className="flex items-center gap-1 whitespace-nowrap">
+                  {keys.map((k, i) => (
+                    <span key={k} className="flex items-center gap-1">
+                      {i > 0 && joiner && <span className="text-[10px] text-mute">{joiner}</span>}
+                      <Keycap>{k}</Keycap>
+                    </span>
+                  ))}
+                </dt>
+                <dd className="self-center text-[11px] leading-tight text-dim">{meaning}</dd>
+              </div>
+            ))}
+          </dl>
+        </Section>
+      </div>
     </Modal>
   );
 }
@@ -281,7 +295,7 @@ function Categories() {
                       // and it is not on screen until you ask.
                       onClick={() => (count === 0 ? deleteCategory(c.id) : setConfirming(c.id))}
                       aria-label={`Delete ${c.name}`}
-                      className="shrink-0 px-1 text-[12px] leading-none text-mute transition-colors hover:text-ink"
+                      className="-my-2 shrink-0 px-2 py-2 text-[12px] leading-none text-mute transition-colors hover:text-ink"
                     >
                       ×
                     </button>
@@ -353,9 +367,16 @@ function Swatch({
         onClick={() => setOpen((v) => !v)}
         aria-label="Change colour"
         aria-expanded={open}
-        className="block h-[18px] w-[18px] border border-hair transition-colors hover:border-hairlit"
-        style={{ background: color }}
-      />
+        // The square is the value and stays 18px; the padding around it is the
+        // target. Growing the swatch itself would make the one thing on screen
+        // that has to be read at 2px wide be shown at three times that.
+        className="-m-2 flex items-center justify-center p-2"
+      >
+        <span
+          className="block h-[18px] w-[18px] border border-hair transition-colors hover:border-hairlit"
+          style={{ background: color }}
+        />
+      </button>
       {open && (
         <>
           {/* Catches the dismissing click. A window listener would race the

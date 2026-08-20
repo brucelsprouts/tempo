@@ -86,7 +86,11 @@ export function TasksPane({ occurrences, onOpen }: Props) {
                   type="button"
                   onClick={() => setStatus(occ, NEXT_STATUS[occ.status as EventStatus])}
                   aria-label={`Advance ${occ.title} from ${occ.status}`}
-                  className="mt-px shrink-0 tabular-nums text-[11px] leading-tight text-mute transition-colors hover:text-bright"
+                  // `-my-2 py-2` rather than a bare glyph: three characters of
+                  // text is a 20×11px target, and this is the control that
+                  // advances a task. The padding is hit area and is taken back
+                  // out of the layout so the row keeps its rhythm.
+                  className="-my-2 shrink-0 py-2 tabular-nums text-[11px] leading-tight text-mute transition-colors hover:text-bright"
                 >
                   {STATUS_GLYPH[occ.status as EventStatus]}
                 </button>

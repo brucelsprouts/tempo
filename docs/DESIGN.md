@@ -252,6 +252,53 @@ with no session, often before anyone signs in, and the matcher only exempts
 paths ending in an image extension — so without that the install prompt simply
 never appears and nothing reports why.
 
+The manifest states an `id` rather than letting one be derived from `start_url`,
+because there is now a second launch URL: `/?new=1`, the Home Screen icon's "New
+entry" shortcut, which `CalendarShell` consumes and strips on arrival. Without a
+declared `id` a second start URL is a second *app*, and the installed copy stops
+matching the manifest that describes it.
+
+## 14. A finger picks a day; a cursor points at one
+
+The grid's affordances were all built for a cursor, and the interesting thing is
+that only one of them failed *visibly*. The hover `+` on each day cell is
+removed on a coarse pointer — there is no hover to reveal it by — so on a phone
+the gesture for "add something to this day" did not exist. `+ NEW` in the footer
+still worked, but it lands on `focusedDay`, which nothing on a touch screen could
+move: the only thing that set it was opening the day modal.
+
+So a tap on a day cell now *picks* it and a tap on the day already picked opens
+it, which splits what used to be one gesture into the cheap half and the
+expensive one. The cheap half is the common case — pick the day, press `+ NEW`,
+which is at the bottom of the screen under a thumb and now carries the date it
+will use.
+
+Three things follow from that, and they are the whole of the change:
+
+- **The picked day had to become visible.** It was `bg-sunken` against a
+  `#07080a` month band — three points of lightness, and *darker* than its
+  neighbours on odd months. It is an inset ring now, brighter on touch, since
+  there the ring is the only confirmation that the tap landed.
+- **`+ NEW` had to say what it would do.** A button whose target is set by
+  tapping something else has to state the target, or the tap has no visible
+  consequence at all.
+- **The day modal needed a `+ NEW` of its own.** Its only way to create was
+  tapping an hour row, which says a time as well as a date — so a task or a
+  birthday could not be added from the surface that shows them.
+
+Desktop is deliberately untouched. A single click on the grid there is already
+spoken for — it clears the lasso selection — so it keeps the double-click and the
+hover `+`, and the pick ring is drawn one step quieter.
+
+The rest of the touch work is the same idea applied where a control was built at
+cursor precision: `ESC` in a panel header was a 29×10px word naming a key the
+device does not have (it is a `×` in a 38px box on touch, and still `ESC` where
+there is a keyboard); the list view's eight-column table was an 860px sideways
+scroll on a 375px screen (it is a card list below `sm`, without the checkboxes,
+since everything a selection does there is a chord); and the year view resolved
+to one month per row, which turned "what shape did this year have" into a 2100px
+scroll.
+
 ---
 
 ## Not built

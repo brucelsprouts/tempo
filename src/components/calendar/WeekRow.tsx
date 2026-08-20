@@ -64,6 +64,8 @@ interface Props {
   onResizeStart: (occ: Occurrence, edge: 'start' | 'end', e: React.PointerEvent) => void;
   onDayOpen: (date: CivilDate) => void;
   onDayNew: (date: CivilDate) => void;
+  /** A tap on a day, which is how a finger says where the next entry goes. */
+  onDayPick: (date: CivilDate) => void;
   selectedDay: CivilDate | null;
 }
 
@@ -73,6 +75,7 @@ function DayCell({
   overflow,
   onDayOpen,
   onDayNew,
+  onDayPick,
   selected,
 }: {
   date: CivilDate;
@@ -80,6 +83,7 @@ function DayCell({
   overflow: number;
   onDayOpen: (d: CivilDate) => void;
   onDayNew: (d: CivilDate) => void;
+  onDayPick: (d: CivilDate) => void;
   selected: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: date });
@@ -96,20 +100,30 @@ function DayCell({
       data-date={date}
       onDoubleClick={() => onDayOpen(date)}
       /**
-       * One tap opens the day, but only for a finger.
+       * A tap picks the day. A tap on the day already picked opens it.
        *
-       * A double-click is the desktop gesture because a single click on empty
-       * grid is already spoken for there: it is what drops the lasso selection.
-       * Neither of those exists on touch — the lasso is pointer-only now, and a
-       * reliable double-*tap* is not a thing to ask of anyone — so on a phone the
-       * press does the obvious thing instead of nothing.
+       * One tap used to open the day modal outright, which was the only thing a
+       * finger could do to a date and was the wrong thing to spend the gesture
+       * on: adding an entry to a particular day is what the hover `+` does on a
+       * desktop, and `hover-only` removes that on touch — so on a phone there was
+       * no route from "this day" to "an entry on it" that did not go through a
+       * modal holding a 24-hour timeline, where the only way to create is to tap
+       * an hour row, which makes it timed.
        *
-       * This is also the day cell's replacement for the hover `+`, which
-       * `hover-only` removes below: the day modal is where an entry gets added to
-       * a particular date now, and one tap is how it is reached.
+       * So the light half of the gesture comes first: the tap picks, the ring
+       * says which, and `+ NEW` in the footer — a thumb's width away, and now
+       * carrying the date — puts an entry there. The day modal is the second tap,
+       * because opening a day is the rarer of the two and is the one that can
+       * afford to cost an extra press.
+       *
+       * Desktop is untouched. A single click there is already spoken for — it is
+       * what drops the lasso selection — so it keeps the double-click, and the
+       * hover `+` it never lost.
        */
       onClick={() => {
-        if (isCoarsePointer()) onDayOpen(date);
+        if (!isCoarsePointer()) return;
+        if (selected) onDayOpen(date);
+        else onDayPick(date);
       }}
       className={[
         // Unselectable, because a drag across the grid is a lasso: without this
@@ -130,8 +144,9 @@ function DayCell({
             : 'band-odd',
         monthStart ? 'border-l-hairlit' : '',
         isOver ? 'bg-raised' : '',
-        selected ? 'bg-sunken' : '',
+        selected ? 'day-picked' : '',
       ].join(' ')}
+      aria-current={selected ? 'date' : undefined}
     >
       {/* Padded off the top hairline rather than centred: the number has to
           line up across all seven columns, and the month label beside it is a
@@ -191,6 +206,7 @@ function WeekRowImpl({
   onResizeStart,
   onDayOpen,
   onDayNew,
+  onDayPick,
   selectedDay,
 }: Props) {
   const { weekStart, weekEnd, days, segments, overflow, laneTops, laneHeights, laneCount } = layout;
@@ -269,6 +285,7 @@ function WeekRowImpl({
               overflow={overflow[i]}
               onDayOpen={onDayOpen}
               onDayNew={onDayNew}
+              onDayPick={onDayPick}
               selected={date === selectedDay}
             />
           ))}

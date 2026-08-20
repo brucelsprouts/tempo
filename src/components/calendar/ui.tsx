@@ -301,12 +301,28 @@ export function PanelHeader({
         <div className="truncate text-[12px] tracking-[0.12em] text-ink">{title}</div>
         {meta && <div className="label mt-1">{meta}</div>}
       </div>
+      {/*
+        The only way out of a full-screen modal, on a screen that fills with it.
+
+        This was a 29×10px word. On a desktop that is fine — the backdrop is
+        most of the window and clicking it dismisses, and the word is teaching
+        you the key you should be pressing instead. On a phone the modal is the
+        screen apart from a 12px frame, so the backdrop is not a target and ESC
+        is not a key: the app's one dismissal was a ten-pixel-tall label naming
+        something the device does not have.
+
+        So the key name comes out on a coarse pointer and a glyph takes its
+        place, in a box `.tap` has given a floor to. `-my-2` keeps the taller hit
+        area from pushing the header down around it — the padding is hit area,
+        not spacing.
+      */}
       <button
         onClick={onClose}
-        className="label ml-3 shrink-0 px-1 hover:text-dim"
+        className="tap label -my-2 ml-3 flex shrink-0 items-center px-2 hover:text-dim"
         aria-label="Close panel"
       >
-        ESC
+        <span className="key-hint">ESC</span>
+        <span className="touch-only text-[15px] leading-none">×</span>
       </button>
     </div>
   );

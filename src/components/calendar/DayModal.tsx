@@ -38,7 +38,14 @@ import { Modal, SegmentedControl } from './ui';
  * two nested scrollers over one 24-hour column, and the outer one moving the
  * toolbar off the top of the modal as you used it.
  */
-const PANE_H = 'h-[min(72vh,calc(100vh-14rem))] min-h-[min(360px,55vh)] min-w-0';
+/**
+ * `dvh` rather than `vh`. In a browser tab on a phone `100vh` is the *large*
+ * viewport — the one with the URL bar retracted — so a pane sized against it is
+ * taller than the screen for as long as the bar is showing, which is most of the
+ * time and always at the moment the modal opens. Installed there is no chrome
+ * and the two agree, which is why this only ever looked wrong in Safari.
+ */
+const PANE_H = 'h-[min(72dvh,calc(100dvh-14rem))] min-h-[min(360px,55dvh)] min-w-0';
 
 interface Props {
   date: CivilDate;
@@ -86,28 +93,55 @@ export function DayModal({ date, onDate, onOpen, onNew, onClose }: Props) {
         {/* `zoomIn`/`zoomOut` are passed 0 for the pane height: from FIT the
             modal cannot know the column's measured height, and both clamp to
             the floor — so the first click out of FIT lands on the minimum and
-            steps up from there. */}
-        <div className="ml-2 flex items-center gap-1">
+            steps up from there.
+
+            The two steppers stand down below `sm`. Seven controls do not fit in
+            a 349px toolbar, and of the seven these are the ones a phone can
+            most afford to lose: FIT is the answer to "show me the whole day",
+            which is the question the scale is usually being asked, and it
+            stays. What takes the room is + NEW, which is not a refinement of
+            the view but the only way to put an all-day entry on this date. */}
+        <div className="ml-2 hidden items-center gap-1 sm:flex">
           <Stepper label="Zoom out" onClick={() => setZoom(zoomOut(zoom, 0))}>
             −
           </Stepper>
-          <button
-            type="button"
-            onClick={() => setZoom(zoom === 'fit' ? HOUR_H_DEFAULT : 'fit')}
-            aria-pressed={zoom === 'fit'}
-            className={[
-              'tap border px-2 py-1 text-[10px] leading-none tracking-[0.12em] transition-colors',
-              zoom === 'fit'
-                ? 'border-hairlit bg-raised text-bright'
-                : 'border-hair text-mute hover:border-hairlit hover:text-ink',
-            ].join(' ')}
-          >
-            FIT
-          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => setZoom(zoom === 'fit' ? HOUR_H_DEFAULT : 'fit')}
+          aria-pressed={zoom === 'fit'}
+          className={[
+            'tap ml-2 border px-2 py-1 text-[10px] leading-none tracking-[0.12em] transition-colors sm:ml-1',
+            zoom === 'fit'
+              ? 'border-hairlit bg-raised text-bright'
+              : 'border-hair text-mute hover:border-hairlit hover:text-ink',
+          ].join(' ')}
+        >
+          FIT
+        </button>
+        <div className="hidden items-center gap-1 sm:flex">
           <Stepper label="Zoom in" onClick={() => setZoom(zoomIn(zoom, 0))}>
             +
           </Stepper>
         </div>
+
+        {/*
+          The day modal's own + NEW, and the only route to an all-day entry on a
+          particular date that does not involve the grid.
+
+          It was missing outright. The 24-hour column creates on a tap, but a tap
+          on an hour row says a time as well as a date — so from inside this
+          modal there was no way to add a birthday, a task or anything else that
+          simply belongs to the day. The tasks pane, which is where those live,
+          had no way to add one to the list it was showing.
+        */}
+        <button
+          type="button"
+          onClick={() => onNew(date)}
+          className="tap label ml-2 shrink-0 border border-hair px-2.5 py-1 transition-colors hover:border-hairlit hover:text-ink"
+        >
+          + NEW
+        </button>
 
         {/* Only a switch when there isn't room for both. Above the breakpoint
             the timeline and the list are the same surface, and a control that
