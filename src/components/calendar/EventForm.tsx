@@ -83,13 +83,38 @@ const KINDS = [
   { value: 'milestone', label: 'MARK' },
 ] as const;
 
+/**
+ * The repeat cells are keys rather than frequencies, because "every two months"
+ * is the same `MONTHLY` frequency at a different interval — the pair is what the
+ * cell means, so the control picks a pair and `RECURRENCE_KINDS` unpacks it.
+ * Anything stored with an interval the cells cannot express still lands on the
+ * right frequency, one cell to the left of the truth, rather than on ONCE.
+ */
+type RepeatKey = 'NONE' | 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'MONTHLY_2' | 'YEARLY';
+
+const RECURRENCE_KINDS: Record<RepeatKey, { freq: Frequency; interval: number } | null> = {
+  NONE: null,
+  DAILY: { freq: 'DAILY', interval: 1 },
+  WEEKLY: { freq: 'WEEKLY', interval: 1 },
+  MONTHLY: { freq: 'MONTHLY', interval: 1 },
+  MONTHLY_2: { freq: 'MONTHLY', interval: 2 },
+  YEARLY: { freq: 'YEARLY', interval: 1 },
+};
+
 const FREQS = [
   { value: 'NONE', label: 'ONCE' },
   { value: 'DAILY', label: 'DAY' },
   { value: 'WEEKLY', label: 'WEEK' },
   { value: 'MONTHLY', label: 'MONTH' },
+  { value: 'MONTHLY_2', label: '2 MO' },
   { value: 'YEARLY', label: 'YEAR' },
-] as const;
+] as const satisfies readonly { value: RepeatKey; label: string }[];
+
+function repeatKeyOf(r: Recurrence | null | undefined): RepeatKey {
+  if (!r) return 'NONE';
+  if (r.freq === 'MONTHLY' && (r.interval ?? 1) >= 2) return 'MONTHLY_2';
+  return r.freq;
+}
 
 const TEMPLATES = [
   { value: 'none', label: 'PLAIN TITLE', template: null },
@@ -153,7 +178,7 @@ export function EventForm({
   const { startDate, endDate, allDay } = when;
 
   const [categoryId, setCategoryId] = useState<string | null>(existing?.categoryId ?? null);
-  const [freq, setFreq] = useState<'NONE' | Frequency>(existing?.recurrence?.freq ?? 'NONE');
+  const [freq, setFreq] = useState<RepeatKey>(repeatKeyOf(existing?.recurrence));
   const [templateKey, setTemplateKey] = useState<string>(
     TEMPLATES.find((t) => t.template === existing?.displayTemplate)?.value ?? 'none',
   );
@@ -207,7 +232,7 @@ export function EventForm({
   // A birthday is the general machinery with the dials pre-set, not a special
   // case: yearly recurrence, an anchor on the birth date, and an age template.
   const isBirthday = kind === 'birthday';
-  const effectiveFreq: 'NONE' | Frequency = isBirthday ? 'YEARLY' : freq;
+  const effectiveFreq: RepeatKey = isBirthday ? 'YEARLY' : freq;
   const effectiveTemplate = isBirthday
     ? TEMPLATE_PRESETS.birthday
     : (TEMPLATES.find((t) => t.value === templateKey)?.template ?? null);
@@ -242,10 +267,11 @@ export function EventForm({
   }, [effectiveTemplate, title, effectiveAnchor, startDate, today, isBirthday, needsAnchor]);
 
   function buildRecurrence(): Recurrence | null {
-    if (effectiveFreq === 'NONE') return null;
+    const kind = RECURRENCE_KINDS[effectiveFreq];
+    if (!kind) return null;
     return {
-      freq: effectiveFreq,
-      interval: 1,
+      freq: kind.freq,
+      interval: kind.interval,
       // A leap-day birthday still happens every year, so birthdays clamp
       // rather than following RFC 5545's skip rule.
       ...(isBirthday ? { onInvalid: 'clamp' as const } : {}),
