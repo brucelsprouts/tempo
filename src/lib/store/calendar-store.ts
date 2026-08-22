@@ -166,6 +166,20 @@ interface CalendarState {
     edge: 'start' | 'end',
     scope: EditScope,
   ) => Promise<void>;
+  /**
+   * A selection stretched by one shared delta, from one edge.
+   *
+   * The delta is expected to be legal for every entry in the group — the grid
+   * clamps it against the shortest one before committing, so the whole
+   * selection keeps the same number of days rather than some of it stopping
+   * short at its own floor.
+   */
+  resizeOccurrences: (
+    occs: Occurrence[],
+    deltaDays: number,
+    edge: 'start' | 'end',
+    scope: EditScope,
+  ) => Promise<void>;
   setOccurrenceTime: (
     occ: Occurrence,
     startMinutes: number,
@@ -546,19 +560,24 @@ export const useCalendar = create<CalendarState>((set, get) => {
   }
 
   /**
-   * A whole selection moved as one unit, each entry by its own delta.
+   * A whole selection edited as one unit, each entry by its own plan.
    *
-   * Not a loop over `moveOccurrence`. Each call is its own snapshot, so a
+   * Not a loop over a single-entry action. Each call is its own snapshot, so a
    * failure partway through a loop of six leaves four entries moved, one rolled
    * back and one never attempted — a state the single-snapshot rollback has no
    * way to describe, let alone undo. So the group is resolved first, applied in
    * one `set`, and written as at most one statement per table.
    *
-   * The delta is a function of the occurrence rather than a number, which is the
-   * one difference between the two gestures built on this: the arrow keys pass a
-   * constant and preserve the spacing between entries, a drop onto a day passes
-   * `toDate - occ.date` and destroys it. Everything downstream is identical, so
-   * the two cannot drift apart in how they treat series, exceptions or failure.
+   * The plan is a function of the occurrence rather than a fixed pair of
+   * numbers, which is the one difference between the gestures built on this: the
+   * arrow keys pass a constant to both ends and preserve the spacing between
+   * entries, a drop onto a day passes `toDate - occ.date` and destroys it, a
+   * resize moves one end and leaves the other where it is. Everything downstream
+   * is identical, so none of them can drift apart in how they treat series,
+   * exceptions or failure.
+   *
+   * `null` from the plan is a refusal — an entry this edit cannot legally apply
+   * to — and it drops out without taking the rest of the group with it.
    *
    * The remaining seam is honest and narrow: with both a series rewrite and an
    * override in the same selection, the events write can land and the overrides
@@ -566,10 +585,12 @@ export const useCalendar = create<CalendarState>((set, get) => {
    * next load. Closing that needs a transaction, which means an RPC, which is a
    * server-side surface this app does not otherwise have.
    */
-  async function shiftBy(
+  async function editSpans(
     occs: Occurrence[],
-    deltaFor: (occ: Occurrence) => number,
+    planFor: (occ: Occurrence, ev: TempoEvent, wholeSeries: boolean) => SpanPlan | null,
     scope: EditScope,
+    reason: VersionReason,
+    verb: string,
   ) {
     const ownerId = get().ownerId;
     if (!ownerId) return;
@@ -580,7 +601,7 @@ export const useCalendar = create<CalendarState>((set, get) => {
     const patches = new Map<string, Partial<TempoEvent>>();
     const overrides = new Map<string, OccurrenceOverride>();
     /**
-     * Event ids a whole-series shift has already spoken for.
+     * Event ids a whole-series edit has already spoken for.
      *
      * Separate from `patches` because a claim and a patch are different facts: a
      * selection holding two instances of one series describes one row with two
@@ -598,18 +619,23 @@ export const useCalendar = create<CalendarState>((set, get) => {
       if (occ.readOnly) continue;
       const ev = byId.get(occ.eventId);
       if (!ev) continue;
-      const deltaDays = deltaFor(occ);
 
       // A one-off has no series to distinguish itself from, so it moves whole
       // whatever the scope says — the same rule `moveOccurrence` applies.
-      if (scope === 'series' || !ev.recurrence) {
+      const wholeSeries = scope === 'series' || !ev.recurrence;
+      const plan = planFor(occ, ev, wholeSeries);
+      if (!plan) continue;
+      const { startDelta, endDelta, clamp } = plan;
+      const still = startDelta === 0 && endDelta === 0;
+
+      if (wholeSeries) {
         if (claimed.has(ev.id)) continue;
         claimed.add(ev.id);
-        if (deltaDays !== 0) patches.set(ev.id, shiftEvent(ev, deltaDays, deltaDays, tz));
+        if (!still) patches.set(ev.id, shiftEvent(ev, startDelta, endDelta, tz, clamp));
         continue;
       }
 
-      if (deltaDays === 0) continue;
+      if (still) continue;
       const key = overrideKey(occ);
       if (overrides.has(key)) continue;
       const existing = findOverride(occ.eventId, occ.seriesDate);
@@ -620,8 +646,9 @@ export const useCalendar = create<CalendarState>((set, get) => {
         cancelled: false,
         patch: {
           ...(existing?.patch ?? {}),
-          startDate: addDays(occ.date, deltaDays),
-          endDate: addDays(occ.endDate, deltaDays),
+          startDate: addDays(occ.date, startDelta),
+          endDate: addDays(occ.endDate, endDelta),
+          ...clamp,
         },
       });
     }
@@ -634,8 +661,8 @@ export const useCalendar = create<CalendarState>((set, get) => {
 
     // One version per entry actually being touched, and only once the group has
     // resolved — an occurrence that turned out to be a no-op is not an edit.
-    for (const id of new Set([...patches.keys(), ...rewritten.map((o) => o.eventId)])) {
-      captureVersion(id, 'move');
+    for (const id of new Set(movedIds)) {
+      captureVersion(id, reason);
     }
 
     await optimistic(
@@ -678,13 +705,31 @@ export const useCalendar = create<CalendarState>((set, get) => {
       },
       {
         // One gesture, however many rows it reached.
-        label: moved === 1 ? `Moved ${titleOf(movedIds[0])}` : `Moved ${moved} entries`,
+        label: moved === 1 ? `${verb} ${titleOf(movedIds[0])}` : `${verb} ${moved} entries`,
         touched: {
           events: [...patches.keys()],
           overrides: rewritten.map((o) => o.id),
           categories: [],
         },
       },
+    );
+  }
+
+  /** A selection moved: both ends of every entry by that entry's own delta. */
+  function shiftBy(
+    occs: Occurrence[],
+    deltaFor: (occ: Occurrence) => number,
+    scope: EditScope,
+  ) {
+    return editSpans(
+      occs,
+      (occ) => {
+        const delta = deltaFor(occ);
+        return { startDelta: delta, endDelta: delta };
+      },
+      scope,
+      'move',
+      'Moved',
     );
   }
 
@@ -1417,66 +1462,29 @@ export const useCalendar = create<CalendarState>((set, get) => {
     },
 
     resizeOccurrence: async (occ, deltaDays, edge, scope) => {
-      if (occ.readOnly || deltaDays === 0) return;
+      await get().resizeOccurrences([occ], deltaDays, edge, scope);
+    },
 
-      const wholeSeries = scope === 'series' || !occ.event.recurrence;
-      const nextStart = edge === 'start' ? addDays(occ.date, deltaDays) : occ.date;
-      const nextEnd = edge === 'end' ? addDays(occ.endDate, deltaDays) : occ.endDate;
-
-      if (nextEnd < nextStart) return; // refuse to invert the bar
-
-      // The clock the write will carry, which is what any check here has to be
-      // about: a series rewrite keeps the series' hours, an exception keeps
-      // this instance's.
-      const span = eventSpan(occ.event);
-      const startMinutes = (wholeSeries ? span?.startMinutes : occ.startMinutes) ?? 0;
-      const endMinutes = (wholeSeries ? span?.endMinutes : occ.endMinutes) ?? 0;
-
-      // Collapsed onto a single date, a timed entry still carries a time of
-      // day, and an 18:00-to-midnight evening would read 18:00 to 00:00 —
-      // backwards, and refused outright by the database. Shortening the bar is
-      // what the drag asked for, so the dragged edge gives up its own hour and
-      // takes the day's: the trailing edge ends at 23:59, the leading edge
-      // starts at 00:00. Only on equal dates — a drag that still leaves two
-      // dates already runs forwards, and its hours are none of this business.
-      const clamp: OccurrencePatch =
-        !occ.allDay && nextEnd === nextStart && endMinutes < startMinutes
-          ? edge === 'end'
-            ? { endMinutes: LAST_MINUTE_OF_DAY }
-            : { startMinutes: 0 }
-          : {};
-
-      // What is left has to still have some length to it. An entry ending at
-      // exactly midnight occupies none of the date it ends on, so starting it
-      // there is a drop with nothing in it, and no clamping rescues that.
-      if (
-        !occ.allDay &&
-        nextEnd === nextStart &&
-        (clamp.endMinutes ?? endMinutes) <= (clamp.startMinutes ?? startMinutes)
-      ) {
-        return;
-      }
-
-      captureVersion(occ.eventId, 'resize');
-
-      const label = `Resized ${occ.title}`;
-      if (!wholeSeries) {
-        await patchOccurrence(
-          occ,
-          { startDate: nextStart, endDate: nextEnd, ...clamp },
-          false,
-          (merged) => ({ label, touched: touchedOverrides([merged.id]) }),
-        );
-        return;
-      }
-
-      const ev = occ.event;
-      const startDelta = edge === 'start' ? deltaDays : 0;
-      const endDelta = edge === 'end' ? deltaDays : 0;
-      await writeEvent(ev.id, shiftEvent(ev, startDelta, endDelta, get().timezone, clamp), {
-        label,
-        touched: touchedEvents([occ.eventId]),
-      });
+    /**
+     * A selection stretched by one shared delta, one edge at a time.
+     *
+     * Shared and not per-entry, because "make these three a week longer" is the
+     * request, and a delta computed per entry could only ever have come from
+     * each one's own length — which is not something the drag said anything
+     * about. The caller has already clamped the delta against the shortest
+     * entry in the group, so nothing here should have to refuse; `resizePlan`
+     * still gets the last word, and an entry it turns down drops out rather
+     * than taking the group with it.
+     */
+    resizeOccurrences: async (occs, deltaDays, edge, scope) => {
+      if (deltaDays === 0) return;
+      await editSpans(
+        occs,
+        (occ, ev, wholeSeries) => resizePlan(occ, ev, deltaDays, edge, wholeSeries),
+        scope,
+        'resize',
+        'Resized',
+      );
     },
 
     setOccurrenceTime: async (occ, startMinutes, endMinutes, scope) => {
@@ -1724,6 +1732,76 @@ function draftTiming(draft: EventDraft, tz: string) {
     // to hold it. Exactly one pair is ever populated.
     startDate: draft.allDay ? draft.startDate : null,
     endDate: draft.allDay ? draft.endDate : null,
+  };
+}
+
+/**
+ * What one entry's ends are about to do, in whole days.
+ *
+ * A move sets both deltas to the same number; a resize sets one and leaves the
+ * other at zero. `clamp` is the wall-clock time the write has to carry with it
+ * when the dates alone would come out backwards — see `resizePlan`.
+ */
+type SpanPlan = {
+  startDelta: number;
+  endDelta: number;
+  clamp?: OccurrencePatch;
+};
+
+/**
+ * One end of one entry moved `deltaDays`, or `null` if it cannot be.
+ *
+ * Collapsed onto a single date, a timed entry still carries a time of day, and
+ * an 18:00-to-midnight evening would read 18:00 to 00:00 — backwards, and
+ * refused outright by the database. Shortening the bar is what the drag asked
+ * for, so the dragged edge gives up its own hour and takes the day's: the
+ * trailing edge ends at 23:59, the leading edge starts at 00:00. Only on equal
+ * dates — a drag that still leaves two dates already runs forwards, and its
+ * hours are none of this business.
+ *
+ * What is left has to still have some length to it. An entry ending at exactly
+ * midnight occupies none of the date it ends on, so starting it there is a drop
+ * with nothing in it, and no clamping rescues that: those are the refusals.
+ *
+ * The clock read here is the clock the write will carry, which is what any
+ * check has to be about: a series rewrite keeps the series' hours, an exception
+ * keeps this instance's.
+ */
+function resizePlan(
+  occ: Occurrence,
+  ev: TempoEvent,
+  deltaDays: number,
+  edge: 'start' | 'end',
+  wholeSeries: boolean,
+): SpanPlan | null {
+  const nextStart = edge === 'start' ? addDays(occ.date, deltaDays) : occ.date;
+  const nextEnd = edge === 'end' ? addDays(occ.endDate, deltaDays) : occ.endDate;
+
+  if (nextEnd < nextStart) return null; // refuse to invert the bar
+
+  const span = eventSpan(ev);
+  const startMinutes = (wholeSeries ? span?.startMinutes : occ.startMinutes) ?? 0;
+  const endMinutes = (wholeSeries ? span?.endMinutes : occ.endMinutes) ?? 0;
+
+  const clamp: OccurrencePatch =
+    !occ.allDay && nextEnd === nextStart && endMinutes < startMinutes
+      ? edge === 'end'
+        ? { endMinutes: LAST_MINUTE_OF_DAY }
+        : { startMinutes: 0 }
+      : {};
+
+  if (
+    !occ.allDay &&
+    nextEnd === nextStart &&
+    (clamp.endMinutes ?? endMinutes) <= (clamp.startMinutes ?? startMinutes)
+  ) {
+    return null;
+  }
+
+  return {
+    startDelta: edge === 'start' ? deltaDays : 0,
+    endDelta: edge === 'end' ? deltaDays : 0,
+    clamp,
   };
 }
 

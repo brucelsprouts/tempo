@@ -28,9 +28,6 @@ import { groupOverrides, useCalendar } from '@/lib/store/calendar-store';
 import {
   addDays,
   diffDays,
-  LAST_MINUTE_OF_DAY,
-  maxDate,
-  minDate,
   parts,
   startOfWeek,
   todayIn,
@@ -48,6 +45,7 @@ import type { Occurrence, TempoEvent } from '@/lib/tempo/types';
 import { getClipboard, setClipboard } from '@/lib/store/clipboard';
 import { DragGhost } from './EventBar';
 import type { DraftPreview } from './EventForm';
+import { groupResizeDelta, resizedEdge } from './resize';
 import { WeekRow, type GhostBand } from './WeekRow';
 import {
   DAY_HEADER_H,
@@ -117,6 +115,9 @@ const NOTHING: ReadonlySet<string> = new Set();
 /** Same reason, for the rows: `WeekRow` is memoised on its props. */
 const EMPTY_GHOSTS: readonly GhostBand[] = [];
 
+/** And for "no resize in flight", so the preview memo below stays stable. */
+const EMPTY_OCCURRENCES: readonly Occurrence[] = [];
+
 /**
  * The one primitive every grid gesture is built on: where the pointer is, as a
  * date.
@@ -146,42 +147,6 @@ function edgeScroll(el: HTMLElement, clientY: number): number {
   const above = top + AUTOSCROLL_EDGE - clientY;
   if (above > 0) return -AUTOSCROLL_SPEED * Math.min(1, above / AUTOSCROLL_EDGE);
   return 0;
-}
-
-/**
- * The span a half-finished resize is describing.
- *
- * Inversion is clamped rather than flipped: dragging the end handle above the
- * start pins the bar at its shortest instead of turning it inside out. The
- * commit reads the same function as the preview, so what lands is what was
- * drawn — clamping in only one of the two would show a short bar and then write
- * nothing at all, since the store refuses an inverted span outright.
- *
- * Shortest is one day for nearly everything. Collapsed onto one date the store
- * moves the dragged edge to that date's own boundary — the trailing one to
- * 23:59, the leading one to 00:00 — so an 18:00-to-midnight evening does fit on
- * a single day once its end gives up midnight. What does not fit is what that
- * clamp would leave with no length at all: an entry ending at exactly midnight
- * occupies none of the date it ends on, and one starting at 23:59 has no room
- * left on the date it starts. Those keep a two-day floor, because the drop
- * would decline them.
- */
-function resizedSpan(
-  occ: Occurrence,
-  edge: 'start' | 'end',
-  to: CivilDate,
-): { date: CivilDate; endDate: CivilDate } {
-  const start = occ.startMinutes ?? 0;
-  const end = occ.endMinutes ?? 0;
-  const fitsOnOneDay =
-    occ.allDay ||
-    (edge === 'end'
-      ? (end < start ? LAST_MINUTE_OF_DAY : end) > start
-      : end > (end < start ? 0 : start));
-  const floor = fitsOnOneDay ? 0 : 1;
-  return edge === 'end'
-    ? { date: occ.date, endDate: maxDate(to, addDays(occ.date, floor)) }
-    : { date: minDate(to, addDays(occ.endDate, -floor)), endDate: occ.endDate };
 }
 
 /**
@@ -263,7 +228,7 @@ export function ContinuousCalendar({
   const moveOccurrence = useCalendar((s) => s.moveOccurrence);
   const moveOccurrences = useCalendar((s) => s.moveOccurrences);
   const gatherOccurrences = useCalendar((s) => s.gatherOccurrences);
-  const resizeOccurrence = useCalendar((s) => s.resizeOccurrence);
+  const resizeOccurrences = useCalendar((s) => s.resizeOccurrences);
   const deleteEvents = useCalendar((s) => s.deleteEvents);
   const duplicateOccurrences = useCalendar((s) => s.duplicateOccurrences);
 
@@ -417,27 +382,75 @@ export function ContinuousCalendar({
     [events, overrides, rangeFrom, rangeTo],
   );
 
+  const selected = useMemo(
+    () => occurrences.filter((o) => selection.has(o.key)),
+    [occurrences, selection],
+  );
+
+  /**
+   * Whether dragging this bar carries the whole selection with it.
+   *
+   * Dragging a lit bar gathers every lit bar; dragging an unlit one is a single
+   * move and leaves the selection alone — otherwise there would be no way to
+   * move one entry out of a group you had selected. One entry lit is not a
+   * group, so it drags as itself and keeps the grab offset a direct
+   * manipulation should have.
+   *
+   * Shared by the commit and the preview on purpose: they answered this
+   * separately before, which is exactly the sort of pair that drifts.
+   */
+  const carriesSelection = useCallback(
+    (occ: Occurrence) => selection.has(occ.key) && selected.length > 1,
+    [selection, selected],
+  );
+
+  /**
+   * The entries a resize in flight is stretching.
+   *
+   * The same rule the move uses, for the same reason: a handle on a lit bar
+   * stretches every lit bar, a handle on an unlit one stretches only itself and
+   * leaves the selection alone. Read-only entries are dropped rather than
+   * refused — a Google-sourced instance in the selection should not be able to
+   * hold the rest of it at its own length, and the store would decline it
+   * anyway.
+   *
+   * Empty when no resize is in flight, so the preview below can pay nothing.
+   */
+  const resizeGroup = useMemo<readonly Occurrence[]>(() => {
+    if (!gesture || gesture.kind !== 'resize') return EMPTY_OCCURRENCES;
+    if (!carriesSelection(gesture.occ)) return [gesture.occ];
+    return selected.filter((o) => !o.readOnly);
+  }, [gesture, carriesSelection, selected]);
+
   /**
    * The resize preview, as a post-pass over the expansion.
    *
-   * One occurrence is cloned with the span the gesture currently describes, and
-   * everything downstream — bucketing, lane assignment, the rows themselves —
-   * runs on the altered list without knowing a gesture is in progress. So a bar
-   * stretched into next week actually appears in next week's row, laid out
-   * against that row's other bars, which is the feedback that was missing.
+   * Every occurrence the gesture is stretching is cloned with the span it
+   * currently describes, and everything downstream — bucketing, lane
+   * assignment, the rows themselves — runs on the altered list without knowing
+   * a gesture is in progress. So a bar stretched into next week actually
+   * appears in next week's row, laid out against that row's other bars, which
+   * is the feedback that was missing.
+   *
+   * The delta is computed once for the whole group rather than per bar, and it
+   * is the same call the commit makes, so a selection previews exactly the
+   * shared stretch it is about to be given.
    *
    * A post-pass rather than a re-expansion: `expandAll` walks every event in the
-   * window, and doing that per pointer move to change one date would be paying
-   * for the whole calendar to answer a question about a single bar.
+   * window, and doing that per pointer move to change a handful of dates would
+   * be paying for the whole calendar to answer a question about a few bars.
    */
   const previewed = useMemo(() => {
-    if (!gesture || gesture.kind !== 'resize' || !resizeTo) return occurrences;
-    const span = resizedSpan(gesture.occ, gesture.edge, resizeTo);
-    if (span.date === gesture.occ.date && span.endDate === gesture.occ.endDate) {
+    if (!gesture || gesture.kind !== 'resize' || !resizeTo || resizeGroup.length === 0) {
       return occurrences;
     }
-    return occurrences.map((o) => (o.key === gesture.occ.key ? { ...o, ...span } : o));
-  }, [occurrences, gesture, resizeTo]);
+    const delta = groupResizeDelta(resizeGroup, gesture.occ, gesture.edge, resizeTo);
+    if (delta === 0) return occurrences;
+    const stretching = new Set(resizeGroup.map((o) => o.key));
+    return occurrences.map((o) =>
+      stretching.has(o.key) ? { ...o, ...resizedEdge(o, gesture.edge, delta) } : o,
+    );
+  }, [occurrences, gesture, resizeTo, resizeGroup]);
 
   /** Occurrences bucketed by the week rows they touch. */
   const byWeek = useMemo(() => {
@@ -474,28 +487,6 @@ export function ContinuousCalendar({
     (categoryId: string | null) =>
       categories.find((c) => c.id === categoryId)?.color ?? DEFAULT_CATEGORY_COLOR,
     [categories],
-  );
-
-  const selected = useMemo(
-    () => occurrences.filter((o) => selection.has(o.key)),
-    [occurrences, selection],
-  );
-
-  /**
-   * Whether dragging this bar carries the whole selection with it.
-   *
-   * Dragging a lit bar gathers every lit bar; dragging an unlit one is a single
-   * move and leaves the selection alone — otherwise there would be no way to
-   * move one entry out of a group you had selected. One entry lit is not a
-   * group, so it drags as itself and keeps the grab offset a direct
-   * manipulation should have.
-   *
-   * Shared by the commit and the preview on purpose: they answered this
-   * separately before, which is exactly the sort of pair that drifts.
-   */
-  const carriesSelection = useCallback(
-    (occ: Occurrence) => selection.has(occ.key) && selected.length > 1,
-    [selection, selected],
   );
 
   /**
@@ -761,15 +752,13 @@ export function ContinuousCalendar({
       if (gesture.kind === 'resize') {
         setResizeTo(null);
         const to = hovered.current;
-        if (!to) return;
-        const span = resizedSpan(gesture.occ, gesture.edge, to);
-        const delta =
-          gesture.edge === 'start'
-            ? diffDays(span.date, gesture.occ.date)
-            : diffDays(span.endDate, gesture.occ.endDate);
+        if (!to || resizeGroup.length === 0) return;
+        // The same call the preview made, so what lands is what was drawn —
+        // including which entries it lands on, and by how many days.
+        const delta = groupResizeDelta(resizeGroup, gesture.occ, gesture.edge, to);
         if (delta !== 0) {
-          void resizeOccurrence(
-            gesture.occ,
+          void resizeOccurrences(
+            [...resizeGroup],
             delta,
             gesture.edge,
             seriesMode.current ? 'series' : 'occurrence',
@@ -796,7 +785,7 @@ export function ContinuousCalendar({
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', finish);
     };
-  }, [gesture, layoutOf, liveColWidth, contentPoint, resizeOccurrence]);
+  }, [gesture, resizeGroup, layoutOf, liveColWidth, contentPoint, resizeOccurrences]);
 
   // --------------------------------------------------------- what a selection does
 

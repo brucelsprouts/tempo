@@ -1187,6 +1187,200 @@ describe('resizing an occurrence', () => {
   });
 });
 
+// ------------------------------------------------------- resizing a selection
+
+describe('resizing a selection', () => {
+  it('gives every entry the same number of extra days', async () => {
+    const a = event({ id: 'e1', startDate: '2026-08-10', endDate: '2026-08-12' });
+    const b = event({ id: 'e2', startDate: '2026-08-20', endDate: '2026-08-20' });
+    const c = event({ id: 'e3', startDate: '2026-09-01', endDate: '2026-09-08' });
+    seed([a, b, c]);
+
+    await useCalendar
+      .getState()
+      .resizeOccurrences(
+        [
+          occurrenceOf(a, '2026-08-10', '2026-08-12'),
+          occurrenceOf(b, '2026-08-20'),
+          occurrenceOf(c, '2026-09-01', '2026-09-08'),
+        ],
+        3,
+        'end',
+        'series',
+      );
+
+    const spans = useCalendar.getState().events.map((e) => [e.startDate, e.endDate]);
+    expect(spans).toEqual([
+      // Every start where it was; every end three days later.
+      ['2026-08-10', '2026-08-15'],
+      ['2026-08-20', '2026-08-23'],
+      ['2026-09-01', '2026-09-11'],
+    ]);
+  });
+
+  it('pulls every leading edge by the shared delta', async () => {
+    const a = event({ id: 'e1', startDate: '2026-08-10', endDate: '2026-08-12' });
+    const b = event({ id: 'e2', startDate: '2026-08-20', endDate: '2026-08-24' });
+    seed([a, b]);
+
+    await useCalendar
+      .getState()
+      .resizeOccurrences(
+        [occurrenceOf(a, '2026-08-10', '2026-08-12'), occurrenceOf(b, '2026-08-20', '2026-08-24')],
+        -2,
+        'start',
+        'series',
+      );
+
+    const spans = useCalendar.getState().events.map((e) => [e.startDate, e.endDate]);
+    expect(spans).toEqual([
+      ['2026-08-08', '2026-08-12'],
+      ['2026-08-18', '2026-08-24'],
+    ]);
+  });
+
+  it('lands the whole group under one undo step', async () => {
+    const a = event({ id: 'e1', startDate: '2026-08-10', endDate: '2026-08-12' });
+    const b = event({ id: 'e2', startDate: '2026-08-20', endDate: '2026-08-20' });
+    seed([a, b]);
+
+    await useCalendar
+      .getState()
+      .resizeOccurrences(
+        [occurrenceOf(a, '2026-08-10', '2026-08-12'), occurrenceOf(b, '2026-08-20')],
+        4,
+        'end',
+        'series',
+      );
+
+    // One gesture, however many rows it reached.
+    expect(useCalendar.getState().undoStack).toHaveLength(1);
+    expect(useCalendar.getState().undoStack[0].label).toBe('Resized 2 entries');
+
+    await useCalendar.getState().undo();
+
+    const spans = useCalendar.getState().events.map((e) => [e.startDate, e.endDate]);
+    expect(spans).toEqual([
+      ['2026-08-10', '2026-08-12'],
+      ['2026-08-20', '2026-08-20'],
+    ]);
+  });
+
+  it('records the reason as a resize, not a move', async () => {
+    const a = event({ id: 'e1', startDate: '2026-08-10', endDate: '2026-08-12' });
+    seed([a]);
+
+    await useCalendar
+      .getState()
+      .resizeOccurrences([occurrenceOf(a, '2026-08-10', '2026-08-12')], 2, 'end', 'series');
+
+    expect(
+      callsOn('event_versions', 'insert').map((c) => (c.payload as { reason: string }).reason),
+    ).toEqual(['resize']);
+  });
+
+  it('leaves a read-only entry alone without holding up the rest', async () => {
+    const mine = event({ id: 'e1', startDate: '2026-08-10', endDate: '2026-08-12' });
+    const theirs = event({ id: 'e2', startDate: '2026-08-20', endDate: '2026-08-22', source: 'google' });
+    seed([mine, theirs]);
+
+    await useCalendar
+      .getState()
+      .resizeOccurrences(
+        [
+          occurrenceOf(mine, '2026-08-10', '2026-08-12'),
+          occurrenceOf(theirs, '2026-08-20', '2026-08-22'),
+        ],
+        3,
+        'end',
+        'series',
+      );
+
+    const spans = useCalendar.getState().events.map((e) => [e.startDate, e.endDate]);
+    expect(spans).toEqual([
+      ['2026-08-10', '2026-08-15'],
+      ['2026-08-20', '2026-08-22'],
+    ]);
+  });
+
+  it('drops an entry the delta would turn inside out rather than refusing the group', async () => {
+    const long = event({ id: 'e1', startDate: '2026-08-10', endDate: '2026-08-20' });
+    const short = event({ id: 'e2', startDate: '2026-08-01', endDate: '2026-08-01' });
+    seed([long, short]);
+
+    // The grid clamps before it gets here, so this is the store having the last
+    // word: a one-day bar has nothing to give, and it says so on its own.
+    await useCalendar
+      .getState()
+      .resizeOccurrences(
+        [occurrenceOf(long, '2026-08-10', '2026-08-20'), occurrenceOf(short, '2026-08-01')],
+        -4,
+        'end',
+        'series',
+      );
+
+    const spans = useCalendar.getState().events.map((e) => [e.startDate, e.endDate]);
+    expect(spans).toEqual([
+      ['2026-08-10', '2026-08-16'],
+      ['2026-08-01', '2026-08-01'],
+    ]);
+  });
+
+  it('writes one row for a series, however many of its instances are selected', async () => {
+    const e = event({
+      id: 'e1',
+      startDate: '2026-08-10',
+      endDate: '2026-08-10',
+      recurrence: { freq: 'WEEKLY' },
+    });
+    seed([e]);
+
+    await useCalendar
+      .getState()
+      .resizeOccurrences(
+        [occurrenceOf(e, '2026-08-17'), occurrenceOf(e, '2026-08-10')],
+        2,
+        'end',
+        'series',
+      );
+
+    // The earliest instance settles it, whatever order the selection arrived in.
+    expect(useCalendar.getState().events[0].endDate).toBe('2026-08-12');
+    expect(useCalendar.getState().overrides).toHaveLength(0);
+  });
+
+  it('excepts each instance separately when the scope is one occurrence', async () => {
+    const e = event({
+      id: 'e1',
+      startDate: '2026-08-10',
+      endDate: '2026-08-10',
+      recurrence: { freq: 'WEEKLY' },
+    });
+    seed([e]);
+
+    await useCalendar
+      .getState()
+      .resizeOccurrences(
+        [occurrenceOf(e, '2026-08-10'), occurrenceOf(e, '2026-08-17')],
+        2,
+        'end',
+        'occurrence',
+      );
+
+    // The series itself is untouched; each selected instance gets an override
+    // carrying the same two extra days.
+    expect(useCalendar.getState().events[0].endDate).toBe('2026-08-10');
+    expect(
+      useCalendar
+        .getState()
+        .overrides.map((o) => [o.occurrenceDate, o.patch.startDate, o.patch.endDate]),
+    ).toEqual([
+      ['2026-08-10', '2026-08-10', '2026-08-12'],
+      ['2026-08-17', '2026-08-17', '2026-08-19'],
+    ]);
+  });
+});
+
 // ---------------------------------------------------------------- cancelling
 
 describe('cancelling', () => {
