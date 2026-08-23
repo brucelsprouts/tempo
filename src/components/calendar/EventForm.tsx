@@ -101,13 +101,21 @@ const RECURRENCE_KINDS: Record<RepeatKey, { freq: Frequency; interval: number } 
   YEARLY: { freq: 'YEARLY', interval: 1 },
 };
 
+/**
+ * `1D` rather than `DAY`, because the sixth cell is what broke the words: six
+ * labels across one column truncated DAY and MONTH into each other, and a
+ * truncated word is worse than a short one. Count-plus-unit also says the thing
+ * the cells now actually differ by — the interval — so `1M` and `2M` read as one
+ * scale instead of a word beside an abbreviation. ONCE keeps its word: it is the
+ * absence of a repeat, not a repeat of one, and `0` would be a lie.
+ */
 const FREQS = [
   { value: 'NONE', label: 'ONCE' },
-  { value: 'DAILY', label: 'DAY' },
-  { value: 'WEEKLY', label: 'WEEK' },
-  { value: 'MONTHLY', label: 'MONTH' },
-  { value: 'MONTHLY_2', label: '2 MO' },
-  { value: 'YEARLY', label: 'YEAR' },
+  { value: 'DAILY', label: '1D' },
+  { value: 'WEEKLY', label: '1W' },
+  { value: 'MONTHLY', label: '1M' },
+  { value: 'MONTHLY_2', label: '2M' },
+  { value: 'YEARLY', label: '1Y' },
 ] as const satisfies readonly { value: RepeatKey; label: string }[];
 
 function repeatKeyOf(r: Recurrence | null | undefined): RepeatKey {

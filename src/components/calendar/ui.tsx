@@ -202,9 +202,9 @@ export function SegmentedControl<T extends string>({
           type="button"
           onClick={() => onChange(o.value)}
           className={[
-            // `min-w-0` is what stops a five-cell control writing over the field
+            // `min-w-0` is what stops a six-cell control writing over the field
             // beside it: a flex item's floor is its content, so REPEATS in a
-            // half-width column pushed MONTH and YEAR out through the border
+            // half-width column pushed the last cells out through the border
             // rather than shrinking. It truncates now, and the layout below no
             // longer puts it in a half-width column to begin with.
             grow ? 'min-w-0 flex-1 truncate' : '',
