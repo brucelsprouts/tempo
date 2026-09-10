@@ -39,7 +39,7 @@ const GROUPS = [
 ] as const;
 
 const KIND_LABEL: Record<string, string> = {
-  event: 'EVENT',
+  event: 'ENTRY',
   assignment: 'TASK',
   birthday: 'BIRTHDAY',
   milestone: 'MARK',

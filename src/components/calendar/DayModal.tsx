@@ -152,7 +152,7 @@ export function DayModal({ date, onDate, onOpen, onNew, onClose }: Props) {
               value={pane}
               options={[
                 { value: 'day', label: 'DAY' },
-                { value: 'tasks', label: 'TASKS' },
+                { value: 'tasks', label: 'ENTRIES' },
               ]}
               onChange={setPane}
               grow={false}

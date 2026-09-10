@@ -77,12 +77,33 @@ interface Props {
   ref?: Ref<EntryFormHandle>;
 }
 
+/**
+ * What an entry can be: an entry, a birthday, or a mark.
+ *
+ * ENTRY rather than EVENT — the word the rest of the app already uses (`+ NEW`,
+ * `13 ENTRIES`). TASK is gone from the choices: this calendar is kept with
+ * entries, and a task was an entry with a status nobody set.
+ */
 const KINDS = [
-  { value: 'event', label: 'EVENT' },
-  { value: 'assignment', label: 'TASK' },
+  { value: 'event', label: 'ENTRY' },
   { value: 'birthday', label: 'BIRTHDAY' },
   { value: 'milestone', label: 'MARK' },
-] as const;
+] as const satisfies readonly { value: EventKind; label: string }[];
+
+/**
+ * TASK, for the one case that still needs it: an entry that already is one.
+ *
+ * Retired from the form, not from the data — rows written as tasks still exist
+ * and still render. Opening one offers TASK beside the others, so the control
+ * shows its real type and it can be turned into an ENTRY; a control with no
+ * cell for the current value would show nothing selected.
+ */
+const KINDS_WITH_TASK = [
+  KINDS[0],
+  { value: 'assignment', label: 'TASK' },
+  KINDS[1],
+  KINDS[2],
+] as const satisfies readonly { value: EventKind; label: string }[];
 
 /**
  * The repeat cells are keys rather than frequencies, because "every two months"
@@ -363,6 +384,11 @@ export function EventForm({
       reminders,
       anchorDate: effectiveTemplate ? effectiveAnchor : null,
       displayTemplate: effectiveTemplate,
+      // A task keeps the status it has: `draftFields` fills a missing one with
+      // `todo`, so leaving it out reset `doing` every time a task was saved from
+      // here. Anything that is not a task has none — including a task just
+      // turned into an ENTRY.
+      status: kind === 'assignment' ? (existing?.status ?? null) : null,
       // `notify` is deliberately absent. It is the Google mirror flag, and the
       // mirror does not exist — no route reads it. The column and the field
       // stay for the day one is written; leaving it out of the draft means an
@@ -430,7 +456,7 @@ export function EventForm({
           <Field label="[01] TYPE">
             <SegmentedControl
               value={kind}
-              options={KINDS}
+              options={existing?.kind === 'assignment' ? KINDS_WITH_TASK : KINDS}
               onChange={(k) => {
                 setKind(k);
                 if (k === 'birthday') setWhen((w) => ({ ...w, allDay: true }));
