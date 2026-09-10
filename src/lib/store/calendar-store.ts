@@ -35,6 +35,7 @@ import {
 } from '@/lib/tempo/civil';
 import { copyableFields, copyTitle } from '@/lib/tempo/duplicate';
 import { eventSpan } from '@/lib/tempo/recurrence';
+import { splitRule } from '@/lib/tempo/split';
 import type {
   Category,
   EventKind,
@@ -118,6 +119,19 @@ interface CalendarState {
   updateEvent: (id: string, patch: Partial<TempoEvent>) => Promise<void>;
   /** Editing counterpart to `createEvent`. See `draftTiming`. */
   updateEventFromDraft: (id: string, draft: EventDraft) => Promise<void>;
+  /**
+   * Whether saving `draft` over the row would change anything — the same
+   * comparison `updateEvent` uses to skip a no-op, asked before the form asks
+   * which dates a change is for.
+   */
+  wouldChange: (id: string, draft: EventDraft) => boolean;
+  /** One date of a series edited from the form: its title, dates or times, as an exception. */
+  editOccurrence: (occ: Occurrence, patch: OccurrencePatch) => Promise<void>;
+  /**
+   * "This and later": the series ends the day before `occ` and a new one starts
+   * on it, shaped by `draft`. See `splitRule`.
+   */
+  splitSeries: (occ: Occurrence, draft: EventDraft) => Promise<void>;
   deleteEvent: (id: string) => Promise<void>;
   deleteEvents: (ids: string[]) => Promise<void>;
   /** Put one back, or the whole trash when called with nothing. */
@@ -966,6 +980,95 @@ export const useCalendar = create<CalendarState>((set, get) => {
 
     updateEventFromDraft: async (id, draft) => {
       await get().updateEvent(id, draftFields(draft, get().timezone));
+    },
+
+    wouldChange: (id, draft) => {
+      const current = get().events.find((e) => e.id === id);
+      return !!current && !same(current, { ...current, ...draftFields(draft, get().timezone) });
+    },
+
+    editOccurrence: async (occ, patch) => {
+      if (occ.readOnly || Object.keys(patch).length === 0) return;
+      captureVersion(occ.eventId, 'edit');
+      await patchOccurrence(occ, patch, false, (o) => ({
+        label: `Edited ${titleOf(occ.eventId)} on ${occ.date}`,
+        touched: touchedOverrides([o.id]),
+      }));
+    },
+
+    /**
+     * One series becomes two, in one action.
+     *
+     * The new event is the old row's source, notify flag and zone, plus the
+     * draft's fields, starting on the dates the form showed. Exceptions after
+     * the cut move to it; the one *on* the cut is dropped, because the form's
+     * values define that date now.
+     *
+     * Written in the order that fails safest. Inserting the new series first
+     * and ending the old one last means a failure partway leaves a duplicate on
+     * the server rather than a gap — the same seam `editSpans` documents, which
+     * only a transaction (an RPC) would close. Locally, `optimistic` restores
+     * the snapshot either way, and one undo entry covers both events and every
+     * exception touched, so Cmd-Z brings back the single series.
+     */
+    splitSeries: async (occ, draft) => {
+      const ownerId = get().ownerId;
+      const old = get().events.find((e) => e.id === occ.eventId);
+      if (!ownerId || !old?.recurrence || occ.readOnly) return;
+
+      const at = occ.seriesDate;
+      const rules = splitRule(old.recurrence, at, occ.index, draft.recurrence ?? null);
+      captureVersion(old.id, 'edit');
+
+      const id = crypto.randomUUID();
+      const stamp = new Date().toISOString();
+      const later: TempoEvent = {
+        ...old,
+        ...draftFields(draft, old.timezone),
+        id,
+        recurrence: rules.later,
+        deletedAt: null,
+        createdAt: stamp,
+        updatedAt: stamp,
+      };
+      const ended: Partial<TempoEvent> = { recurrence: rules.earlier };
+
+      const theirs = get().overrides.filter((o) => o.eventId === old.id);
+      const moved = theirs.filter((o) => o.occurrenceDate > at).map((o) => o.id);
+      const dropped = theirs.filter((o) => o.occurrenceDate === at).map((o) => o.id);
+
+      await optimistic(
+        () =>
+          set((s) => ({
+            events: [...s.events.map((e) => (e.id === old.id ? { ...e, ...ended } : e)), later],
+            overrides: s.overrides
+              .filter((o) => !dropped.includes(o.id))
+              .map((o) => (moved.includes(o.id) ? { ...o, eventId: id } : o)),
+          })),
+        async () => {
+          const inserted = await supabase
+            .from('events')
+            .insert({ id, owner_id: ownerId, title: later.title, ...eventToRow(later) });
+          if (inserted.error) return { error: inserted.error };
+          if (moved.length > 0) {
+            const { error } = await supabase
+              .from('occurrence_overrides')
+              .update({ event_id: id })
+              .in('id', moved);
+            if (error) return { error };
+          }
+          if (dropped.length > 0) {
+            const { error } = await supabase.from('occurrence_overrides').delete().in('id', dropped);
+            if (error) return { error };
+          }
+          const { error } = await supabase.from('events').update(eventToRow(ended)).eq('id', old.id);
+          return { error };
+        },
+        {
+          label: `Changed ${later.title} from ${at}`,
+          touched: { ...EMPTY_TOUCHED, events: [old.id, id], overrides: [...moved, ...dropped] },
+        },
+      );
     },
 
     /**

@@ -2120,3 +2120,153 @@ describe('undo labels', () => {
     expect(useCalendar.getState().undoStack[0].label).toBe('Deleted 2 entries');
   });
 });
+
+// ------------------------------------------------------ one date, or this and later
+
+describe('asking whether a save would change anything', () => {
+  it('says no for the row as it stands and yes for a new title', () => {
+    seed([event({})]);
+    const draft = {
+      title: 'Thing',
+      kind: 'event' as const,
+      allDay: true,
+      startDate: '2026-08-10',
+      endDate: '2026-08-10',
+      reminders: [],
+    };
+    expect(useCalendar.getState().wouldChange('e1', draft)).toBe(false);
+    expect(useCalendar.getState().wouldChange('e1', { ...draft, title: 'Other' })).toBe(true);
+  });
+});
+
+describe('editing one date from the form', () => {
+  it('writes an exception carrying only the patch', async () => {
+    const e = event({ recurrence: { freq: 'WEEKLY' } });
+    seed([e]);
+
+    await useCalendar
+      .getState()
+      .editOccurrence(occurrenceOf(e, '2026-08-17'), { title: 'Guest lecture' });
+
+    const [o] = useCalendar.getState().overrides;
+    expect(o).toMatchObject({
+      eventId: 'e1',
+      occurrenceDate: '2026-08-17',
+      cancelled: false,
+      patch: { title: 'Guest lecture' },
+    });
+    expect(useCalendar.getState().events[0].title).toBe('Thing');
+    expect(useCalendar.getState().undoStack[0].label).toBe('Edited Thing on 2026-08-17');
+  });
+});
+
+describe('changing this date and later', () => {
+  const weekly = (over: Partial<TempoEvent> = {}) =>
+    event({
+      startDate: '2026-08-03',
+      endDate: '2026-08-03',
+      recurrence: { freq: 'WEEKLY', interval: 1 },
+      ...over,
+    });
+  // The third Monday: 3, 10, 17 August.
+  const third = () => ({ ...occurrenceOf(weekly(), '2026-08-17'), index: 3 });
+  const draft = {
+    title: 'Thing',
+    kind: 'event' as const,
+    allDay: true,
+    startDate: '2026-08-17',
+    endDate: '2026-08-17',
+    recurrence: { freq: 'WEEKLY' as const, interval: 2 },
+    reminders: [],
+  };
+  const exception = (id: string, date: string) => ({
+    id,
+    eventId: 'e1',
+    occurrenceDate: date,
+    cancelled: false,
+    patch: { title: `moved ${date}` },
+  });
+
+  it('ends the series the day before and starts a new one on the date', async () => {
+    seed([weekly()]);
+    await useCalendar.getState().splitSeries(third(), draft);
+
+    const [old, fresh] = useCalendar.getState().events;
+    expect(old.recurrence).toMatchObject({ freq: 'WEEKLY', interval: 1, until: '2026-08-16' });
+    expect(fresh.id).not.toBe('e1');
+    expect(fresh).toMatchObject({
+      startDate: '2026-08-17',
+      recurrence: { freq: 'WEEKLY', interval: 2 },
+    });
+  });
+
+  it('moves the exceptions after the date and drops the one on it', async () => {
+    seed([weekly()]);
+    useCalendar.setState({
+      overrides: [
+        exception('o1', '2026-08-10'),
+        exception('o2', '2026-08-17'),
+        exception('o3', '2026-08-31'),
+      ],
+    });
+    await useCalendar.getState().splitSeries(third(), draft);
+
+    const fresh = useCalendar.getState().events[1];
+    const byId = new Map(useCalendar.getState().overrides.map((o) => [o.id, o]));
+    expect(byId.get('o1')?.eventId).toBe('e1');
+    expect(byId.has('o2')).toBe(false);
+    expect(byId.get('o3')?.eventId).toBe(fresh.id);
+  });
+
+  it('writes the new series first and ends the old one last', async () => {
+    seed([weekly()]);
+    useCalendar.setState({
+      overrides: [exception('o2', '2026-08-17'), exception('o3', '2026-08-31')],
+    });
+    await useCalendar.getState().splitSeries(third(), draft);
+
+    const writes = recorded
+      .filter((c) => c.table !== 'event_versions')
+      .map((c) => `${c.table}:${c.op}`);
+    expect(writes).toEqual([
+      'events:insert',
+      'occurrence_overrides:update',
+      'occurrence_overrides:delete',
+      'events:update',
+    ]);
+  });
+
+  it('puts everything back when the write fails', async () => {
+    seed([weekly()]);
+    useCalendar.setState({ overrides: [exception('o3', '2026-08-31')] });
+    shouldFail = true;
+    await useCalendar.getState().splitSeries(third(), draft);
+
+    expect(useCalendar.getState().events).toHaveLength(1);
+    expect(useCalendar.getState().events[0].recurrence).toEqual({ freq: 'WEEKLY', interval: 1 });
+    expect(useCalendar.getState().overrides[0].eventId).toBe('e1');
+    expect(useCalendar.getState().error).toBe('write rejected');
+  });
+
+  it('comes back as one series with one undo', async () => {
+    seed([weekly()]);
+    useCalendar.setState({ overrides: [exception('o3', '2026-08-31')] });
+    await useCalendar.getState().splitSeries(third(), draft);
+    expect(useCalendar.getState().undoStack).toHaveLength(1);
+
+    await useCalendar.getState().undo();
+
+    expect(useCalendar.getState().events).toHaveLength(1);
+    expect(useCalendar.getState().events[0].recurrence).toEqual({ freq: 'WEEKLY', interval: 1 });
+    expect(useCalendar.getState().overrides[0].eventId).toBe('e1');
+  });
+
+  it('hands the later half what is left of a count', async () => {
+    seed([weekly({ recurrence: { freq: 'WEEKLY', interval: 1, count: 10 } })]);
+    await useCalendar.getState().splitSeries(third(), {
+      ...draft,
+      recurrence: { freq: 'WEEKLY', interval: 1, count: 10 },
+    });
+    expect(useCalendar.getState().events[1].recurrence?.count).toBe(8);
+  });
+});
