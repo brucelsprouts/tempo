@@ -14,7 +14,7 @@ import {
   type CivilDate,
 } from '@/lib/tempo/civil';
 import { DAYS_PER_WEEK, KIND_HEIGHT, LANE_GAP, type WeekLayout } from '@/lib/tempo/layout';
-import type { Occurrence } from '@/lib/tempo/types';
+import type { Category, Occurrence } from '@/lib/tempo/types';
 import { EventBar } from './EventBar';
 import {
   DAY_HEADER_H,
@@ -49,7 +49,11 @@ interface Props {
   /** The row's index in the epoch. Bars need it to be uniquely identifiable. */
   weekIndex: number;
   today: CivilDate;
-  colorFor: (categoryId: string | null) => string;
+  /**
+   * The category an entry is filed under, or `null`. Stable for as long as the
+   * categories are, which is what keeps this row's `memo` honest.
+   */
+  categoryFor: (categoryId: string | null) => Category | null;
   /**
    * Footprints about to exist in this row. Two callers: the entry form's draft,
    * which is always one, and a move in flight, which is one per entry being
@@ -199,7 +203,7 @@ function WeekRowImpl({
   layout,
   weekIndex,
   today,
-  colorFor,
+  categoryFor,
   ghost,
   selection,
   onOpen,
@@ -336,7 +340,7 @@ function WeekRowImpl({
                   key={segment.occurrence.key}
                   segment={segment}
                   weekIndex={weekIndex}
-                  color={colorFor(segment.occurrence.categoryId)}
+                  category={categoryFor(segment.occurrence.categoryId)}
                   selected={selection.has(segment.occurrence.key)}
                   onOpen={onOpen}
                   onToggleSelect={onToggleSelect}

@@ -414,8 +414,8 @@ body {
   /* A control whose only affordance is hover.
 
      The grid is full of these — the day cell's `+`, the two resize handles on
-     every bar — and they are all built the same way: `opacity-0` lifted by
-     `group-hover`. On a touch screen there is no hover state to lift them, so
+     every bar — and they are all built the same way: `opacity-0` lifted by a
+     hover. On a touch screen there is no hover state to lift them, so
      they are not subtle, they are absent: invisible, and yet still holding the
      pixels a real gesture wants. The `+` sits over the top-right corner of every
      day, and the handles own 16px of each end of a bar, which on a 45px phone
@@ -469,26 +469,71 @@ body {
    * and be wrong about two of them.
    *
    * So the bar is its own container and the rules below ask it how much room it
-   * has. Every threshold is against the *content* box — the borders and padding
-   * are already subtracted — so a 37px bar asks with 23px and a two-day bar with
-   * 68px.
+   * has. Every threshold is against the *content* box — the edge and padding
+   * are already subtracted — so a 37px bar asks with 24px and a two-day bar with
+   * 69px.
    */
   .tempo-bar {
     container-type: inline-size;
   }
 
+  /* A title gets two lines and no more. `anywhere` so one long unbroken word
+     cannot hold a narrow bar open. */
+  .bar-clamp {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    min-width: 0;
+    line-height: 14px;
+  }
+
+  /* The category, by name. Its type lives here rather than in utility classes
+     so the width tiers below can resize it without racing the order Tailwind
+     emits its generated utilities in. */
+  .bar-chip {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 5px;
+    font-size: 11px;
+    line-height: 15px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    vertical-align: top;
+  }
+
+  /* One entry, one hover: every bar of the hovered entry, both halves of one
+     that crosses a week (see `entry-focus.ts`). A ring rather than a brighter
+     fill — at 60% the secondary text would drop to 4.1:1. */
+  .tempo-bar[data-lit] {
+    box-shadow: inset 0 0 0 1px var(--cat);
+  }
+  .tempo-bar[data-lit] .bar-grip {
+    opacity: 1;
+  }
+
+  /* The day panel's rows and blocks: the same ring on plain hover — nothing
+     there is split. Only where hover exists, so a tap does not leave it stuck. */
+  @media (hover: hover) {
+    .tint-hover:hover {
+      box-shadow: inset 0 0 0 1px var(--cat);
+    }
+  }
+
   /* Under ~90px of content there is not room for a time and a title side by
      side, so the time takes a line of its own above the title and the title
-     gets the full width. The line heights are what keep two lines inside a
-     28px bar: the row geometry is a compile-time constant that the lasso hit
-     test and the scroll arithmetic both read, so this buys legibility out of
-     the leading rather than out of the layout. */
+     gets the full width. The tight line heights are what fit a time, a title
+     line and a chip inside a 56px event: 5 + 10 + 14 + 3 + 15 + 5 = 52. */
   @container (max-width: 90px) {
     /* The padding, borrowed back.
      *
-     * A one-day bar is 37px and spends 14 of them on two 2px category borders
-     * and 10px of padding — 38% of the bar, on a bar whose whole problem is
-     * width. The borders are the bar's identity and stay; the padding is lent to
+     * A one-day bar is 37px and spends 13 of them on its 3px category edge and
+     * 10px of padding — a third of the bar, on a bar whose whole problem is
+     * width. The edge is the bar's identity and stays; the padding is lent to
      * the text, which is what the reader came for. A negative margin rather than
      * less padding on the bar itself: the bar is the query container, and a rule
      * inside `@container` that resizes its own container's content box is the
@@ -535,6 +580,26 @@ body {
     .bar-due {
       display: none;
     }
+    /* An event gives its second title line to the chip: at this width, which
+       course it is matters more than the end of its title. Tasks have the
+       height to keep both. */
+    .bar-event .bar-clamp {
+      -webkit-line-clamp: 1;
+    }
+    .bar-chip {
+      font-size: 10px;
+    }
+  }
+
+  /* Under 50px — a one-day bar on a phone — a chip cannot say anything, so the
+     fill says it and the title takes its second line back. */
+  @container (max-width: 50px) {
+    .bar-chips {
+      display: none;
+    }
+    .bar-event .bar-clamp {
+      -webkit-line-clamp: 2;
+    }
   }
 
   /* Resize, on a screen with no hover to reveal it.
@@ -544,7 +609,7 @@ body {
    * the gesture nobody could see sitting on top of the two that matter. That
    * reasoning holds for a one-day bar and only for a one-day bar, so the width
    * is what the rule turns on now rather than the input: a bar with 40px of
-   * content or more is at least 54px wide, which is two 12px grips and still
+   * content or more is at least 53px wide, which is two 12px grips and still
    * ~30px of middle to tap. Below that they stay gone and the entry form's date
    * fields remain the way to restretch a single-day entry.
    *

@@ -1,12 +1,14 @@
 'use client';
 
 import { useDraggable } from '@dnd-kit/core';
-import { useRef } from 'react';
+import { useRef, type CSSProperties } from 'react';
 import { useCalendar } from '@/lib/store/calendar-store';
 import type { WeekSegment } from '@/lib/tempo/layout';
-import type { Occurrence } from '@/lib/tempo/types';
-import { DAYS_PER_WEEK } from '@/lib/tempo/layout';
-import { KIND_HEIGHT } from '@/lib/tempo/layout';
+import type { Category, Occurrence } from '@/lib/tempo/types';
+import { DAYS_PER_WEEK, KIND_HEIGHT } from '@/lib/tempo/layout';
+import { CategoryChip } from './CategoryChip';
+import { useEntryFocus } from './entry-focus';
+import { barColors } from './tint';
 
 interface Props {
   segment: WeekSegment;
@@ -15,7 +17,11 @@ interface Props {
    * draggable's identity — see the `useDraggable` call below.
    */
   weekIndex: number;
-  color: string;
+  /**
+   * What the entry is filed under. `null` keeps the plain grey bar and wears no
+   * chip, so "no category" still looks different from every category.
+   */
+  category: Category | null;
   selected: boolean;
   onOpen: (occ: Occurrence) => void;
   onToggleSelect: (occ: Occurrence) => void;
@@ -25,6 +31,9 @@ interface Props {
    */
   onResizeStart: (occ: Occurrence, edge: 'start' | 'end', e: React.PointerEvent) => void;
 }
+
+/** The bar's style, plus the category colour the hover ring in globals.css draws with. */
+type BarStyle = CSSProperties & { '--cat': string };
 
 const pct = (cols: number) => `${(cols / DAYS_PER_WEEK) * 100}%`;
 
@@ -56,7 +65,7 @@ const HANDLE_W = 'w-4';
 export function EventBar({
   segment,
   weekIndex,
-  color,
+  category,
   selected,
   onOpen,
   onToggleSelect,
@@ -76,7 +85,17 @@ export function EventBar({
   const fromHandle = useRef(false);
   const isOffline = useCalendar((s) => s.isOffline);
 
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+  /**
+   * Hover and drag, answered per entry rather than per bar — see
+   * `entry-focus.ts`. Each is a selector on this entry's key, so a hover
+   * anywhere else on the grid does not re-render this bar.
+   */
+  const lit = useEntryFocus((s) => s.hovered === occ.key);
+  const carried = useEntryFocus((s) => s.carried.has(occ.key));
+  const hover = useEntryFocus((s) => s.hover);
+  const unhover = useEntryFocus((s) => s.unhover);
+
+  const { attributes, listeners, setNodeRef } = useDraggable({
     // Not `occ.key`. A bar crossing a week boundary is drawn as two segments,
     // and dnd-kit keys its node registry by id — under one id the second
     // registration clobbered the first, so both halves translated together and
@@ -88,6 +107,7 @@ export function EventBar({
     disabled: occ.readOnly || isOffline,
   });
 
+  const colors = barColors(category?.color ?? null);
   const left = startCol;
   const span = endCol - startCol + 1;
 
@@ -95,78 +115,85 @@ export function EventBar({
   const glyph = occ.kind === 'assignment' && occ.status ? STATUS_GLYPH[occ.status] : null;
   const done = occ.status === 'done';
 
-  // A task has the room for two lines and the most to say; a mark has neither.
-  const twoLine = occ.kind === 'assignment';
+  const task = occ.kind === 'assignment';
   const tick = occ.kind === 'milestone';
+  /** A birthday and a mark are one line and wear no chip. */
+  const oneLine = tick || occ.kind === 'birthday';
+  const editable = !occ.readOnly && !isOffline;
+
+  const style: BarStyle = {
+    position: 'absolute',
+    left: pct(left),
+    // 8px off the span against 4px of `ml`, so the bar is inset the same
+    // distance from both edges of the columns it covers.
+    width: `calc(${pct(span)} - 8px)`,
+    // Both handed down by `layoutWeek`. Derived here, the bar would have to
+    // know the height of every kind above it in the row to place itself.
+    top: segment.top,
+    height: segment.height,
+    // Deliberately *not* translated by `transform`. A `DragOverlay` chip
+    // already follows the cursor and the destination rows draw a footprint, so
+    // moving the source as well was a third answer to "where is this going" —
+    // and the bar is inside the scroll container, so translating it pushed the
+    // container's `scrollWidth` out and the grid could be dragged sideways. The
+    // source stays put and dims: every bar of every entry being carried.
+    opacity: carried ? 0.25 : undefined,
+    background: colors.fill,
+    color: colors.ink,
+    /**
+     * One coloured edge, on the leading end.
+     *
+     * Both ends carried the colour while the bar was grey, because a single
+     * coloured edge on a grey bar read as a direction rather than a boundary. A
+     * filled bar has its shape already — the fill is the extent — so the second
+     * edge was noise and it went. A clipped start is still left bare, so the two
+     * ways a bar can begin still look different.
+     */
+    borderLeft: continuesBefore ? undefined : `3px solid ${colors.edge}`,
+    '--cat': colors.edge,
+    // Ink rather than `hairlit`, which is a hairline colour and disappears at
+    // the one moment it has to be unmistakable. White is spoken for: it marks
+    // today.
+    outline: selected ? '1px solid var(--color-ink)' : undefined,
+  };
 
   return (
     <div
       ref={setNodeRef}
-      style={{
-        position: 'absolute',
-        left: pct(left),
-        // 8px off the span against 4px of `ml`, so the bar is inset the same
-        // distance from both edges of the columns it covers. This is the whole
-        // of the right-hand gutter now: the grid-wide margin that used to hold
-        // the Saturday column off the window is gone, and every column is
-        // padded instead of one being special.
-        width: `calc(${pct(span)} - 8px)`,
-        // Both handed down by `layoutWeek`. Derived here, the bar would have to
-        // know the height of every kind above it in the row to place itself.
-        top: segment.top,
-        height: segment.height,
-        // Deliberately *not* translated by `transform`.
-        //
-        // A `DragOverlay` chip already follows the cursor, and the destination
-        // rows already draw a dashed footprint, so moving the source as well
-        // was a third answer to "where is this going" — and the damaging one:
-        // the bar is inside the scroll container, so translating it 400px right
-        // pushed the container's `scrollWidth` out past its own width and the
-        // whole grid could be dragged sideways. The source stays put and dims.
-        opacity: isDragging ? 0.25 : 1,
-        // Both ends carry the category colour. Only the left did, which made a
-        // bar look like it pointed somewhere — the eye reads a single coloured
-        // edge as a direction rather than as a boundary. A clipped end is left
-        // bare, so the two ways a bar can stop still look different.
-        borderLeft: continuesBefore ? undefined : `2px solid ${color}`,
-        borderRight: continuesAfter ? undefined : `2px solid ${color}`,
-        // Ink rather than `hairlit`, which is a hairline colour and disappears
-        // against `bg-raised` at the one moment it has to be unmistakable.
-        // White is spoken for: it marks today.
-        outline: selected ? '1px solid var(--color-ink)' : undefined,
-      }}
+      style={style}
+      data-lit={lit || undefined}
       className={[
         // The bars sit in a pointer-events-none overlay so empty day space falls
         // through to the cell underneath; each bar opts itself back in.
         'pointer-events-auto',
         // Its own container, so everything inside can size itself against the
-        // room this bar actually has rather than against the window. See the
-        // `.tempo-bar` rules in globals.css.
+        // room this bar actually has. See the `.tempo-bar` rules in globals.css.
         'tempo-bar',
-        'group ml-[4px] flex items-center gap-1 overflow-hidden bg-raised pr-1',
+        'ml-[4px] flex items-stretch gap-1 overflow-hidden pr-1',
+        oneLine ? '' : 'py-[5px]',
         tick ? 'text-[11px]' : 'text-[12px]',
-        'border-y border-r border-hair transition-colors',
-        continuesBefore ? 'border-l border-l-hairlit pl-1' : 'pl-1.5',
-        occ.readOnly || isOffline ? 'cursor-default' : 'cursor-grab hover:border-hairlit hover:bg-sunken',
+        continuesBefore ? 'pl-1' : 'pl-1.5',
+        editable ? 'cursor-grab' : 'cursor-default',
         occ.event.source === 'google' ? 'opacity-70' : '',
         done ? 'opacity-45' : '',
       ].join(' ')}
       {...attributes}
       {...listeners}
       // After the spread, deliberately. dnd-kit stamps `tabIndex={0}` on every
-      // draggable, which puts several dozen bars per screen into the tab order
-      // ahead of anything you would actually want to reach with Tab. Modal's
-      // `trapTab` filters on `tabIndex >= 0`, so it needs nothing from this.
+      // draggable, which puts several dozen bars per screen into the tab order.
       tabIndex={-1}
-      // Also after the spread. It no longer has to forward anything — dnd-kit's
-      // listeners are `onMouseDown` and `onTouchStart` now, and the spread above
-      // has already attached both — so this is purely the flag reset, and
-      // `pointerdown` is still the right event to hang it on: it precedes both of
-      // them on either input, so the flag is always cleared before the gesture
-      // that might set it.
+      // Also after the spread: purely the flag reset. `pointerdown` precedes
+      // both dnd-kit activators on either input, so the flag is always cleared
+      // before the gesture that might set it.
       onPointerDown={() => {
         fromHandle.current = false;
       }}
+      // A mouse only. A finger has no hover, and a tap that lit a bar would
+      // leave it lit.
+      onPointerEnter={(e) => {
+        if (e.pointerType === 'mouse') hover(occ.key);
+      }}
+      onPointerLeave={() => unhover(occ.key)}
       onClick={(e) => {
         e.stopPropagation();
         if (fromHandle.current) {
@@ -183,79 +210,102 @@ export function EventBar({
       }}
       title={occ.title}
     >
-      {continuesBefore && <span className="shrink-0 text-mute">‹</span>}
-      {tick && <span className="shrink-0 text-mute">◆</span>}
+      {continuesBefore && (
+        <span className="shrink-0 self-center" style={{ color: colors.soft }}>
+          ‹
+        </span>
+      )}
+      {tick && (
+        <span className="shrink-0 self-center" style={{ color: colors.soft }}>
+          ◆
+        </span>
+      )}
 
-      <div className="bar-body min-w-0 flex-1">
-        {twoLine ? (
-          <>
-            <div className={`truncate leading-tight ${done ? 'text-mute line-through' : 'text-ink'}`}>
-              {occ.title}
-            </div>
-            {/* The second line is what the extra height was spent on: status and
-                when it is due, which are the two things you check without
-                opening anything.
-
-                `DUE ` is its own element so a narrow bar can drop the word and
-                keep the date — three characters of prose in front of a value is
-                the first thing to go when there are four characters of room. */}
-            <div className="bar-meta flex items-center gap-1 text-[11px] leading-tight text-mute">
-              {glyph && <span className="bar-glyph shrink-0">{glyph}</span>}
-              <span className="truncate tabular-nums">
-                {time ?? (
-                  <>
-                    <span className="bar-due">DUE </span>
-                    {occ.endDate.slice(5)}
-                  </>
-                )}
+      <div
+        className={[
+          'bar-body flex min-w-0 flex-1 flex-col',
+          oneLine ? 'justify-center' : 'justify-between',
+          // Events alone give up a title line to the chip in the middle width
+          // tier; see `.bar-event` in globals.css.
+          oneLine || task ? '' : 'bar-event',
+        ].join(' ')}
+      >
+        {oneLine ? (
+          /* `bar-tick` holds one line at every width, and gives up the clock
+             under 90px: a mark is a date rather than a time. */
+          <div className="bar-line bar-tick flex items-center gap-1.5">
+            {time && (
+              <span className="bar-time shrink-0 tabular-nums" style={{ color: colors.soft }}>
+                {time}
               </span>
+            )}
+            <span className="bar-title truncate">{occ.title}</span>
+          </div>
+        ) : (
+          <>
+            {/* The title, with what precedes it: the time on an event, the
+                status box on a task. Under 90px of content `.bar-line` turns
+                the column and the time moves above the title. The title is its
+                own flex column, so a second line hangs under itself rather than
+                under the time. */}
+            <div className="bar-line flex gap-1.5">
+              {task
+                ? glyph && (
+                    <span className="bar-glyph shrink-0 tabular-nums" style={{ color: colors.soft }}>
+                      {glyph}
+                    </span>
+                  )
+                : time && (
+                    <span className="bar-time shrink-0 tabular-nums" style={{ color: colors.soft }}>
+                      {time}
+                    </span>
+                  )}
+              <span className={`bar-title bar-clamp ${done ? 'line-through' : ''}`}>{occ.title}</span>
+            </div>
+
+            {/* Everything else sits on the bottom edge together: a task's due
+                line, then the chip. */}
+            <div className="flex min-w-0 flex-col gap-[3px]">
+              {task && (
+                <div
+                  className="bar-meta truncate text-[11px] leading-tight tabular-nums"
+                  style={{ color: colors.soft }}
+                >
+                  {time ?? (
+                    <>
+                      <span className="bar-due">DUE </span>
+                      {occ.endDate.slice(5)}
+                    </>
+                  )}
+                </div>
+              )}
+              {category && (
+                <div className="bar-chips flex min-w-0">
+                  <CategoryChip category={category} />
+                </div>
+              )}
             </div>
           </>
-        ) : (
-          /* One line where there is room for one, two where there is not: below
-             ~90px of content `.bar-line` turns the column and the time moves
-             above the title instead of in front of it.
-
-             Except on a mark, which `bar-tick` holds at one line. A mark's bar
-             is 20px — it is a tick, not a span — and there is no second line to
-             be had inside it: turning the column there would push the title out
-             through the bottom of a bar that clips. It gives up the clock
-             instead, which is the right thing for it to give up, since a mark is
-             a date rather than a time. */
-          <div className={`bar-line ${tick ? 'bar-tick' : ''} flex items-center gap-1.5`}>
-            {time && <span className="bar-time shrink-0 tabular-nums text-mute">{time}</span>}
-            <span className={`bar-title truncate ${done ? 'text-mute line-through' : 'text-ink'}`}>
-              {occ.title}
-            </span>
-          </div>
         )}
       </div>
 
-      {continuesAfter && <span className="shrink-0 text-mute">›</span>}
+      {continuesAfter && (
+        <span className="shrink-0 self-center" style={{ color: colors.soft }}>
+          ›
+        </span>
+      )}
 
       {/* Resize handles. Hidden on a clipped edge — you can only lengthen a bar
           from an end that is actually in this row, which is also what makes the
-          cross-week gesture unambiguous: there is exactly one handle per end of
-          an entry, however many rows the entry spans.
+          cross-week gesture unambiguous. Revealed by the entry's hover
+          (`[data-lit]` in globals.css) rather than this bar's own, so hovering
+          either half of a split entry shows both of its ends.
 
-          `bar-grip` is what makes them exist on a touch screen. They were
-          `hover-only` — removed outright on a coarse pointer, on the grounds
-          that there is no hover to reveal them by and that at 16px a side they
-          would own 32 of the ~37px a one-day bar gets on a 375px phone. The
-          first half was answered by showing them rather than waiting to be
-          hovered; the second half was only ever true of a *narrow* bar, so the
-          grip rules turn on the bar's own width instead of on the input. A bar
-          with room keeps both grips and ~30px of middle to tap; a one-day bar
-          keeps neither, and the entry form's date fields stay the way to
-          restretch it.
-
-          `stopPropagation` now has to be said on the mouse and touch events as
-          well as the pointer one. `beginResize` stops `pointerdown`, and that used
-          to be enough because it was also dnd-kit's activator — but `mousedown`
-          and `touchstart` are separate events that bubble on their own, so with
-          the sensors split a mouse on this handle would start a resize and a move
-          at the same time. */}
-      {!occ.readOnly && !isOffline && !continuesBefore && (
+          `bar-grip` is what makes them exist on a touch screen; see the grip
+          rules in globals.css. `stopPropagation` is said on the mouse and touch
+          events as well as the pointer one, because those bubble on their own
+          and would start a move at the same time as the resize. */}
+      {editable && !continuesBefore && (
         <span
           onPointerDown={(e) => {
             fromHandle.current = true;
@@ -263,11 +313,11 @@ export function EventBar({
           }}
           onMouseDown={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
-          className={`bar-grip absolute left-0 top-0 h-full ${HANDLE_W} cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100`}
-          style={{ background: `linear-gradient(90deg, ${color}, transparent)` }}
+          className={`bar-grip absolute left-0 top-0 h-full ${HANDLE_W} cursor-ew-resize opacity-0 transition-opacity`}
+          style={{ background: `linear-gradient(90deg, ${colors.edge}, transparent)` }}
         />
       )}
-      {!occ.readOnly && !isOffline && !continuesAfter && (
+      {editable && !continuesAfter && (
         <span
           onPointerDown={(e) => {
             fromHandle.current = true;
@@ -275,22 +325,40 @@ export function EventBar({
           }}
           onMouseDown={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
-          className={`bar-grip absolute right-0 top-0 h-full ${HANDLE_W} cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100`}
-          style={{ background: `linear-gradient(270deg, ${color}, transparent)` }}
+          className={`bar-grip absolute right-0 top-0 h-full ${HANDLE_W} cursor-ew-resize opacity-0 transition-opacity`}
+          style={{ background: `linear-gradient(270deg, ${colors.edge}, transparent)` }}
         />
       )}
     </div>
   );
 }
 
-/** The bar that follows the cursor mid-drag. */
-export function DragGhost({ occ, color }: { occ: Occurrence; color: string }) {
+/**
+ * The bar that follows the cursor mid-drag: the same fill, edge, title and chip
+ * as the bar it lifted, at its kind's height.
+ */
+export function DragGhost({ occ, category }: { occ: Occurrence; category: Category | null }) {
+  const colors = barColors(category?.color ?? null);
+  const oneLine = occ.kind === 'milestone' || occ.kind === 'birthday';
   return (
     <div
-      style={{ borderLeft: `2px solid ${color}`, height: KIND_HEIGHT[occ.kind] }}
-      className="flex items-center gap-1.5 border-y border-r border-hairlit bg-raised px-1.5 text-[12px] text-ink shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+      style={{
+        background: colors.fill,
+        color: colors.ink,
+        borderLeft: `3px solid ${colors.edge}`,
+        height: KIND_HEIGHT[occ.kind],
+      }}
+      className={[
+        'flex flex-col overflow-hidden px-1.5 text-[12px] shadow-[0_4px_16px_rgba(0,0,0,0.6)]',
+        oneLine ? 'justify-center' : 'justify-between py-[5px]',
+      ].join(' ')}
     >
-      <span className="truncate">{occ.title}</span>
+      <span className={oneLine ? 'truncate' : 'bar-clamp'}>{occ.title}</span>
+      {!oneLine && category && (
+        <div className="flex min-w-0">
+          <CategoryChip category={category} />
+        </div>
+      )}
     </div>
   );
 }

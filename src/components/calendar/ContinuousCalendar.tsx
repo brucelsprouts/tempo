@@ -42,15 +42,15 @@ import {
   type WeekLayout,
 } from '@/lib/tempo/layout';
 import { expandAll, eventSpan } from '@/lib/tempo/recurrence';
-import type { Occurrence, TempoEvent } from '@/lib/tempo/types';
+import type { Category, Occurrence, TempoEvent } from '@/lib/tempo/types';
 import { getClipboard, setClipboard } from '@/lib/store/clipboard';
 import { DragGhost } from './EventBar';
+import { useEntryFocus } from './entry-focus';
 import type { DraftPreview } from './EventForm';
 import { groupResizeDelta, resizedEdge } from './resize';
 import { WeekRow, type GhostBand } from './WeekRow';
 import {
   DAY_HEADER_H,
-  DEFAULT_CATEGORY_COLOR,
   GUTTER_W,
   LANE_BUDGET,
   MONTHS_LONG,
@@ -493,9 +493,9 @@ export function ContinuousCalendar({
     [epochStart, byWeek],
   );
 
-  const colorFor = useCallback(
-    (categoryId: string | null) =>
-      categories.find((c) => c.id === categoryId)?.color ?? DEFAULT_CATEGORY_COLOR,
+  const categoryFor = useCallback(
+    (categoryId: string | null): Category | null =>
+      categories.find((c) => c.id === categoryId) ?? null,
     [categories],
   );
 
@@ -540,6 +540,10 @@ export function ContinuousCalendar({
     // Which day of a multi-day bar was actually grabbed.
     const grab = (at && dateUnderPointer(at.x, at.y)) ?? occ.date;
     setDrag({ occ, grab });
+    // Every bar of every entry this drag moves dims together — both halves of
+    // one that crosses a week, and the whole group when a lit bar carries the
+    // selection. The same predicate the drop uses, so they cannot disagree.
+    useEntryFocus.getState().carry(carriesSelection(occ) ? selection : [occ.key]);
   }
 
   function handleDragOver(e: DragOverEvent) {
@@ -552,6 +556,7 @@ export function ContinuousCalendar({
     const dropOn = e.over?.id as CivilDate | undefined;
     const grab = drag?.grab ?? occ?.date;
     setDrag(null);
+    useEntryFocus.getState().drop();
     setDropDate(null);
     if (!occ || !dropOn || !grab) return;
 
@@ -993,6 +998,7 @@ export function ContinuousCalendar({
         onDragCancel={() => {
           setDrag(null);
           setDropDate(null);
+          useEntryFocus.getState().drop();
         }}
       >
         <div
@@ -1016,7 +1022,7 @@ export function ContinuousCalendar({
                     layout={layout}
                     weekIndex={item.index}
                     today={today}
-                    colorFor={colorFor}
+                    categoryFor={categoryFor}
                     ghost={dragGhosts ?? draftBand}
                     selection={selection}
                     onOpen={onOpenOccurrence}
@@ -1049,7 +1055,7 @@ export function ContinuousCalendar({
         </div>
 
         <DragOverlay dropAnimation={null}>
-          {drag && <DragGhost occ={drag.occ} color={colorFor(drag.occ.categoryId)} />}
+          {drag && <DragGhost occ={drag.occ} category={categoryFor(drag.occ.categoryId)} />}
         </DragOverlay>
       </DndContext>
     </div>
