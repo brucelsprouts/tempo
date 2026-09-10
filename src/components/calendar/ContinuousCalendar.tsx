@@ -48,6 +48,7 @@ import { DragGhost } from './EventBar';
 import { useEntryFocus } from './entry-focus';
 import type { DraftPreview } from './EventForm';
 import { groupResizeDelta, resizedEdge } from './resize';
+import { monthReadout } from './readout';
 import { WeekRow, type GhostBand } from './WeekRow';
 import {
   DAY_HEADER_H,
@@ -943,20 +944,44 @@ export function ContinuousCalendar({
     ],
   );
 
-  // Which month the viewport is currently sitting in. There is no "current
-  // page" here, so the readout is derived from what you can actually see.
+  /**
+   * Which month the viewport is sitting in: the one filling most of it — see
+   * `monthReadout`. There is no "current page" here, so it is derived from what
+   * you can actually see, row by row, weighted by how much of each row is on
+   * screen. Overscan rows have nothing on screen and drop out.
+   */
+  const readout = useMemo(() => {
+    const top = scrollOffset;
+    const bottom = scrollOffset + viewportH;
+    return monthReadout(
+      items.map((item) => ({
+        weekStart: addDays(epochStart, item.index * 7),
+        visible:
+          item.size > 0
+            ? Math.max(0, Math.min(item.end, bottom) - Math.max(item.start, top)) / item.size
+            : 0,
+      })),
+    );
+  }, [items, scrollOffset, viewportH, epochStart]);
+
+  // Before the first measurement there is nothing to weigh, so the label falls
+  // back to the row at the top edge, as it always used to.
   const topWeek = addDays(epochStart, topIndex * 7);
-  const lastVisible = addDays(epochStart, bottomIndex * 7 + 6);
-  const head = parts(addDays(topWeek, 3));
-  const tail = parts(lastVisible);
-  const spansMonths = head.month !== tail.month || head.year !== tail.year;
+  const fallbackHead = parts(addDays(topWeek, 3));
+  const fallbackTail = parts(addDays(epochStart, bottomIndex * 7 + 6));
+  const head = readout?.head ?? fallbackHead;
+  const next = readout
+    ? readout.next
+    : fallbackHead.month !== fallbackTail.month || fallbackHead.year !== fallbackTail.year
+      ? fallbackTail
+      : null;
 
   return (
     <div className="relative flex h-full flex-col">
       <Header
         month={MONTHS_LONG[head.month - 1]}
         year={head.year}
-        nextMonth={spansMonths ? MONTHS_LONG[tail.month - 1] : null}
+        nextMonth={next ? MONTHS_LONG[next.month - 1] : null}
         onToday={jumpToToday}
       />
 
