@@ -134,20 +134,6 @@ const FREQS = [
 const NUMBER_BOX =
   'w-14 border border-hair bg-panel px-1.5 py-2 text-center text-[12px] tabular-nums text-ink outline-none transition-colors focus:border-hairlit';
 
-/**
- * Keeps a click on the words and gaps inside a `Field` from reaching its first
- * control.
- *
- * `Field` is a <label>, and a label hands any click on its plain content to the
- * first control inside it. For a field that is one input, that is the point.
- * For one holding a row of buttons it meant a click on EVERY or on WEEKS
- * pressed ONCE and turned the repeat off, and a click between two reminder
- * chips pressed the first of them. Only the controls themselves answer now.
- */
-function onlyControlsAnswer(e: React.MouseEvent) {
-  if (!(e.target as Element).closest('button, input, select, textarea')) e.preventDefault();
-}
-
 const TEMPLATES = [
   { value: 'none', label: 'PLAIN TITLE', template: null },
   { value: 'birthday', label: 'AGE', template: TEMPLATE_PRESETS.birthday },
@@ -535,7 +521,7 @@ export function EventForm({
         )}
 
         <div className="col-span-full">
-          <Field label="[01] TYPE">
+          <Field label="[01] TYPE" group>
             <SegmentedControl
               value={kind}
               options={existing?.kind === 'assignment' ? KINDS_WITH_TASK : KINDS}
@@ -549,9 +535,16 @@ export function EventForm({
 
         {/* A birthday has one date, no end and no time — the whole apparatus
             would be four switched-off controls around the only field it needs,
-            so it keeps the plain picker. */}
+            so it keeps the plain picker.
+
+            Every date field here is a group, though each holds one control:
+            its picker's panel opens inside the field, and as a label the field
+            sent every click on the panel's words and gaps to the trigger, which
+            shut the panel. So the caption no longer opens the picker, which
+            costs little — the trigger is the width of the field, directly
+            beneath it. */}
         {isBirthday ? (
-          <Field label="[02] BIRTH DATE">
+          <Field label="[02] BIRTH DATE" group>
             <DatePicker
               label="Birth date"
               value={startDate}
@@ -561,15 +554,15 @@ export function EventForm({
           </Field>
         ) : (
           <div className="col-span-full">
-            <Field label="[02] WHEN">
+            <Field label="[02] WHEN" group>
               <WhenField value={when} onChange={setWhen} timezone={timezone} />
             </Field>
           </div>
         )}
 
         {!isBirthday && (
-          <Field label="[03] REPEATS">
-            <div className="flex flex-wrap items-center gap-2" onClick={onlyControlsAnswer}>
+          <Field label="[03] REPEATS" group>
+            <div className="flex flex-wrap items-center gap-2">
               {/* 260px: five cells as wide as MONTH needs. Allowed to shrink
                   past that, the cells gave their room to the EVERY count and
                   truncated to O… D… W… in the half-width column; held here,
@@ -618,7 +611,7 @@ export function EventForm({
         )}
 
         {needsAnchor && !isBirthday && (
-          <Field label="ANCHOR DATE">
+          <Field label="ANCHOR DATE" group>
             <DatePicker
               label="Anchor date"
               value={anchorDate}
@@ -644,13 +637,12 @@ export function EventForm({
         </Field>
 
         <div className="col-span-full">
-          <Field label="[06] REMIND ME">
+          <Field label="[06] REMIND ME" group>
             {/* Chips rather than a select: reminders are a set, not a choice,
                 and the pairing people actually want — one to start, one to
                 turn up — is two clicks here and a nested multi-select in any
-                other control. `onlyControlsAnswer` on everything under the
-                chips, so a click on a word or a gap sets no reminder. */}
-            <div className="flex flex-wrap gap-1.5" onClick={onlyControlsAnswer}>
+                other control. */}
+            <div className="flex flex-wrap gap-1.5">
               {chips.map(({ minutes, label }) => {
                 const on = reminders.some((r) => r.minutes === minutes);
                 const full = !on && reminders.length >= 5;
@@ -683,7 +675,6 @@ export function EventForm({
             {custom && (
               <div
                 className="mt-2 flex flex-wrap items-center gap-2"
-                onClick={onlyControlsAnswer}
                 // Enter adds, rather than submitting the whole form as it would
                 // from any other field.
                 onKeyDown={(e) => {
@@ -766,14 +757,10 @@ export function EventForm({
               </div>
             )}
             {customError && (
-              <p className="label label-lit mt-2" onClick={onlyControlsAnswer}>
-                {customError}
-              </p>
+              <p className="label label-lit mt-2">{customError}</p>
             )}
             {reminders.length === 0 && (
-              <p className="label mt-2" onClick={onlyControlsAnswer}>
-                SILENT — NOTHING WILL BE SENT FOR THIS ENTRY.
-              </p>
+              <p className="label mt-2">SILENT — NOTHING WILL BE SENT FOR THIS ENTRY.</p>
             )}
           </Field>
         </div>

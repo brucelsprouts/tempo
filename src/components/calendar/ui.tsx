@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 /** Shared form primitives, so every control in the app is the same object. */
 
@@ -164,21 +164,49 @@ export function Popover({
 export const inputClass =
   'w-full border border-hair bg-panel px-2.5 py-2 text-[12px] text-ink outline-none transition-colors placeholder:text-mute focus:border-hairlit';
 
+/**
+ * A caption over what it names.
+ *
+ * A <label> by default, which is right for a field that is one input: clicking the
+ * caption focuses it. `group` is for any other shape — a row of buttons, or a picker
+ * whose panel opens inside the field — and draws a `role="group"` named by the caption
+ * instead, which tells a screen reader what the controls are for and does nothing else.
+ *
+ * Nothing else is the point. A label hands any click on its plain content to the first
+ * control inside it, and that control matches `:hover` for as long as the label does.
+ * Around a row of buttons, clicking the word REPEATS pressed ONCE and turned a repeat
+ * off, and resting the pointer anywhere in the field lit ONCE as though it were about
+ * to be pressed.
+ */
 export function Field({
   label,
   children,
   hint,
+  group = false,
 }: {
   label: string;
   children: React.ReactNode;
   hint?: string;
+  /** For a field that is not a single input. */
+  group?: boolean;
 }) {
-  return (
-    <label className="block">
-      <span className="label mb-1.5 block">{label}</span>
+  const id = useId();
+  const content = (
+    <>
+      <span id={group ? id : undefined} className="label mb-1.5 block">
+        {label}
+      </span>
       {children}
       {hint && <span className="mt-1 block text-[10px] leading-relaxed text-mute">{hint}</span>}
-    </label>
+    </>
+  );
+
+  return group ? (
+    <div role="group" aria-labelledby={id}>
+      {content}
+    </div>
+  ) : (
+    <label className="block">{content}</label>
   );
 }
 
