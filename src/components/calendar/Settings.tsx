@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useCalendar } from '@/lib/store/calendar-store';
 import { todayIn } from '@/lib/tempo/civil';
 import { CATEGORY_PALETTE } from './constants';
+import { customHue, hueOf } from './tint';
 import { Notifications } from './Notifications';
 import { Button, inputClass, Modal, Section } from './ui';
 
@@ -311,6 +312,7 @@ function Categories() {
                 <Swatch
                   color={draft.color}
                   onPick={(color) => setDraft((d) => (d ? { ...d, color } : d))}
+                  custom={false}
                 />
               </div>
               <input
@@ -349,58 +351,126 @@ function Categories() {
   );
 }
 
+/**
+ * The constrained hues, painted on the slider's track so it shows what it will
+ * give: thirteen stops, every 30°, back round to where it started.
+ */
+const HUE_TRACK = `linear-gradient(90deg, ${Array.from({ length: 13 }, (_, i) =>
+  customHue((i * 30) % 360),
+).join(', ')})`;
+
 function Swatch({
   color,
   onPick,
   initialOpen = false,
+  custom = true,
 }: {
   color: string;
   onPick: (color: string) => void;
   initialOpen?: boolean;
+  /**
+   * Whether to offer the hue slider. Off for a category still being named: its
+   * name field commits on blur, and a slider takes focus when it is dragged.
+   * Once the category exists, its swatch has the slider.
+   */
+  custom?: boolean;
 }) {
   const [open, setOpen] = useState(initialOpen);
+  /**
+   * What the slider shows before it is let go. A slider fires on every pixel
+   * and every pick is a write to the category, so dragging previews here and
+   * releasing commits once.
+   */
+  const [preview, setPreview] = useState<string | null>(null);
+  const [hue, setHue] = useState(() => Math.round(hueOf(color)));
+  const shown = preview ?? color;
+
+  function commitPreview() {
+    if (preview && preview !== color) onPick(preview);
+    setPreview(null);
+  }
+
+  function toggle() {
+    if (open) commitPreview();
+    // Reopening a custom colour puts the slider back at its hue.
+    else setHue(Math.round(hueOf(color)));
+    setOpen(!open);
+  }
 
   return (
     <div className="relative shrink-0">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
         aria-label="Change colour"
         aria-expanded={open}
-        // The square is the value and stays 18px; the padding around it is the
-        // target. Growing the swatch itself would make the one thing on screen
-        // that has to be read at 2px wide be shown at three times that.
+        // The square is the value and stays 18px; the padding around it is
+        // the target.
         className="-m-2 flex items-center justify-center p-2"
       >
         <span
           className="block h-[18px] w-[18px] border border-hair transition-colors hover:border-hairlit"
-          style={{ background: color }}
+          style={{ background: shown }}
         />
       </button>
       {open && (
         <>
           {/* Catches the dismissing click. A window listener would race the
               button's own onClick and reopen what it just closed. */}
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div
-            className="absolute left-0 top-7 z-20 border border-hairlit bg-panel p-2 shadow-[0_8px_24px_rgba(0,0,0,0.7)]"
-            style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 24px)', gap: 6 }}
-          >
-            {CATEGORY_PALETTE.map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => {
-                  onPick(c);
-                  setOpen(false);
-                }}
-                aria-label={c}
-                className={`border transition-colors ${
-                  c === color ? 'border-bright' : 'border-transparent hover:border-hairlit'
-                }`}
-                style={{ background: c, width: 24, height: 24 }}
-              />
-            ))}
+            className="fixed inset-0 z-10"
+            onClick={() => {
+              commitPreview();
+              setOpen(false);
+            }}
+          />
+          <div className="absolute left-0 top-7 z-20 border border-hairlit bg-panel p-2 shadow-[0_8px_24px_rgba(0,0,0,0.7)]">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 24px)', gap: 6 }}>
+              {CATEGORY_PALETTE.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => {
+                    setPreview(null);
+                    onPick(c);
+                    setOpen(false);
+                  }}
+                  aria-label={c}
+                  className={`border transition-colors ${
+                    c === shown ? 'border-bright' : 'border-transparent hover:border-hairlit'
+                  }`}
+                  style={{ background: c, width: 24, height: 24 }}
+                />
+              ))}
+            </div>
+            {custom && (
+              <div className="mt-2">
+                <span className="label mb-1 block">CUSTOM</span>
+                <div className="relative h-4">
+                  <div
+                    aria-hidden
+                    className="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2"
+                    style={{ background: HUE_TRACK }}
+                  />
+                  <input
+                    type="range"
+                    min={0}
+                    max={359}
+                    step={1}
+                    value={hue}
+                    onChange={(e) => {
+                      const h = Number(e.target.value);
+                      setHue(h);
+                      setPreview(customHue(h));
+                    }}
+                    onPointerUp={commitPreview}
+                    onKeyUp={commitPreview}
+                    aria-label="Custom hue"
+                    className="hue-range absolute inset-0 h-full w-full"
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </>
       )}

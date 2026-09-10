@@ -629,6 +629,34 @@ body {
       }
     }
   }
+
+  /* The custom-hue slider. Its painted track is a sibling underneath, so the
+     input draws only its thumb: a square tick in ink. */
+  .hue-range {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    margin: 0;
+    cursor: pointer;
+  }
+  .hue-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 6px;
+    height: 16px;
+    background: var(--color-ink);
+    border: 1px solid var(--color-void);
+  }
+  .hue-range::-moz-range-thumb {
+    width: 6px;
+    height: 16px;
+    background: var(--color-ink);
+    border: 1px solid var(--color-void);
+    border-radius: 0;
+  }
+  .hue-range::-moz-range-track {
+    background: transparent;
+  }
 }
 
 /**
