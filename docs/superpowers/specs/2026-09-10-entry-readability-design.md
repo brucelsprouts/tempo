@@ -282,6 +282,9 @@ The swatch popover becomes a 5 × 2 grid with a hue slider under it.
   shows as the selected square.
 - **No free-form picker.** An arbitrary colour can make titles or chips
   unreadable, and nothing could keep the promise in decision 4.
+- **Not while a category is being named.** The new-category row commits on
+  blur, and dragging a slider takes focus, so that row offers the presets only.
+  The slider is there once the category exists.
 - `suggestColor` is unchanged: the first unused preset.
 
 `customHue` and `hueOf` live in `tint.ts` beside the mixing they share.
