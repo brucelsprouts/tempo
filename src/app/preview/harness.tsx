@@ -2,7 +2,14 @@
 
 import { CalendarShell } from '@/components/calendar/CalendarShell';
 import { useCalendar } from '@/lib/store/calendar-store';
-import { addDays, instantFromCivil, startOfMonth, todayIn, type CivilDate } from '@/lib/tempo/civil';
+import {
+  addDays,
+  instantFromCivil,
+  startOfMonth,
+  startOfWeek,
+  todayIn,
+  type CivilDate,
+} from '@/lib/tempo/civil';
 import { TEMPLATE_PRESETS } from '@/lib/tempo/derive';
 import type { Category, TempoEvent } from '@/lib/tempo/types';
 
@@ -13,6 +20,14 @@ const CATEGORIES: Category[] = [
   { id: 'c2', name: 'work', color: '#6d8bb0', sortOrder: 1 },
   { id: 'c3', name: 'school', color: '#b8705c', sortOrder: 2 },
   { id: 'c4', name: 'admin', color: '#8a9096', sortOrder: 3 },
+  // Five courses and a club, so all ten presets are on screen at once. The
+  // palette's close pairs can only be judged side by side.
+  { id: 'c5', name: 'CS4442', color: '#8f6da8', sortOrder: 4 },
+  { id: 'c6', name: 'STATS 2244', color: '#5aa39a', sortOrder: 5 },
+  { id: 'c7', name: 'PHIL 2700', color: '#b06d8b', sortOrder: 6 },
+  { id: 'c8', name: 'ECON 1022', color: '#947a30', sortOrder: 7 },
+  { id: 'c9', name: 'MATH 2155', color: '#128e99', sortOrder: 8 },
+  { id: 'c10', name: 'chess club', color: '#a8936d', sortOrder: 9 },
 ];
 
 function base(id: string, title: string, over: Partial<TempoEvent>): TempoEvent {
@@ -57,6 +72,31 @@ function timed(
     endsAt: instantFromCivil(date, to, TZ).toISOString(),
     ...over,
   });
+}
+
+/**
+ * Five entries with one title, told apart only by their categories — the case
+ * the category chips exist for — plus a multi-day task, a club and an entry
+ * with no category, whose plain grey bar has to stay distinct from every tint.
+ */
+function finalsWeek(monday: CivilDate): TempoEvent[] {
+  const day = (n: number) => addDays(monday, n);
+  return [
+    timed('f1', 'Final Exam', day(0), 9 * 60, 12 * 60, { categoryId: 'c6' }),
+    timed('f2', 'Final Exam', day(1), 14 * 60, 17 * 60, { categoryId: 'c7' }),
+    timed('f3', 'Final Exam', day(2), 9 * 60, 12 * 60, { categoryId: 'c8' }),
+    timed('f4', 'Final Exam', day(3), 19 * 60, 22 * 60, { categoryId: 'c5' }),
+    timed('f5', 'Final Exam', day(4), 12 * 60, 15 * 60, { categoryId: 'c9' }),
+    base('f6', 'Final project', {
+      kind: 'assignment',
+      status: 'doing',
+      startDate: day(0),
+      endDate: day(2),
+      categoryId: 'c5',
+    }),
+    timed('f7', 'Chess club', day(1), 18 * 60, 19 * 60, { categoryId: 'c10' }),
+    timed('f8', 'Coffee with Jo', day(4), 16 * 60, 17 * 60),
+  ];
 }
 
 function fixtures(today: CivilDate): TempoEvent[] {
@@ -149,6 +189,16 @@ function fixtures(today: CivilDate): TempoEvent[] {
       endDate: d(21),
       categoryId: 'c3',
     }),
+
+    // A class that repeats, so the form's CHANGE WHICH DATES? question has
+    // something to ask about.
+    timed('l1', 'Lecture', d(0), 10 * 60, 11 * 60 + 30, {
+      recurrence: { freq: 'WEEKLY', interval: 1, byWeekday: [2, 4] },
+      categoryId: 'c5',
+    }),
+
+    // Finals, two weeks out, Monday to Friday.
+    ...finalsWeek(addDays(startOfWeek(today), 15)),
   ];
 }
 
