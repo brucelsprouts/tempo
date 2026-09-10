@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { useCalendar } from '@/lib/store/calendar-store';
 import {
   getServerZoomSnapshot,
@@ -10,8 +10,10 @@ import {
 } from '@/lib/store/day-zoom';
 import type { CivilDate } from '@/lib/tempo/civil';
 import { minutesInZone, parts, todayIn } from '@/lib/tempo/civil';
-import type { Occurrence } from '@/lib/tempo/types';
-import { DEFAULT_CATEGORY_COLOR, MONTHS } from './constants';
+import type { Category, Occurrence } from '@/lib/tempo/types';
+import { MONTHS } from './constants';
+import { CategoryChip } from './CategoryChip';
+import { barColors } from './tint';
 import {
   applyDrag,
   DAY_MINUTES,
@@ -83,8 +85,8 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
     );
   }, [occurrences, date]);
 
-  const colorFor = (id: string | null) =>
-    categories.find((c) => c.id === id)?.color ?? DEFAULT_CATEGORY_COLOR;
+  const categoryFor = (id: string | null): Category | null =>
+    categories.find((c) => c.id === id) ?? null;
 
   /**
    * FIT has to know how tall the column is, and the column is sized by flexbox
@@ -259,16 +261,28 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
             scrolled ? 'shadow-[0_4px_8px_-4px_rgba(0,0,0,0.6)]' : '',
           ].join(' ')}>
           <div className="label mb-1.5">ALL DAY</div>
-          {bars.map((occ) => (
-            <button
-              key={occ.key}
-              onClick={() => onOpen(occ)}
-              style={{ borderLeftColor: colorFor(occ.categoryId) }}
-              className="flex w-full items-center gap-2 border-l-2 bg-raised px-2 py-1.5 text-left text-[11px] text-ink transition-colors hover:bg-sunken"
-            >
-              <span className="truncate">{occ.title}</span>
-            </button>
-          ))}
+          {bars.map((occ) => {
+            const category = categoryFor(occ.categoryId);
+            const colors = barColors(category?.color ?? null);
+            return (
+              <button
+                key={occ.key}
+                onClick={() => onOpen(occ)}
+                style={
+                  {
+                    background: colors.fill,
+                    color: colors.ink,
+                    borderLeft: `3px solid ${colors.edge}`,
+                    '--cat': colors.edge,
+                  } as CSSProperties
+                }
+                className="tint-hover flex w-full items-center gap-2 px-2 py-1.5 text-left text-[11px]"
+              >
+                <span className="min-w-0 flex-1 truncate">{occ.title}</span>
+                <CategoryChip category={category} className="max-w-[45%] shrink-0" />
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -310,7 +324,9 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
               const active = drag?.key === key ? drag : null;
               const top = active?.start ?? segment.top;
               const bottom = active?.end ?? segment.bottom;
-              const color = colorFor(occ.categoryId);
+              const category = categoryFor(occ.categoryId);
+              const colors = barColors(category?.color ?? null);
+              const color = colors.edge;
               const height = Math.max(18, ((bottom - top) / 60) * hourHeight - 2);
 
               return (
@@ -318,22 +334,27 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
                   key={key}
                   onPointerDown={(e) => beginTimeDrag(e, occ, segment, 'move')}
                   onClick={() => !drag && !justDragged.current && onOpen(occ)}
-                  style={{
-                    position: 'absolute',
-                    top: (top / 60) * hourHeight,
-                    height,
-                    left: `${(lane / of) * 100}%`,
-                    width: `calc(${100 / of}% - 3px)`,
-                    borderLeft: `2px solid ${color}`,
-                    zIndex: active ? 20 : 1,
-                  }}
+                  style={
+                    {
+                      position: 'absolute',
+                      top: (top / 60) * hourHeight,
+                      height,
+                      left: `${(lane / of) * 100}%`,
+                      width: `calc(${100 / of}% - 3px)`,
+                      background: colors.fill,
+                      color: colors.ink,
+                      borderLeft: `3px solid ${color}`,
+                      '--cat': color,
+                      zIndex: active ? 20 : 1,
+                    } as CSSProperties
+                  }
                   className={[
-                    'group overflow-hidden border-r border-hair bg-raised px-1.5 py-1',
+                    'group tint-hover overflow-hidden border-hair px-1.5 py-1',
                     // A block is a handle, not a paragraph. Without this the
                     // press that starts a move also starts a text selection,
                     // and the drag drags that instead.
                     'select-none',
-                    'text-[11px] text-ink transition-colors hover:border-hairlit hover:bg-sunken',
+                    'text-[11px]',
                     // A cut edge gets no border: a block ending flush at the
                     // bottom of the column would otherwise be indistinguishable
                     // from one that genuinely ends at midnight.
@@ -343,7 +364,9 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
                   ].join(' ')}
                 >
                   {segment.continuesBefore && height >= 40 && (
-                    <div className="label leading-none opacity-70">↑ FROM {shortDate(occ.date)}</div>
+                    <div className="label leading-none" style={{ color: colors.soft }}>
+                      ↑ FROM {shortDate(occ.date)}
+                    </div>
                   )}
 
                   {/* Three densities. A 15-minute entry used to render two
@@ -351,19 +374,31 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
                   {height >= 40 ? (
                     <>
                       <div className="truncate leading-tight">{occ.title}</div>
-                      <div className="label mt-0.5">{clockLabel(top)}</div>
+                      <div className="label mt-0.5" style={{ color: colors.soft }}>
+                        {clockLabel(top)}
+                      </div>
+                      {height >= 58 && category && (
+                        <div className="mt-1 flex min-w-0">
+                          <CategoryChip category={category} />
+                        </div>
+                      )}
                     </>
                   ) : height >= 22 ? (
                     <div className="flex items-baseline gap-1.5 leading-tight">
                       <span className="truncate">{occ.title}</span>
-                      <span className="label shrink-0 opacity-70">{clockLabel(top)}</span>
+                      <span className="label shrink-0" style={{ color: colors.soft }}>
+                        {clockLabel(top)}
+                      </span>
                     </div>
                   ) : (
                     <div className="truncate leading-none">{occ.title}</div>
                   )}
 
                   {segment.continuesAfter && height >= 40 && (
-                    <div className="label absolute inset-x-1.5 bottom-0.5 leading-none opacity-70">
+                    <div
+                      className="label absolute inset-x-1.5 bottom-0.5 leading-none"
+                      style={{ color: colors.soft }}
+                    >
                       ↓ TO {shortDate(occ.endDate)}
                     </div>
                   )}

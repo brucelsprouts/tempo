@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { useCalendar } from '@/lib/store/calendar-store';
 import type { EventKind, EventStatus, Occurrence } from '@/lib/tempo/types';
 import { DEFAULT_CATEGORY_COLOR } from './constants';
+import { CategoryChip } from './CategoryChip';
 
 /**
  * Everything on a day, ranked by how much it is asking of you.
@@ -61,8 +62,7 @@ export function TasksPane({ occurrences, onOpen }: Props) {
     [occurrences],
   );
 
-  const colorFor = (id: string | null) =>
-    categories.find((c) => c.id === id)?.color ?? DEFAULT_CATEGORY_COLOR;
+  const categoryFor = (id: string | null) => categories.find((c) => c.id === id) ?? null;
 
   if (ordered.length === 0) {
     return (
@@ -97,7 +97,7 @@ export function TasksPane({ occurrences, onOpen }: Props) {
               ) : (
                 <span
                   className="mt-px w-4 shrink-0 text-center text-[11px] leading-tight text-mute"
-                  style={{ color: colorFor(occ.categoryId) }}
+                  style={{ color: categoryFor(occ.categoryId)?.color ?? DEFAULT_CATEGORY_COLOR }}
                   aria-hidden
                 >
                   {occ.kind === 'milestone' ? '◆' : occ.kind === 'birthday' ? '✳' : '·'}
@@ -116,10 +116,13 @@ export function TasksPane({ occurrences, onOpen }: Props) {
                 >
                   {occ.title}
                 </span>
-                <span className="label mt-1 block">
-                  {occ.allDay
-                    ? 'ALL DAY'
-                    : `${clock(occ.startMinutes)}${occ.endMinutes != null ? `–${clock(occ.endMinutes)}` : ''}`}
+                <span className="mt-1 flex min-w-0 items-center gap-2">
+                  <span className="label shrink-0">
+                    {occ.allDay
+                      ? 'ALL DAY'
+                      : `${clock(occ.startMinutes)}${occ.endMinutes != null ? `–${clock(occ.endMinutes)}` : ''}`}
+                  </span>
+                  <CategoryChip category={categoryFor(occ.categoryId)} className="min-w-0" />
                 </span>
               </button>
             </div>
