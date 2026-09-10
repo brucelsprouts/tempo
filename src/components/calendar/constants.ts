@@ -7,18 +7,26 @@ import type { EventKind, EventStatus, TempoEvent } from '@/lib/tempo/types';
  * Genuinely infinite bidirectional scroll means prepending rows, which yanks
  * the scroll position and needs anchoring compensation to hide. A fixed range
  * of week rows costs nothing to virtualise and removes that entire class of
- * bug, and every row is the same height — so scroll offset maps linearly onto
- * dates, which is what makes the ruler on the left exact rather than
- * approximate.
+ * bug.
+ *
+ * Rows are not all one height, so scroll offset does not map linearly onto
+ * dates. Each is `MIN_ROW_H` at least and grows to fit its entries, and the
+ * virtualiser measures it once it has been drawn. `TODAY_OFFSET` still lands
+ * exactly, because every row above today is an unmeasured estimate on first
+ * paint (see `MIN_ROW_H`). Anything that has to be exact about a row that has
+ * been drawn reads the virtualiser's measurements instead (see `rowsInBand`).
+ * The month labels in the gutter need neither: each row draws its own.
  *
  * It was fifteen years, which was small enough that you could reach the end of
  * it by accident and have to think about where the calendar stops. A century
  * forward is far enough that the question stops coming up, and it is close to
  * free: the virtualiser mounts the eight rows on screen no matter how many
- * exist, and `TOTAL_H` lands around 10^6 px against a browser ceiling near
- * 3×10^7. Thirty years back covers anything worth scrolling to; a birth date
- * from 1940 is an anchor, which is a reference rather than a destination, and
- * the date picker reaches further back for exactly that reason.
+ * exist, and the whole epoch at `MIN_ROW_H` comes to around 10^6 px against a
+ * browser ceiling near 3×10^7. Growth does not close that gap, because only the
+ * rows you have actually drawn are measured taller. Thirty years back covers
+ * anything worth scrolling to; a birth date from 1940 is an anchor, which is a
+ * reference rather than a destination, and the date picker reaches further back
+ * for exactly that reason.
  */
 
 export const WEEKS_BEFORE = 30 * 52;
@@ -47,14 +55,6 @@ export const ROW_H = MIN_ROW_H;
  */
 export const ROW_PAD_B = 8;
 
-/**
- * Known statically, because every row is the same height. The scroll container
- * is sized from this rather than from the virtualiser's measured total: on the
- * very first paint the measurement is still 0, and assigning a scrollTop to a
- * zero-height element silently clamps to 0 — which lands the app on the wrong
- * date instead of today.
- */
-export const TOTAL_H = WEEK_COUNT * MIN_ROW_H;
 export const TODAY_OFFSET = WEEKS_BEFORE * MIN_ROW_H;
 /**
  * 34 rather than 30. The day number went to 12px and the strip was still sized
