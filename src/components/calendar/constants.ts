@@ -168,8 +168,15 @@ export const MONTHS_LONG = [
 
 /**
  * Category colours are the only hue in the interface, so they are muted enough
- * to sit on near-black without vibrating, and distinct enough to tell apart at
- * 2px wide.
+ * to sit on near-black without vibrating. They are read as a 50% fill and as a
+ * solid chip (see `tint.ts`), and `tint.test.ts` holds each to 4.5:1 in both.
+ *
+ * Ochre and petrol were added by search rather than by eye: within the first
+ * eight's band of lightness and chroma, the two hues farthest from all of them
+ * as fills — each farther from its nearest neighbour than steel is from
+ * graphite, the palette's closest pair. The first eight are unchanged: every
+ * category stores its colour as hex, so retuning one would rewrite user rows.
+ * Graphite stays last, the neutral, and is what an uncategorised edge uses.
  */
 export const CATEGORY_PALETTE = [
   '#b8705c', // rust
@@ -179,6 +186,8 @@ export const CATEGORY_PALETTE = [
   '#8f6da8', // plum
   '#5aa39a', // teal
   '#b06d8b', // rose
+  '#947a30', // ochre
+  '#128e99', // petrol
   '#8a9096', // graphite
 ] as const;
 

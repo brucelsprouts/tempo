@@ -210,11 +210,11 @@ function Keycap({ children }: { children: React.ReactNode }) {
 /**
  * Category CRUD.
  *
- * The palette is fixed rather than a free colour input. These eight are tuned
- * to sit on near-black without vibrating and to stay distinguishable as a 2px
- * left border, which is the size they are actually read at; an arbitrary picker
- * gives that up in exchange for a freedom nobody needs. Past eight, colours
- * repeat — a duplicate is a smaller problem than an unreadable one.
+ * Ten presets and a hue slider rather than a free colour input. A category's
+ * colour is read as a 50% fill behind light text and as a solid chip behind
+ * near-black text, and `tint.test.ts` holds every preset and every custom hue
+ * to 4.5:1 in both — an arbitrary picker would give that up. Past ten, colours
+ * repeat or crowd each other, which the chip, naming the category, survives.
  */
 function Categories() {
   const categories = useCalendar((s) => s.categories);
@@ -384,7 +384,7 @@ function Swatch({
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div
             className="absolute left-0 top-7 z-20 border border-hairlit bg-panel p-2 shadow-[0_8px_24px_rgba(0,0,0,0.7)]"
-            style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 24px)', gap: 6 }}
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 24px)', gap: 6 }}
           >
             {CATEGORY_PALETTE.map((c) => (
               <button

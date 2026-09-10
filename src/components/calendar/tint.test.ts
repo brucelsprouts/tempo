@@ -47,6 +47,10 @@ describe('bar colours', () => {
   it('hands back the same object for the same colour', () => {
     expect(barColors('#7d9a6d')).toBe(barColors('#7d9a6d'));
   });
+
+  it('offers ten distinct presets', () => {
+    expect(new Set(CATEGORY_PALETTE).size).toBe(10);
+  });
 });
 
 describe('mixing and contrast', () => {
