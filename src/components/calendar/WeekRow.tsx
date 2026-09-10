@@ -23,6 +23,7 @@ import {
   LANE_BUDGET,
   MONTHS,
   ROW_H,
+  ROW_PAD_B,
   UNTITLED,
 } from './constants';
 
@@ -209,50 +210,66 @@ function WeekRowImpl({
   onDayPick,
   selectedDay,
 }: Props) {
-  const { weekStart, weekEnd, days, segments, overflow, laneTops, laneHeights, laneCount } = layout;
+  const { weekStart, weekEnd, days, segments, overflow, contentHeight } = layout;
   const containsToday = days.includes(today);
 
   /**
-   * The draft's footprint in this row, if it has one.
+   * The footprints this row draws that no entry occupies yet.
    *
-   * Clipped to the week the same way a real segment is, but assigned a lane
-   * *after* the last real one rather than through `layoutWeek` — a draft that
-   * competed for lanes could push a real bar into the overflow counter, so the
-   * calendar would rearrange itself while you were still deciding whether to
-   * create anything at all. It stacks on top and displaces nothing.
+   * Clipped to the week the way a real segment is, but placed *after*
+   * everything already in the row rather than through `layoutWeek` — a draft
+   * that competed for lanes could push real bars around while you were still
+   * deciding whether to create anything at all. It displaces nothing.
+   *
+   * Below `contentHeight`, not below the last lane: lanes stack per column, so
+   * the last lane is not always the lowest bar, and a draft placed under it
+   * could land on a taller bar in another column.
+   *
+   * The two kinds are placed differently since bars doubled:
+   * - The form's draft (labelled) takes the room below and the row grows to
+   *   hold it. Clamped to the old budget, a 56px draft sat on top of existing
+   *   bars in nearly every busy week.
+   * - A move preview (unlabelled) stays clamped to the row as it stands:
+   *   growing rows mid-drag would shift every row below, and the drop target
+   *   with them. On a full row it sits on the last line, which reads as "and
+   *   more" — and is the truth.
    */
   const drafts = (() => {
     const touching = ghost.filter((g) => rangesOverlap(g.start, g.end, weekStart, weekEnd));
     if (touching.length === 0) return [];
 
     const height = KIND_HEIGHT.event;
-    const after =
-      laneCount === 0 ? 0 : (laneTops[laneCount - 1] ?? 0) + (laneHeights[laneCount - 1] ?? 0) + LANE_GAP;
+    const after = contentHeight === 0 ? 0 : contentHeight + LANE_GAP;
+    const laneArea = Math.max(LANE_BUDGET, contentHeight + ROW_PAD_B);
 
-    return touching.map((g, i) => ({
-      label: g.label,
-      // A draft that starts before this row is continued *into* it, and the bar
-      // it is standing in for would say so with a ‹. Its title belongs on the
-      // row the entry begins in, not repeated on every row it crosses.
-      clipped: g.start < weekStart,
-      startCol: diffDays(maxDate(g.start, weekStart), weekStart),
-      endCol: diffDays(minDate(g.end, weekEnd), weekStart),
-      // Stacked below one another, then clamped rather than allowed to run past
-      // the row: on a full week there is no free slot, and the honest failure is
-      // to sit on the last line of the budget rather than to draw outside the
-      // row and over the week below. Several bands moving together can exhaust
-      // the budget on their own, so they pile up on that last line — which reads
-      // as "and more", and is the truth.
-      top: Math.min(after + i * (height + LANE_GAP), Math.max(0, LANE_BUDGET - height)),
-      height,
-    }));
+    return touching.map((g, i) => {
+      const stacked = after + i * (height + LANE_GAP);
+      return {
+        label: g.label,
+        // A draft that starts before this row is continued *into* it, and the
+        // bar it stands in for would say so with a ‹. Its title belongs on the
+        // row the entry begins in, not repeated on every row it crosses.
+        clipped: g.start < weekStart,
+        startCol: diffDays(maxDate(g.start, weekStart), weekStart),
+        endCol: diffDays(minDate(g.end, weekEnd), weekStart),
+        top: g.label !== undefined ? stacked : Math.min(stacked, Math.max(0, laneArea - height)),
+        height,
+      };
+    });
   })();
+
+  /**
+   * As tall as the lowest thing in it plus a floor, and never shorter than a
+   * quiet week. The floor keeps a busy day's last entry off the rule below.
+   */
+  const draftBottom = drafts.reduce((bottom, d) => Math.max(bottom, d.top + d.height), 0);
+  const rowHeight = Math.max(ROW_H, Math.max(contentHeight, draftBottom) + DAY_HEADER_H + ROW_PAD_B);
 
   // Month label in the gutter whenever a month begins inside this row.
   const monthStartDay = days.find(isFirstOfMonth);
 
   return (
-    <div className="flex border-b border-hair" style={{ height: Math.max(ROW_H, layout.contentHeight + DAY_HEADER_H) }}>
+    <div className="flex border-b border-hair" style={{ height: rowHeight }}>
       <div
         className="relative shrink-0 select-none pt-1.5 pr-2 text-right"
         style={{ width: GUTTER_W }}
@@ -349,7 +366,7 @@ function WeekRowImpl({
                   }}
                   className={
                     written
-                      ? 'ml-[4px] flex items-center overflow-hidden border-y border-r border-hair border-l-2 border-l-dim bg-raised pl-1.5 pr-1 text-[12px]'
+                      ? 'ml-[4px] flex items-start overflow-hidden border-y border-r border-hair border-l-2 border-l-dim bg-raised pl-1.5 pr-1 pt-[5px] text-[12px]'
                       : 'ml-[4px] border border-dashed border-mute bg-raised/40'
                   }
                 >

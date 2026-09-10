@@ -26,24 +26,26 @@ export const WEEKS_AFTER = 100 * 52;
 export const WEEK_COUNT = WEEKS_BEFORE + WEEKS_AFTER;
 
 /**
- * 190, up from 146.
+ * The least a week row is: 190px, up from 146 when bars first grew.
  *
- * A 21px bar carrying an 11px title was readable when you looked straight at it
- * and invisible when you were scanning, which is the whole of "things get lost
- * and I feel a little blind". Every bar in `KIND_HEIGHT` grew about 35% and the
- * row grew 30% to hold the same stack, so the density is *held* rather than
- * improved — four events still fit, three tasks still fit — and what changed is
- * that the bars you can see are legible at a glance. It costs about one row per
- * screen: roughly five in a 720px window where six used to fit.
- *
- * It stays a compile-time constant, which is the invariant the whole scroll
- * architecture rests on: `TOTAL_H` is known before first paint, jumping to a
- * date is arithmetic rather than a measured scroll, the lasso's hit test
- * divides by it, and the entry modal's cut scrim can locate a week row without
- * finding it in the DOM.
+ * A floor, not a fixed height. Rows grow to fit their entries and the
+ * virtualiser measures each one; this is what a quiet week is, what an
+ * unmeasured row is assumed to be, and what `TODAY_OFFSET` is counted in —
+ * every row above today is unmeasured on first paint, so that arithmetic still
+ * lands exactly. Anything that has to be exact about a row that *has* been
+ * drawn asks the virtualiser's measurements instead (see `rowsInBand`).
  */
 export const MIN_ROW_H = 190;
 export const ROW_H = MIN_ROW_H;
+
+/**
+ * Space left under the lowest bar of a row that has grown to fit.
+ *
+ * A row sized exactly to its content put the last entry flush on the rule
+ * below it, so a busy day read as running into the next week. A quiet row is at
+ * `MIN_ROW_H` already and never reaches this.
+ */
+export const ROW_PAD_B = 8;
 
 /**
  * Known statically, because every row is the same height. The scroll container
@@ -66,16 +68,14 @@ export const TODAY_OFFSET = WEEKS_BEFORE * MIN_ROW_H;
 export const DAY_HEADER_H = 34;
 
 /**
- * What a row will spend on bars, in pixels rather than in lanes.
+ * What a quiet week has for bars: `MIN_ROW_H` less the day header.
  *
- * Four events still fit: lanes at 0, 32, 64, 96, last bottom at 124. Three
- * tasks fit: 0, 46, 92, last bottom at 134. A day with two tasks and two events
- * still draws three and a "+1" — the fourth lane would end at 152. Those are
- * the same three cases the old 103px budget was chosen against and they resolve
- * the same way: the row and everything in it grew together, so the week that
- * overflowed before overflows now. Trading lanes away for size would have been
- * a different decision. That day stays fully readable in the day modal's task
- * pane, and the "+1" chip is the link to it.
+ * Once a pixel budget — the stack a row would draw before a "+N" took over —
+ * and the arithmetic it was chosen against (four 28px events, three 42px tasks)
+ * went when bars doubled. Rows grow to fit their entries, so this is a floor
+ * rather than a cap: the least room a row's bars have, and the room a move
+ * preview is kept inside while rows cannot grow under the pointer (see
+ * `WeekRow`'s drafts).
  */
 export const LANE_BUDGET = MIN_ROW_H - DAY_HEADER_H;
 
