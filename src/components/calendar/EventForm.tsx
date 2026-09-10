@@ -14,12 +14,13 @@ import {
   defaultReminders,
   TIMED_PRESETS,
 } from '@/lib/tempo/reminders';
-import type { EventKind, Frequency, Occurrence, Recurrence, Reminder } from '@/lib/tempo/types';
+import type { EventKind, Occurrence, Recurrence, Reminder } from '@/lib/tempo/types';
 import type { EntrySeed } from './CalendarShell';
 import { UNTITLED } from './constants';
 import { DatePicker } from './DatePicker';
 import { WhenField } from './WhenField';
 import { LAST_MINUTE, normalizeWhen, ontoSeries, type WhenValue } from './when';
+import { clampInterval, MAX_INTERVAL, periodWord, repeatRule, type RepeatFreq } from './repeat';
 import { Button, Field, inputClass, SegmentedControl } from './ui';
 
 /**
@@ -106,44 +107,37 @@ const KINDS_WITH_TASK = [
 ] as const satisfies readonly { value: EventKind; label: string }[];
 
 /**
- * The repeat cells are keys rather than frequencies, because "every two months"
- * is the same `MONTHLY` frequency at a different interval — the pair is what the
- * cell means, so the control picks a pair and `RECURRENCE_KINDS` unpacks it.
- * Anything stored with an interval the cells cannot express still lands on the
- * right frequency, one cell to the left of the truth, rather than on ONCE.
- */
-type RepeatKey = 'NONE' | 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'MONTHLY_2' | 'YEARLY';
-
-const RECURRENCE_KINDS: Record<RepeatKey, { freq: Frequency; interval: number } | null> = {
-  NONE: null,
-  DAILY: { freq: 'DAILY', interval: 1 },
-  WEEKLY: { freq: 'WEEKLY', interval: 1 },
-  MONTHLY: { freq: 'MONTHLY', interval: 1 },
-  MONTHLY_2: { freq: 'MONTHLY', interval: 2 },
-  YEARLY: { freq: 'YEARLY', interval: 1 },
-};
-
-/**
- * `1D` rather than `DAY`, because the sixth cell is what broke the words: six
- * labels across one column truncated DAY and MONTH into each other, and a
- * truncated word is worse than a short one. Count-plus-unit also says the thing
- * the cells now actually differ by — the interval — so `1M` and `2M` read as one
- * scale instead of a word beside an abbreviation. ONCE keeps its word: it is the
- * absence of a repeat, not a repeat of one, and `0` would be a lie.
+ * The frequency, in words.
+ *
+ * The cells were `1D 1W 1M 2M 1Y` because a sixth cell (every two months) broke
+ * the words: six labels across one column truncated DAY and MONTH into each
+ * other. The count has its own field now — EVERY [ N ] — so the cells are five
+ * again, and five fit as words.
  */
 const FREQS = [
   { value: 'NONE', label: 'ONCE' },
-  { value: 'DAILY', label: '1D' },
-  { value: 'WEEKLY', label: '1W' },
-  { value: 'MONTHLY', label: '1M' },
-  { value: 'MONTHLY_2', label: '2M' },
-  { value: 'YEARLY', label: '1Y' },
-] as const satisfies readonly { value: RepeatKey; label: string }[];
+  { value: 'DAILY', label: 'DAY' },
+  { value: 'WEEKLY', label: 'WEEK' },
+  { value: 'MONTHLY', label: 'MONTH' },
+  { value: 'YEARLY', label: 'YEAR' },
+] as const satisfies readonly { value: RepeatFreq; label: string }[];
 
-function repeatKeyOf(r: Recurrence | null | undefined): RepeatKey {
-  if (!r) return 'NONE';
-  if (r.freq === 'MONTHLY' && (r.interval ?? 1) >= 2) return 'MONTHLY_2';
-  return r.freq;
+/** A small number field: EVERY's count, and a custom reminder's amount. */
+const NUMBER_BOX =
+  'w-14 border border-hair bg-panel px-1.5 py-2 text-center text-[12px] tabular-nums text-ink outline-none transition-colors focus:border-hairlit';
+
+/**
+ * Keeps a click on the words and gaps inside a `Field` from reaching its first
+ * control.
+ *
+ * `Field` is a <label>, and a label hands any click on its plain content to the
+ * first control inside it. For a field that is one input, that is the point.
+ * For one holding a row of buttons it meant a click on EVERY or on WEEKS
+ * pressed ONCE and turned the repeat off, and a click between two reminder
+ * chips pressed the first of them. Only the controls themselves answer now.
+ */
+function onlyControlsAnswer(e: React.MouseEvent) {
+  if (!(e.target as Element).closest('button, input, select, textarea')) e.preventDefault();
 }
 
 const TEMPLATES = [
@@ -230,7 +224,15 @@ export function EventForm({
   const { startDate, endDate, allDay } = when;
 
   const [categoryId, setCategoryId] = useState<string | null>(existing?.categoryId ?? null);
-  const [freq, setFreq] = useState<RepeatKey>(repeatKeyOf(existing?.recurrence));
+  const [freq, setFreq] = useState<RepeatFreq>(existing?.recurrence?.freq ?? 'NONE');
+  const [every, setEvery] = useState(existing?.recurrence?.interval ?? 1);
+  /**
+   * What the EVERY field says while it is being typed in, kept apart from
+   * `every` so the field can be emptied. Held to the clamped number alone,
+   * backspacing a 1 put the 1 straight back and the next digit landed after
+   * it — typing 3 there said 13. Leaving the field shows the number kept.
+   */
+  const [everyText, setEveryText] = useState<string | null>(null);
   const [templateKey, setTemplateKey] = useState<string>(
     TEMPLATES.find((t) => t.template === existing?.displayTemplate)?.value ?? 'none',
   );
@@ -284,7 +286,7 @@ export function EventForm({
   // A birthday is the general machinery with the dials pre-set, not a special
   // case: yearly recurrence, an anchor on the birth date, and an age template.
   const isBirthday = kind === 'birthday';
-  const effectiveFreq: RepeatKey = isBirthday ? 'YEARLY' : freq;
+  const effectiveFreq: RepeatFreq = isBirthday ? 'YEARLY' : freq;
   const effectiveTemplate = isBirthday
     ? TEMPLATE_PRESETS.birthday
     : (TEMPLATES.find((t) => t.value === templateKey)?.template ?? null);
@@ -319,15 +321,11 @@ export function EventForm({
   }, [effectiveTemplate, title, effectiveAnchor, startDate, today, isBirthday, needsAnchor]);
 
   function buildRecurrence(): Recurrence | null {
-    const kind = RECURRENCE_KINDS[effectiveFreq];
-    if (!kind) return null;
-    return {
-      freq: kind.freq,
-      interval: kind.interval,
-      // A leap-day birthday still happens every year, so birthdays clamp
-      // rather than following RFC 5545's skip rule.
-      ...(isBirthday ? { onInvalid: 'clamp' as const } : {}),
-    };
+    // A leap-day birthday still happens every year, so birthdays clamp rather
+    // than following RFC 5545's skip rule — and their rule is theirs, not the
+    // form's to reshape.
+    if (isBirthday) return { freq: 'YEARLY', interval: 1, onInvalid: 'clamp' };
+    return repeatRule(existing?.recurrence ?? null, freq, every);
   }
 
   /**
@@ -487,7 +485,35 @@ export function EventForm({
 
         {!isBirthday && (
           <Field label="[03] REPEATS">
-            <SegmentedControl value={freq} options={FREQS} onChange={setFreq} />
+            <div className="flex flex-wrap items-center gap-2" onClick={onlyControlsAnswer}>
+              {/* 260px: five cells as wide as MONTH needs. Allowed to shrink
+                  past that, the cells gave their room to the EVERY count and
+                  truncated to O… D… W… in the half-width column; held here,
+                  the count wraps onto its own line instead. */}
+              <div className="min-w-[260px] flex-1">
+                <SegmentedControl value={freq} options={FREQS} onChange={setFreq} />
+              </div>
+              {freq !== 'NONE' && (
+                <span className="flex shrink-0 items-center gap-1.5">
+                  <span className="label">EVERY</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={MAX_INTERVAL}
+                    value={everyText ?? every}
+                    onChange={(e) => {
+                      setEveryText(e.target.value);
+                      if (e.target.value !== '') setEvery(clampInterval(e.target.valueAsNumber));
+                    }}
+                    onBlur={() => setEveryText(null)}
+                    aria-label="Repeat every"
+                    className={NUMBER_BOX}
+                  />
+                  <span className="label">{periodWord(freq, every)}</span>
+                </span>
+              )}
+            </div>
           </Field>
         )}
 
