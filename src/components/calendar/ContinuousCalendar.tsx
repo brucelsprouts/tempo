@@ -37,6 +37,7 @@ import {
   DAYS_PER_WEEK,
   layoutWeek,
   occurrencesInMarquee,
+  rowsInBand,
   type MarqueeRect,
   type WeekLayout,
 } from '@/lib/tempo/layout';
@@ -117,6 +118,15 @@ const EMPTY_GHOSTS: readonly GhostBand[] = [];
 
 /** And for "no resize in flight", so the preview memo below stays stable. */
 const EMPTY_OCCURRENCES: readonly Occurrence[] = [];
+
+/**
+ * The one part of the virtualiser the lasso reads: every row's measured extent,
+ * in order. `getMeasurements` is private in its type declarations and public at
+ * runtime; naming the shape here keeps the read typed instead of `any`.
+ */
+type MeasuredRows = {
+  getMeasurements: () => ReadonlyArray<{ index: number; start: number; end: number }>;
+};
 
 /**
  * The one primitive every grid gesture is built on: where the pointer is, as a
@@ -678,19 +688,8 @@ export function ContinuousCalendar({
     const el = scrollRef.current;
     if (!gesture || !el) return;
 
-    const getWeekRange = (y0: number, y1: number) => {
-      const measurements = (virtualizer as any).getMeasurements();
-      const result = [];
-      const estStart = Math.max(0, Math.floor(y0 / ROW_H) - 10);
-      for (let i = estStart; i < measurements.length; i++) {
-        const m = measurements[i];
-        if (m.start > y1) break;
-        if (m.end >= y0) {
-          result.push({ index: m.index, start: m.start, end: m.end });
-        }
-      }
-      return result;
-    };
+    const getWeekRange = (y0: number, y1: number) =>
+      rowsInBand((virtualizer as unknown as MeasuredRows).getMeasurements(), y0, y1);
 
     const apply = () => {
       const { x, y } = pointer.current;

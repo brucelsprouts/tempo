@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addDays } from './civil';
-import { KIND_HEIGHT, LANE_GAP, layoutWeek, occurrencesInMarquee } from './layout';
+import { KIND_HEIGHT, LANE_GAP, layoutWeek, occurrencesInMarquee, rowsInBand } from './layout';
 import type { EventKind, Occurrence } from './types';
 
 // week of Sunday 2026-07-26 … Saturday 2026-08-01
@@ -345,5 +345,29 @@ describe('lasso hit-testing', () => {
       { ...METRICS, colWidth: 0 },
     );
     expect(hits.size).toBe(0);
+  });
+});
+
+describe('rows a band crosses', () => {
+  // Forty measured rows of 400px — a busy stretch, and far more extra height
+  // than the old `floor(y0 / ROW_H) - 10` starting guess could absorb.
+  const rows = Array.from({ length: 40 }, (_, i) => ({ index: i, start: i * 400, end: (i + 1) * 400 }));
+  const indexes = (y0: number, y1: number) => rowsInBand(rows, y0, y1).map((r) => r.index);
+
+  it('finds a row the old starting guess would have skipped', () => {
+    // The guess would start at floor(12_010 / 190) - 10 = 53, past the last row.
+    expect(indexes(12_010, 12_390)).toEqual([30]);
+  });
+
+  it('returns every row a band spans', () => {
+    expect(indexes(399, 1_201)).toEqual([0, 1, 2, 3]);
+  });
+
+  it('reads a band given bottom-up the same as top-down', () => {
+    expect(indexes(1_201, 399)).toEqual(indexes(399, 1_201));
+  });
+
+  it('returns nothing for a band below the last row', () => {
+    expect(indexes(20_000, 20_100)).toEqual([]);
   });
 });

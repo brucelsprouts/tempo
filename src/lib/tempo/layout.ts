@@ -346,3 +346,41 @@ export function occurrencesInMarquee(
 
   return hits;
 }
+
+/** One row's extent, in the scroll container's content coordinates. */
+export interface RowSpan {
+  index: number;
+  start: number;
+  end: number;
+}
+
+/**
+ * The rows a vertical band crosses, from rows sorted by `start`.
+ *
+ * A binary search rather than a guess. The lasso used to start scanning at
+ * `floor(y0 / ROW_H) - 10`, which is only near the truth while rows are close
+ * to `ROW_H` tall. Rows grow to fit their entries and the virtualiser measures
+ * them, so a stretch of busy weeks above the band pushes the real index below
+ * the guess — past about ten rows' worth of extra height the scan began after
+ * the marquee and the lasso selected nothing.
+ *
+ * Takes the band either way up, like the marquee it serves.
+ */
+export function rowsInBand(rows: ReadonlyArray<RowSpan>, y0: number, y1: number): RowSpan[] {
+  const top = Math.min(y0, y1);
+  const bottom = Math.max(y0, y1);
+
+  let lo = 0;
+  let hi = rows.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (rows[mid].end < top) lo = mid + 1;
+    else hi = mid;
+  }
+
+  const hits: RowSpan[] = [];
+  for (let i = lo; i < rows.length && rows[i].start <= bottom; i++) {
+    hits.push({ index: rows[i].index, start: rows[i].start, end: rows[i].end });
+  }
+  return hits;
+}
