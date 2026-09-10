@@ -69,6 +69,69 @@ export function defaultReminders(kind: TempoEvent['kind'], allDay: boolean): Rem
   return allDay ? [{ minutes: 900 }] : [{ minutes: 30 }];
 }
 
+export type LeadUnit = 'minutes' | 'hours' | 'days' | 'weeks';
+
+const UNIT_MINUTES: Record<LeadUnit, number> = {
+  minutes: 1,
+  hours: 60,
+  days: 1440,
+  weeks: 10080,
+};
+
+/** "3 hours before", as a lead in minutes. */
+export function leadMinutes(amount: number, unit: LeadUnit): number {
+  return Math.round(amount) * UNIT_MINUTES[unit];
+}
+
+/**
+ * "2 days before, at 08:00", as minutes before the midnight an all-day entry
+ * starts at. `daysBefore` 0 is the day itself, which comes out negative.
+ */
+export function allDayLeadMinutes(daysBefore: number, timeOfDay: number): number {
+  return Math.round(daysBefore) * 1440 - timeOfDay;
+}
+
+/** Whether the dispatcher will actually send a reminder this far out. */
+export function isSendableLead(minutes: number): boolean {
+  return minutes >= MIN_LEAD_MINUTES && minutes <= MAX_LEAD_MINUTES;
+}
+
+/**
+ * What a reminder's chip says.
+ *
+ * A preset keeps its own words. Anything else is described the way its side
+ * of the all-day line thinks — a lead time on a timed entry, a day and a time
+ * of day on an all-day one — so a custom reminder, or one carried across a
+ * switch between the two, shows up as a chip instead of vanishing from the form
+ * while still being sent.
+ */
+export function reminderLabel(minutes: number, allDay: boolean): string {
+  const preset = (allDay ? ALL_DAY_PRESETS : TIMED_PRESETS).find((p) => p.minutes === minutes);
+  if (preset) return preset.label;
+  return allDay ? allDayLabel(minutes) : timedLabel(minutes);
+}
+
+function timedLabel(minutes: number): string {
+  if (minutes === 0) return 'At the time';
+  const size = Math.abs(minutes);
+  const unit = (['weeks', 'days', 'hours', 'minutes'] as const).find(
+    (u) => size % UNIT_MINUTES[u] === 0,
+  )!;
+  const n = size / UNIT_MINUTES[unit];
+  const word = n === 1 ? unit.slice(0, -1) : unit;
+  return `${n} ${word} ${minutes > 0 ? 'before' : 'after'}`;
+}
+
+function allDayLabel(minutes: number): string {
+  // Which day, counting back from the entry's own; then the time on it.
+  const days = Math.ceil(minutes / 1440);
+  const time = days * 1440 - minutes;
+  const clock = `${String(Math.floor(time / 60)).padStart(2, '0')}:${String(time % 60).padStart(2, '0')}`;
+  if (days === 0) return `That day, ${clock}`;
+  const n = Math.abs(days);
+  return `${n} day${n === 1 ? '' : 's'} ${days > 0 ? 'before' : 'after'}, ${clock}`;
+}
+
 /** One reminder that has come due, ready to be sent. */
 export interface DueReminder {
   event: TempoEvent;
@@ -92,8 +155,8 @@ export interface DueReminder {
  * an older client — and an unbounded lead would make every tick expand years
  * of the calendar looking for occurrences to warn about.
  */
-const MAX_LEAD_MINUTES = 40320; // four weeks, Google's own ceiling
-const MIN_LEAD_MINUTES = -1440; // one day *after* the start
+export const MAX_LEAD_MINUTES = 40320; // four weeks, Google's own ceiling
+export const MIN_LEAD_MINUTES = -1440; // one day *after* the start
 
 /**
  * When an occurrence starts, as a real instant.

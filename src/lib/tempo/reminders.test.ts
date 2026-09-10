@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { parseReminders } from './mappers';
-import { defaultReminders, dueReminders, occurrenceStart, reminderText } from './reminders';
+import {
+  allDayLeadMinutes,
+  defaultReminders,
+  dueReminders,
+  isSendableLead,
+  leadMinutes,
+  occurrenceStart,
+  reminderLabel,
+  reminderText,
+} from './reminders';
 import type { OccurrenceOverride, TempoEvent } from './types';
 
 // ------------------------------------------------------------------ fixtures
@@ -354,5 +363,41 @@ describe('defaults and parsing', () => {
   it('degrades a malformed column to silence rather than throwing', () => {
     expect(parseReminders('every so often')).toEqual([]);
     expect(parseReminders([{ minutes: 'soon' }])).toEqual([]);
+  });
+});
+
+describe('custom reminders', () => {
+  it('keeps a preset’s own words', () => {
+    expect(reminderLabel(60, false)).toBe('1 hour before');
+    expect(reminderLabel(900, true)).toBe('The day before, 09:00');
+  });
+
+  it('names a custom lead on a timed entry in its largest whole unit', () => {
+    expect(reminderLabel(180, false)).toBe('3 hours before');
+    expect(reminderLabel(45, false)).toBe('45 minutes before');
+    expect(reminderLabel(4320, false)).toBe('3 days before');
+    expect(reminderLabel(20160, false)).toBe('2 weeks before');
+    expect(reminderLabel(1, false)).toBe('1 minute before');
+    expect(reminderLabel(-30, false)).toBe('30 minutes after');
+  });
+
+  it('names one on an all-day entry as a day and a time', () => {
+    expect(reminderLabel(-480, true)).toBe('That day, 08:00');
+    expect(reminderLabel(60, true)).toBe('1 day before, 23:00');
+    expect(reminderLabel(allDayLeadMinutes(3, 8 * 60), true)).toBe('3 days before, 08:00');
+  });
+
+  it('builds leads from what the custom row asks for', () => {
+    expect(leadMinutes(1, 'hours')).toBe(60);
+    expect(leadMinutes(2, 'weeks')).toBe(20160);
+    expect(allDayLeadMinutes(0, 9 * 60)).toBe(-540);
+    expect(allDayLeadMinutes(1, 9 * 60)).toBe(900);
+  });
+
+  it('only offers what the dispatcher will send', () => {
+    expect(isSendableLead(40320)).toBe(true);
+    expect(isSendableLead(40321)).toBe(false);
+    expect(isSendableLead(-1440)).toBe(true);
+    expect(isSendableLead(-1441)).toBe(false);
   });
 });

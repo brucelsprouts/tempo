@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useImperativeHandle, useMemo, useState, type Ref } from 'react';
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
 import { useCalendar, type EventDraft } from '@/lib/store/calendar-store';
 import { civil, parts, todayIn, yearsBetween, type CivilDate } from '@/lib/tempo/civil';
 import { eventSpan } from '@/lib/tempo/recurrence';
@@ -11,13 +11,19 @@ import {
 } from '@/lib/tempo/derive';
 import {
   ALL_DAY_PRESETS,
+  allDayLeadMinutes,
   defaultReminders,
+  isSendableLead,
+  leadMinutes,
+  reminderLabel,
   TIMED_PRESETS,
+  type LeadUnit,
 } from '@/lib/tempo/reminders';
 import type { EventKind, Occurrence, Recurrence, Reminder } from '@/lib/tempo/types';
 import type { EntrySeed } from './CalendarShell';
 import { UNTITLED } from './constants';
 import { DatePicker } from './DatePicker';
+import { parseTimeInput, TimePicker } from './TimePicker';
 import { WhenField } from './WhenField';
 import { LAST_MINUTE, normalizeWhen, ontoSeries, type WhenValue } from './when';
 import { clampInterval, MAX_INTERVAL, periodWord, repeatRule, type RepeatFreq } from './repeat';
@@ -281,6 +287,46 @@ export function EventForm({
     else if (reminders.length < 5) {
       setChosenReminders([...reminders, { minutes }].sort((a, b) => b.minutes - a.minutes));
     } else setChosenReminders(reminders);
+  }
+
+  /**
+   * The + CUSTOM row: open or not, and what it holds. Both shapes are kept, so
+   * flipping the all-day switch with the row open does not lose what was typed.
+   */
+  const [custom, setCustom] = useState<{
+    amount: number;
+    unit: LeadUnit;
+    days: number;
+    at: number;
+  } | null>(null);
+  const [customError, setCustomError] = useState<string | null>(null);
+  /** The custom row's time field. An Enter there has to be read off the field. */
+  const customTime = useRef<HTMLDivElement>(null);
+
+  // The presets, then every chosen reminder no preset covers: a custom lead, or
+  // one carried across a switch between timed and all-day. Left out, a reminder
+  // that still sends would be one the form hides.
+  const chips = [
+    ...presets,
+    ...reminders
+      .filter((r) => !presets.some((p) => p.minutes === r.minutes))
+      .map((r) => ({ minutes: r.minutes, label: reminderLabel(r.minutes, allDay) })),
+  ];
+
+  function addCustom(at = custom?.at) {
+    if (!custom || at === undefined) return;
+    const minutes = allDay
+      ? allDayLeadMinutes(custom.days, at)
+      : leadMinutes(custom.amount, custom.unit);
+    // Exactly the range the dispatcher sends. A reminder outside it would sit on
+    // the entry and never arrive.
+    if (!isSendableLead(minutes)) {
+      setCustomError(allDay ? 'UP TO 28 DAYS BEFORE.' : 'UP TO 4 WEEKS BEFORE.');
+      return;
+    }
+    setCustomError(null);
+    setCustom(null);
+    if (!reminders.some((r) => r.minutes === minutes)) toggleReminder(minutes);
   }
 
   // A birthday is the general machinery with the dials pre-set, not a special
@@ -564,9 +610,10 @@ export function EventForm({
             {/* Chips rather than a select: reminders are a set, not a choice,
                 and the pairing people actually want — one to start, one to
                 turn up — is two clicks here and a nested multi-select in any
-                other control. */}
-            <div className="flex flex-wrap gap-1.5">
-              {presets.map(({ minutes, label }) => {
+                other control. `onlyControlsAnswer` on everything under the
+                chips, so a click on a word or a gap sets no reminder. */}
+            <div className="flex flex-wrap gap-1.5" onClick={onlyControlsAnswer}>
+              {chips.map(({ minutes, label }) => {
                 const on = reminders.some((r) => r.minutes === minutes);
                 const full = !on && reminders.length >= 5;
                 return (
@@ -586,9 +633,109 @@ export function EventForm({
                   </button>
                 );
               })}
+              <button
+                type="button"
+                disabled={reminders.length >= 5 || custom !== null}
+                onClick={() => setCustom({ amount: 1, unit: 'hours', days: 0, at: 8 * 60 })}
+                className="tap border border-dashed border-hair px-2 py-1 text-[10px] tracking-[0.1em] text-mute transition-colors hover:border-hairlit hover:text-dim disabled:opacity-30"
+              >
+                + CUSTOM
+              </button>
             </div>
+            {custom && (
+              <div
+                className="mt-2 flex flex-wrap items-center gap-2"
+                onClick={onlyControlsAnswer}
+                // Enter adds, rather than submitting the whole form as it would
+                // from any other field.
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    // An Enter in the time field is also that field settling
+                    // what was typed into it, and the settled time has not
+                    // reached `custom` by the time this runs — so it is read
+                    // off the field, or the time it held before would be added.
+                    const typed = customTime.current?.contains(e.target as Node)
+                      ? parseTimeInput((e.target as HTMLInputElement).value)
+                      : null;
+                    addCustom(typed ?? undefined);
+                  }
+                }}
+              >
+                {allDay ? (
+                  <>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={28}
+                      value={custom.days}
+                      onChange={(e) =>
+                        setCustom({ ...custom, days: Math.max(0, Math.round(e.target.valueAsNumber || 0)) })
+                      }
+                      aria-label="Days before"
+                      className={NUMBER_BOX}
+                    />
+                    <span className="label">DAYS BEFORE, AT</span>
+                    <div className="w-24" ref={customTime}>
+                      <TimePicker
+                        label="Reminder time"
+                        value={custom.at}
+                        onChange={(at) => setCustom({ ...custom, at })}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      value={custom.amount}
+                      onChange={(e) =>
+                        setCustom({ ...custom, amount: Math.max(0, Math.round(e.target.valueAsNumber || 0)) })
+                      }
+                      aria-label="How long before"
+                      className={NUMBER_BOX}
+                    />
+                    <select
+                      value={custom.unit}
+                      onChange={(e) => setCustom({ ...custom, unit: e.target.value as LeadUnit })}
+                      aria-label="Unit"
+                      className="border border-hair bg-panel px-2 py-2 text-[12px] text-ink outline-none focus:border-hairlit"
+                    >
+                      <option value="minutes">MINUTES</option>
+                      <option value="hours">HOURS</option>
+                      <option value="days">DAYS</option>
+                      <option value="weeks">WEEKS</option>
+                    </select>
+                    <span className="label">BEFORE</span>
+                  </>
+                )}
+                <Button type="button" onClick={() => addCustom()}>
+                  ADD
+                </Button>
+                <Button
+                  type="button"
+                  variant="quiet"
+                  onClick={() => {
+                    setCustom(null);
+                    setCustomError(null);
+                  }}
+                >
+                  CANCEL
+                </Button>
+              </div>
+            )}
+            {customError && (
+              <p className="label label-lit mt-2" onClick={onlyControlsAnswer}>
+                {customError}
+              </p>
+            )}
             {reminders.length === 0 && (
-              <p className="label mt-2">SILENT — NOTHING WILL BE SENT FOR THIS ENTRY.</p>
+              <p className="label mt-2" onClick={onlyControlsAnswer}>
+                SILENT — NOTHING WILL BE SENT FOR THIS ENTRY.
+              </p>
             )}
           </Field>
         </div>
