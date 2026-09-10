@@ -1,4 +1,4 @@
-import { civil, isCivilDate, parts, type CivilDate } from '@/lib/tempo/civil';
+import { addDays, civil, diffDays, isCivilDate, parts, type CivilDate } from '@/lib/tempo/civil';
 import { formatMinutes } from './TimePicker';
 
 /**
@@ -50,6 +50,31 @@ export function normalizeWhen(v: WhenValue): WhenValue {
     endDate,
     endMinutes: sameDay && v.endMinutes < v.startMinutes ? v.startMinutes : v.endMinutes,
   };
+}
+
+/**
+ * A date the field is showing, as the date the *series* should carry.
+ *
+ * The form shows one occurrence and the save rewrites the whole row, so what
+ * crosses between them is the *shift*, not the value: leave the date alone and
+ * the series stays where it is, push it forward a day and the series follows by
+ * a day. That is what every other calendar means by editing "all events", and
+ * it is what stops merely opening an instance from re-basing its series onto
+ * whichever one you happened to click — a form that commits when you click away
+ * from it cannot afford to write a value it only ever displayed.
+ *
+ * Dates only. A time is a property of the entry rather than the identity of an
+ * instance, so a time on screen is written across as itself.
+ *
+ * `seriesDate` absent means the field was already showing the row's own date —
+ * a new entry, a one-off, a birthday's anchor — and this is the identity.
+ */
+export function ontoSeries(
+  edited: CivilDate,
+  opened: CivilDate,
+  seriesDate: CivilDate | null | undefined,
+): CivilDate {
+  return seriesDate ? addDays(seriesDate, diffDays(edited, opened)) : edited;
 }
 
 /**

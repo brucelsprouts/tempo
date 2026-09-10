@@ -244,6 +244,35 @@ function exceededWindow(
   }
 }
 
+/**
+ * Does `date` name an occurrence this series actually has?
+ *
+ * An exception is keyed by the date its occurrence *would* have fallen on, and
+ * nothing rewrites that key when the series underneath it changes shape — a
+ * repeat switched off, a frequency changed, a whole series dragged a day later.
+ * The rows outlive the occurrences they describe, and an orphan is not merely
+ * inert: one carrying a `startDate` draws a copy of the entry on a date the
+ * series no longer visits, and a cancelled one swallows an occurrence that was
+ * never the one skipped. So validity is asked per render rather than trusted.
+ *
+ * Asked rather than repaired, deliberately. Turning a monthly repeat off and
+ * back on has to give the exceptions back, which deleting the rows on the way
+ * past could not.
+ *
+ * A one-off has no series to except out of, which is the same rule the store
+ * applies when it decides where an edit goes: with no rule on the row, every
+ * gesture rewrites the row itself and no exception is ever written. So an
+ * exception found on one is a leftover by definition.
+ */
+function isSeriesDate(
+  rule: Recurrence | null,
+  dtstart: CivilDate,
+  date: CivilDate,
+): boolean {
+  if (!rule) return false;
+  return occurrenceDates(rule, dtstart, date, date).length > 0;
+}
+
 // ----------------------------------------------------------------- expansion
 
 /**
@@ -258,7 +287,12 @@ export function expandEvent(
   const span = eventSpan(event);
   if (!span) return [];
 
-  const overrideByDate = new Map(overrides.map((o) => [o.occurrenceDate, o]));
+  // Only the exceptions that still name a real occurrence. See `isSeriesDate`.
+  const live = overrides.filter((o) =>
+    isSeriesDate(event.recurrence, span.start, o.occurrenceDate),
+  );
+
+  const overrideByDate = new Map(live.map((o) => [o.occurrenceDate, o]));
 
   // An occurrence starting before the window can still reach into it, so widen
   // the search by the event's own duration.
@@ -277,7 +311,7 @@ export function expandEvent(
 
   // An override can *move* an occurrence into view whose original date sits
   // outside the search window, so those are picked up separately.
-  const displaced = overrides
+  const displaced = live
     .filter((o) => !o.cancelled && o.patch.startDate && !emitted.has(o.occurrenceDate))
     .filter((o) => {
       const s = o.patch.startDate!;

@@ -3,6 +3,7 @@
 import { useEffect, useImperativeHandle, useMemo, useState, type Ref } from 'react';
 import { useCalendar, type EventDraft } from '@/lib/store/calendar-store';
 import { civil, parts, todayIn, yearsBetween, type CivilDate } from '@/lib/tempo/civil';
+import { eventSpan } from '@/lib/tempo/recurrence';
 import {
   needsAnchor as templateNeedsAnchor,
   renderTemplate,
@@ -18,7 +19,7 @@ import type { EntrySeed } from './CalendarShell';
 import { UNTITLED } from './constants';
 import { DatePicker } from './DatePicker';
 import { WhenField } from './WhenField';
-import { LAST_MINUTE, normalizeWhen, type WhenValue } from './when';
+import { LAST_MINUTE, normalizeWhen, ontoSeries, type WhenValue } from './when';
 import { Button, Field, inputClass, SegmentedControl } from './ui';
 
 /**
@@ -169,10 +170,31 @@ export function EventForm({
    * back into the number it was handed.
    */
   const seedStart = occurrence?.startMinutes ?? seed?.startMinutes ?? null;
-  const [when, setWhen] = useState<WhenValue>(() =>
+
+  /**
+   * Whether the date field holds the row's own date or one occurrence of it.
+   *
+   * A birthday's is labelled BIRTH DATE and holds the anchor — 1974, not this
+   * year's cake — so it opens on the row. Everything else opens on the instance
+   * you clicked, the way every other calendar does: click October and the form
+   * says October rather than making you work out which September it descends
+   * from. Read off the stored kind rather than the live one, because it
+   * describes what the field was filled in *with*.
+   */
+  const opensOnSeries = existing?.kind === 'birthday';
+
+  /**
+   * What WHEN held when the form opened, kept for as long as the form is.
+   *
+   * It is the baseline an edit is measured against. This form always writes the
+   * whole row, so a date typed into it has to reach the series as a shift —
+   * `ontoSeries` — and a shift needs something to be a shift *from*.
+   */
+  const [opened] = useState<WhenValue>(() =>
     normalizeWhen({
-      startDate: existing?.startDate ?? occurrence?.date ?? from,
-      endDate: existing?.endDate ?? occurrence?.endDate ?? seed?.end ?? from,
+      startDate: (opensOnSeries ? existing?.startDate : occurrence?.date) ?? from,
+      endDate:
+        (opensOnSeries ? existing?.endDate : occurrence?.endDate) ?? seed?.end ?? from,
       // Starting from an hour row states a time, so the form opens timed rather
       // than making you undo an all-day default you never asked for.
       allDay: existing?.allDay ?? seed?.startMinutes == null,
@@ -182,6 +204,7 @@ export function EventForm({
         (seedStart != null ? Math.min(LAST_MINUTE, seedStart + 60) : 10 * 60),
     }),
   );
+  const [when, setWhen] = useState<WhenValue>(opened);
   // The times are not pulled out: nothing outside `WhenField` reads them any more.
   const { startDate, endDate, allDay } = when;
 
@@ -312,12 +335,24 @@ export function EventForm({
     // agree with the four in the form above them.
     const w = normalizeWhen({ ...when, allDay: isBirthday ? true : allDay });
 
+    /**
+     * The row's own dates, which are not the ones on screen.
+     *
+     * `null` for a new entry and for a birthday, whose field was already the
+     * row's — see `ontoSeries`, which is the identity when there is no series
+     * date to shift.
+     */
+    const span = existing && !opensOnSeries ? eventSpan(existing) : null;
+    const seriesStart = ontoSeries(w.startDate, opened.startDate, span?.start);
+
     const shared = {
       title: named,
       kind,
       allDay: w.allDay,
-      startDate: w.startDate,
-      endDate: isBirthday ? w.startDate : w.endDate,
+      startDate: seriesStart,
+      endDate: isBirthday
+        ? seriesStart
+        : ontoSeries(w.endDate, opened.endDate, span?.end),
       startMinutes: w.allDay ? undefined : w.startMinutes,
       endMinutes: w.allDay ? undefined : w.endMinutes,
       categoryId,

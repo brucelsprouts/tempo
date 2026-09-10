@@ -460,3 +460,70 @@ describe('occurrence overrides', () => {
     expect(occ[0].title).toBe('Mom (surprise party)');
   });
 });
+
+// ------------------------------------------------- overrides the series lost
+
+/**
+ * An exception names the date its occurrence would have fallen on, and nothing
+ * rewrites that name when the series changes shape underneath it. Every one of
+ * these is a row that was correct when it was written and describes an
+ * occurrence that no longer exists.
+ *
+ * The visible symptom is a second copy of the entry — the exception's own
+ * `startDate` drawn on a date the series does not visit — while the entry the
+ * form opens still reads correctly. Which is how this was found.
+ */
+describe('overrides the series has left behind', () => {
+  const monthly = (o: Partial<TempoEvent> = {}) =>
+    allDayEvent({ recurrence: { freq: 'MONTHLY', interval: 1 }, ...o });
+
+  const dragged: OccurrenceOverride = {
+    id: 'o1',
+    eventId: 'e1',
+    occurrenceDate: '2026-10-30',
+    cancelled: false,
+    patch: { startDate: '2026-11-04', endDate: '2026-11-04' },
+  };
+
+  it('ignores one left on an entry whose repeat was switched off', () => {
+    // The repeat is gone and the entry now sits next year. Without this the
+    // dragged instance is still drawn in November, on an entry that has no
+    // November.
+    const once = allDayEvent({ startDate: '2027-07-30', endDate: '2027-07-30' });
+    expect(expandEvent(once, [dragged], '2026-10-01', '2026-12-31')).toEqual([]);
+  });
+
+  it('does not let a stale cancellation swallow a one-off entry', () => {
+    const once = allDayEvent({ startDate: '2026-10-30', endDate: '2026-10-30' });
+    const skipped: OccurrenceOverride = { ...dragged, cancelled: true, patch: {} };
+    expect(dates(expandEvent(once, [skipped], '2026-10-01', '2026-10-31'))).toEqual([
+      '2026-10-30',
+    ]);
+  });
+
+  it('ignores one stranded by the whole series being dragged', () => {
+    // dtstart moved from the 30th to the 29th, so every series date moved with
+    // it and 2026-10-30 is no longer one of them.
+    const series = monthly({ startDate: '2026-07-29', endDate: '2026-07-29' });
+    expect(dates(expandEvent(series, [dragged], '2026-10-01', '2026-11-30'))).toEqual([
+      '2026-10-29',
+      '2026-11-29',
+    ]);
+  });
+
+  it('ignores one stranded by the frequency changing', () => {
+    const yearly = allDayEvent({ recurrence: { freq: 'YEARLY', interval: 1 } });
+    expect(expandEvent(yearly, [dragged], '2026-10-01', '2026-12-31')).toEqual([]);
+  });
+
+  it('honours it again once the series returns to a shape that has that date', () => {
+    // The rows are read per render rather than repaired on the way past, so
+    // switching a repeat off and back on gives the exceptions back.
+    const series = monthly();
+    // The window holds the date it was dragged *to* and no series date of its
+    // own, so what comes back is the exception being honoured and nothing else.
+    const occ = expandEvent(series, [dragged], '2026-11-01', '2026-11-10');
+    expect(dates(occ)).toEqual(['2026-11-04']);
+    expect(occ[0].seriesDate).toBe('2026-10-30');
+  });
+});

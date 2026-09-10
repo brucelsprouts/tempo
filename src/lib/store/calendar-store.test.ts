@@ -1026,10 +1026,15 @@ describe('purging the trash', () => {
 
 describe('loading', () => {
   it('splits live rows from deleted ones', async () => {
+    // Relative to now, not written down. Fixed stamps put this test on a timer:
+    // they were inside the thirty-day window the day it was written and outside
+    // it a month later, at which point the retention pass swept both rows out
+    // of the trash and the assertion below started failing on its own.
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86400_000).toISOString();
     stored.events = [
       row({ id: 'e1' }),
-      row({ id: 'e2', deleted_at: '2026-07-30T10:00:00.000Z' }),
-      row({ id: 'e3', deleted_at: '2026-07-31T10:00:00.000Z' }),
+      row({ id: 'e2', deleted_at: daysAgo(3) }),
+      row({ id: 'e3', deleted_at: daysAgo(2) }),
     ];
 
     await useCalendar.getState().load();
@@ -1774,6 +1779,53 @@ describe('saving an edited draft', () => {
     expect(patch.starts_at).toBe('2026-08-10T20:45:00.000Z');
     expect(patch.ends_at).toBe('2026-08-10T21:45:00.000Z');
     expect(useCalendar.getState().events[0].startsAt).toBe('2026-08-10T20:45:00.000Z');
+  });
+
+  /**
+   * The half of "opening an instance must not move its series" that lives down
+   * here.
+   *
+   * `EventForm` shows the occurrence you clicked and hands the store a series
+   * date shifted by however far you edited it — zero, when you only came to
+   * look. That is only a no-op if the trip out to a civil date and back to an
+   * instant is lossless, which is not obvious: a minute lost to a timezone
+   * round-trip would make every glance at a repeating entry rewrite it.
+   */
+  it('writes nothing when an untouched timed series comes back through the form', async () => {
+    const e = event({
+      id: 'e1',
+      allDay: false,
+      startDate: null,
+      endDate: null,
+      // 09:00–10:00 Toronto, while EDT is in force.
+      startsAt: '2026-08-10T13:00:00.000Z',
+      endsAt: '2026-08-10T14:00:00.000Z',
+      recurrence: { freq: 'WEEKLY', interval: 1 },
+    });
+    seed([e]);
+
+    // What the form sends for the 2026-09-07 instance with nothing typed: the
+    // series' own dates, because the shift measured from the field was zero.
+    await useCalendar.getState().updateEventFromDraft('e1', {
+      // Every other field as the row already holds it — the form sends them all
+      // back whether or not you touched them, so the dates are the only thing
+      // under test here.
+      title: 'Thing',
+      kind: 'event',
+      allDay: false,
+      startDate: '2026-08-10',
+      endDate: '2026-08-10',
+      startMinutes: 9 * 60,
+      endMinutes: 10 * 60,
+      recurrence: { freq: 'WEEKLY', interval: 1 },
+    });
+
+    expect(useCalendar.getState().events[0].startsAt).toBe('2026-08-10T13:00:00.000Z');
+    expect(useCalendar.getState().events[0].endsAt).toBe('2026-08-10T14:00:00.000Z');
+    // Recognised as a no-op the whole way down: no write, and nothing offered
+    // to take back.
+    expect(lastCall('update')).toBeUndefined();
+    expect(useCalendar.getState().undoStack).toHaveLength(0);
   });
 
   it('clears the instants when a draft turns all-day, and vice versa', async () => {

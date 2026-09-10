@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatWhen, normalizeWhen, parseDateInput, type WhenValue } from './when';
+import { formatWhen, normalizeWhen, ontoSeries, parseDateInput, type WhenValue } from './when';
 
 /**
  * The invariant and the parser are the two halves of this that a rendering test
@@ -165,5 +165,37 @@ describe('parseDateInput', () => {
       expect(at(junk), junk).toBeNull();
     }
     expect(at('4')).toBe('2026-08-04');
+  });
+});
+
+/**
+ * The bridge between a field showing one occurrence and a save rewriting the
+ * whole row. Untestable through the form itself — the case that matters is
+ * opening an instance and *not* touching it, which is a render and a close.
+ */
+describe('ontoSeries', () => {
+  it('leaves the series where it is when the date was not touched', () => {
+    // The bug this exists for: opening the 5 Oct instance of a weekly series
+    // that began on 7 Sep and clicking away re-based the series onto October,
+    // taking every earlier occurrence with it.
+    expect(ontoSeries('2026-10-05', '2026-10-05', '2026-09-07')).toBe('2026-09-07');
+  });
+
+  it('shifts the series by however far the date moved', () => {
+    // What "all events" means everywhere else: a Monday series edited from one
+    // of its Mondays to the Tuesday becomes a Tuesday series.
+    expect(ontoSeries('2026-10-06', '2026-10-05', '2026-09-07')).toBe('2026-09-08');
+    expect(ontoSeries('2026-10-02', '2026-10-05', '2026-09-07')).toBe('2026-09-04');
+  });
+
+  it('carries a shift across a month and a year boundary', () => {
+    // 91 days on from 5 Oct, so the series start moves 91 days on from 7 Sep.
+    expect(ontoSeries('2027-01-04', '2026-10-05', '2026-09-07')).toBe('2026-12-07');
+  });
+
+  it('writes the value straight through when the field was already the row', () => {
+    // A new entry, a one-off, and a birthday's anchor: nothing to shift from.
+    expect(ontoSeries('2026-10-05', '2026-09-07', null)).toBe('2026-10-05');
+    expect(ontoSeries('2026-10-05', '2026-09-07', undefined)).toBe('2026-10-05');
   });
 });
