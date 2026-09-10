@@ -3,9 +3,14 @@
 A follow-up to [Notion-scale entries](2026-08-01-notion-scale-and-recovery-design.md),
 which grew every bar about 35% and kept the rule that height carries importance.
 That fixed "I can't see the entries". This fixes "I can see them and still can't
-tell them apart". Three sections, executed **in this order**: **A — the bar**,
-**B — category colours**, **C — grid fixes**. B reuses A's colour module; C is
-independent of both.
+tell them apart", and then the entry form. Five sections, executed **in this
+order**: **A — the bar**, **B — category colours**, **C — grid fixes**, **D — the
+entry form**, **E — editing one date of a repeating entry**. B reuses A's colour
+module; C and D are independent; E builds on D's repeat rule.
+
+D and E build on `28bcd2f`, which was committed ahead of this work: the form's
+date field shifts a series rather than re-basing it, and exceptions a series has
+left behind are ignored rather than drawn.
 
 ---
 
@@ -20,6 +25,11 @@ Also asked for in the same pass: the month label in the top left doesn't match
 where they're looking; an entry that wraps into the next week hovers as two
 separate things; a busy day's entries touch the bottom of the row; and more
 category colours, or custom ones.
+
+And for the entry form: tasks aren't used, so drop TASK and call an event an
+entry; custom intervals between repeats; custom reminder times — "I can't set
+something to remind me an hour before it happens"; and Google's logic for what
+changing one date of a series means for the others.
 
 ## What is actually wrong
 
@@ -55,6 +65,16 @@ Established by reading the code and driving `/preview`.
 - **A busy row has no floor.** Row height is
   `max(ROW_H, contentHeight + DAY_HEADER_H)`, so a row that grows to fit its
   entries puts the last bar flush on the row's bottom rule.
+- **Reminders only come from presets.** A timed entry does offer "1 hour
+  before"; an all-day entry offers only midnight and 09:00 variants, and nothing
+  accepts a typed lead. A reminder chosen before switching between timed and
+  all-day drops out of the chip list — invisible in the form, still sent.
+- **Repeat is six fixed cells** (`ONCE 1D 1W 1M 2M 1Y`), and `buildRecurrence`
+  writes a fresh rule on every save, dropping whatever the cells can't show: a
+  weekday set, an end date, a count, skipped dates. Saving a Monday–Friday
+  standup from the form makes it plain weekly.
+- **The form always rewrites the whole series.** There is no way to change one
+  date from it, or "from here on".
 
 ## Decisions taken
 
@@ -70,9 +90,10 @@ Established by reading the code and driving `/preview`.
    every custom hue, and a test enforces it.
 5. **Ten presets plus a constrained custom hue.** Stored as hex in
    `categories.color`, as now — no migration.
-6. **Recurrence is its own spec.** Custom repeat intervals and "this and
-   following" edits come next, building on the uncommitted recurrence changes
-   already in the working tree, which this work does not touch.
+6. **Tasks are retired from the form, not from the data.** `EventKind` keeps
+   `'assignment'`, so existing tasks still render and export.
+7. **Editing a repeating entry asks, like Google:** THIS DATE / THIS AND LATER
+   / EVERY DATE, with the choices fitted to what Tempo can store (Section E).
 
 ---
 
@@ -332,6 +353,134 @@ minimum and do not change.
 
 ---
 
+# Section D — The entry form
+
+## D.1 Types
+
+`[01] TYPE` offers **ENTRY / BIRTHDAY / MARK**. TASK goes — this calendar holds
+entries, and a task was an entry with a status nobody sets — and EVENT becomes
+ENTRY, the word the rest of the app already uses (`+ NEW`, `13 ENTRIES`).
+
+- Opening an existing task offers TASK beside the others, so the control shows
+  the entry's real type and it can be changed to ENTRY. A control with no cell
+  for the current value would show nothing selected.
+- The draft carries the stored status for a task and `null` for anything else.
+  `draftFields` fills a missing status on a task with `todo`, so saving a task
+  from the form currently resets `doing` to `todo`; and turning a task into an
+  entry should clear its status, not keep it.
+- The day panel's TASKS tab reads ENTRIES — it always listed everything on the
+  day. The List view's type label reads ENTRY.
+
+## D.2 Repeat every N
+
+`[03] REPEATS` becomes **ONCE / DAY / WEEK / MONTH / YEAR**, and, when it isn't
+ONCE, **EVERY [ N ] WEEKS** beside it — 1 to 99, with the period word
+pluralised. The count left the cells, so the cells get their words back: five
+fit where six did not.
+
+The rule comes from a pure function, `repeatRule(prev, freq, interval)` in a new
+`src/components/calendar/repeat.ts`, built on the stored rule rather than from
+scratch:
+
+- **Same frequency:** everything stored is kept and only the interval changes.
+  An unchanged interval returns the stored rule itself, so a form opened and
+  closed without touching REPEATS reads as unchanged — E.1 depends on that.
+- **New frequency:** the end date, the count, the skipped dates and `onInvalid`
+  carry over; the parts that described the old frequency (`byWeekday`,
+  `byMonthDay`, `byMonth`) do not.
+- **Birthdays** keep their fixed yearly rule.
+
+## D.3 Custom reminders
+
+`[06] REMIND ME` keeps its presets and gains **+ CUSTOM**, which opens one row:
+
+- **Timed:** `[ N ] [MINUTES | HOURS | DAYS | WEEKS] BEFORE`. 0 means at the time.
+- **All-day:** `[ N ] DAYS BEFORE, AT [ 08:00 ]`. 0 means that day. The time is
+  the in-theme `TimePicker`.
+
+ADD, or Enter in the row, adds it as a chip. The row refuses anything the
+dispatcher will not send — more than four weeks before, which on an all-day
+entry is 28 days — with the limit in one line under it. The five-reminder cap is
+unchanged, and + CUSTOM is disabled with the presets once it is reached.
+
+Every chosen reminder has a chip. Presets keep their words; anything else is
+labelled by `reminderLabel(minutes, allDay)` in `reminders.ts` — `3 HOURS
+BEFORE`, `2 DAYS BEFORE, 08:00`, `THAT DAY, 08:00` — which also brings back the
+reminder that vanished when an entry switched between timed and all-day.
+
+`MIN_LEAD_MINUTES` and `MAX_LEAD_MINUTES` are exported, so the form and the
+dispatcher read one range.
+
+---
+
+# Section E — Editing one date of a repeating entry
+
+Google's model, fitted to how Tempo stores a series.
+
+## E.1 When the form asks
+
+Saving an existing repeating entry — not a birthday, not read-only — asks
+**CHANGE WHICH DATES?**, but only if something changed. `wouldChange(id, draft)`,
+a new store read, answers with the same comparison `updateEvent` already uses to
+skip a no-op write, so opening an entry to look at it and clicking away still
+asks nothing.
+
+- The question replaces the footer's buttons and the fields freeze under it.
+- Clicking away — which commits — raises it too, and it stays until answered.
+- Escape inside it goes BACK to the form rather than closing it: the edit is not
+  lost, only the question.
+- SKIP THIS ONE and DELETE SERIES are unchanged.
+
+## E.2 The three answers
+
+- **THIS DATE** writes an exception for this occurrence through the existing
+  `patchOccurrence`, via a new store action `editOccurrence(occ, patch)`. An
+  exception holds a title, dates and times and nothing else, so
+  `oneDatePatch(existing, occ, shown)` in a new `src/components/calendar/scope.ts`
+  returns the patch — or `null` when the change touches the type, category,
+  reminders, repeat, derived label, notes or the all-day switch. THIS DATE then
+  stays on screen, disabled, with the reason under it: ONE DATE CAN ONLY CHANGE
+  ITS TITLE, DATE AND TIME. A missing button reads as a bug; a disabled one with
+  a sentence reads as a rule.
+- **THIS AND LATER** ends the series the day before this occurrence and starts a
+  new one on it, shaped by the form (E.3). `canSplitAt(existing, occ)` leaves it
+  out on the series' first date, where it would mean EVERY DATE, and on a title
+  that counts its occurrences (`{n}`, `{ordinal(n)}`), which a new series would
+  restart at 1.
+- **EVERY DATE** is today's save: the whole row, with dates shifted onto the
+  series by `ontoSeries`.
+
+## E.3 The split
+
+`splitRule(current, at, index, edited)`, a pure function in a new
+`src/lib/tempo/split.ts`:
+
+- **The earlier half** keeps its rule, ends at `until = at − 1 day`, drops
+  `count` (the date says where it stops now), and keeps the skipped dates before
+  `at`.
+- **The later half** takes the edited rule, keeps the skipped dates from `at` on,
+  and keeps the series' end date. A count is a total for the whole series, so
+  the later half gets what is left: the occurrence at `at` is number `index`, and
+  skipped dates count toward the total — RFC 5545's rule, and `occurrenceDates`'.
+- If the edit turned the repeat off, the later half is a one-off.
+
+`splitSeries(occ, draft)`, a new store action, applies it in one `optimistic()`:
+
+- **The new event** is the old row's `source`, `notify` and `timezone` plus the
+  draft's fields, starting on the form's shown dates.
+- **Exceptions after `at`** move to the new event. The one on `at` is dropped:
+  the form's values define that date now.
+- **One undo entry** covers both events and every moved or dropped exception.
+  `planRows` already plans inserts, updates and removals across tables, so one
+  Cmd-Z brings back the single series.
+- **Writes go in the order that fails safest:** insert the new event, re-point
+  the exceptions, drop the one on `at`, end the old series. A failure partway
+  leaves a duplicate on the server rather than a gap — the same honest seam
+  `editSpans` documents, closed only by an RPC this app does not have.
+- A version of the old row is captured first.
+
+---
+
 ## Testing
 
 - **`tint.test.ts`**
@@ -352,8 +501,24 @@ minimum and do not change.
   - A tie reads the earlier month.
   - December into January carries the year.
 - **`entry-focus`**: `unhover(b)` leaves a hover on `a` alone.
-- Everything else still passes (303 tests at baseline, including the
-  uncommitted recurrence work).
+- **`repeat.test.ts`**: an unchanged interval hands back the stored rule
+  itself; the same frequency keeps a weekday set and an end; a new frequency
+  keeps the end, count and skipped dates and drops the weekday set; ONCE is
+  `null`; EVERY clamps to 1–99.
+- **`reminders.test.ts`**: preset labels kept; custom leads named in their
+  largest whole unit on timed entries and as a day and time on all-day ones;
+  the dispatcher's bounds, inclusive.
+- **`split.test.ts`**: the cut, the edited rule, skipped dates by half, the
+  remaining count, the series end, a one-off later half — and both halves
+  expanded together equal the uncut series, date for date.
+- **`scope.test.ts`**: a rename, a move and a retime make a patch; a change to
+  the category or the repeat refuses one; reminders in another order are not a
+  change; `canSplitAt` on the first date, a later date, a counted title, a
+  birthday, a one-off.
+- **`calendar-store.test.ts`**: `wouldChange`; `editOccurrence`; `splitSeries`
+  — what it writes and in what order, exceptions moved and dropped, the
+  remaining count, a failed write rolled back, one undo restoring one series.
+- Everything else still passes (303 tests at baseline).
 - **The preview harness** gets the five course categories, coloured so all ten
   presets appear, and a finals week two weeks out: five "Final Exam" entries in
   five categories. Checked by eye at about 1440px, about 800px, and 375px.
@@ -364,6 +529,9 @@ minimum and do not change.
   moved from a 2px edge to a fill and a chip, the 50% figure and the contrast
   floor behind it, the birthday exception, and why custom colour is a hue rather
   than a free pick.
+- `DESIGN.md` gains **§16, "A change to a series says which dates it means"**:
+  the three answers, why THIS DATE is narrower than Google's, and the split's
+  write order and seam.
 - Comments that describe the 2px reading size, the both-ends edge, or rows of
   fixed height are corrected where they stand: `constants.ts` (palette,
   `MIN_ROW_H`), `layout.ts` (`KIND_HEIGHT`), `Settings.tsx` (palette, swatch),
@@ -371,6 +539,8 @@ minimum and do not change.
 
 ## Out of scope
 
-Custom repeat intervals and "this and following" edits (the next spec); the List
-and Year views; retuning the existing eight colours; a tint-strength setting;
-dimming past entries; colour in the entry form's category select.
+The List and Year views; retuning the existing eight colours; a tint-strength
+setting; dimming past entries; colour in the entry form's category select; a
+weekday picker and end-date or count controls in the form (kept when present, not
+yet editable there); asking on a drag, where Shift still means the series;
+DELETE THIS AND LATER; converting stored tasks.
