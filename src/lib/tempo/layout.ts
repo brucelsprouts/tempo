@@ -17,28 +17,25 @@ import type { EventKind, Occurrence } from './types';
 export const DAYS_PER_WEEK = 7;
 
 /**
- * Height carries importance.
+ * Height carries importance — and, at these sizes, room.
  *
- * A task is the loudest thing a day can contain and has to look like it at a
- * glance, across seven columns, without being read. Colour can't do that job —
- * it is already spoken for by category — and a 2px border weight is invisible
- * at this scale. Size is the one channel left that survives being glanced at.
+ * A task is still the loudest thing a day can contain and has to look like it
+ * across seven columns without being read; colour cannot do that job, it is
+ * spoken for by category. Events and tasks doubled so a title can wrap to a
+ * second line and the category chip gets a line of its own: 28px held one
+ * truncated line, which is how five entries called "Final Exam" became five
+ * identical grey bars.
  *
- * A mark is a tick because a mark is a moment rather than a span: there is no
- * duration to draw and no second line to write. A birthday gets the extra room
- * its derived age needs; a task gets two lines, title and status.
- *
- * Every figure here is about 35% larger than it was, which leaves the ordering
- * — and therefore the meaning — untouched while raising the floor. The smallest
- * bar was 14px and a 14px bar is something you find by looking for it; the
- * complaint that prompted this was that entries got lost while scanning, and
- * the ratios were never what was wrong.
+ * Birthdays and marks did not double, by request. A birthday is one line —
+ * "Mom · 52" — and a mark is a tick: a moment rather than a span, with no
+ * duration to draw and nothing to put on a second line. So the birthday now
+ * sits below the event it used to sit above.
  */
 export const KIND_HEIGHT: Record<EventKind, number> = {
   milestone: 20,
-  event: 28,
+  event: 56,
   birthday: 34,
-  assignment: 42,
+  assignment: 84,
 };
 
 export const LANE_GAP = 4;

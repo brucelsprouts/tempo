@@ -83,12 +83,12 @@ describe('week layout', () => {
     const many = Array.from({ length: 6 }, (_, i) => occ(`e${i}`, '2026-07-29'));
     const { segments, overflow, laneCount, contentHeight } = layoutWeek(WEEK_START, many, BUDGET);
 
-    // 28px events at a 4px gap: lanes start at 0, 32, 64, 96, 128, 160.
-    // Bottom of the last segment is 160 + 28 = 188.
+    // 56px events at a 4px gap: lanes start at 0, 60, 120, 180, 240, 300.
+    // Bottom of the last segment is 300 + 56 = 356.
     expect(laneCount).toBe(6);
     expect(segments.filter((s) => s.hidden)).toHaveLength(0);
     expect(overflow[3]).toBe(0);
-    expect(contentHeight).toBe(188);
+    expect(contentHeight).toBe(356);
   });
 
   it('gives long bars the top lanes so rows stay stable across boundaries', () => {
@@ -129,29 +129,29 @@ describe('variable bar heights', () => {
 
   const drawn = (segs: { hidden: boolean }[]) => segs.filter((s) => !s.hidden).length;
 
-  it('fits four events — 0, 32, 64, 96, last bottom at 124', () => {
+  it('stacks four events — 0, 60, 120, 180, last bottom at 236', () => {
     const { segments, laneTops } = layoutWeek(
       WEEK_START,
       Array.from({ length: 4 }, (_, i) => kinded(`e${i}`, 'event')),
       BUDGET,
     );
-    expect(laneTops.slice(0, 4)).toEqual([0, 32, 64, 96]);
-    expect(96 + KIND_HEIGHT.event).toBe(124);
+    expect(laneTops.slice(0, 4)).toEqual([0, 60, 120, 180]);
+    expect(180 + KIND_HEIGHT.event).toBe(236);
     expect(drawn(segments)).toBe(4);
   });
 
-  it('fits three tasks — 0, 46, 92, last bottom at 134', () => {
+  it('stacks three tasks — 0, 88, 176, last bottom at 260', () => {
     const { segments, laneTops } = layoutWeek(
       WEEK_START,
       Array.from({ length: 3 }, (_, i) => kinded(`t${i}`, 'assignment')),
       BUDGET,
     );
-    expect(laneTops.slice(0, 3)).toEqual([0, 46, 92]);
-    expect(92 + KIND_HEIGHT.assignment).toBe(134);
+    expect(laneTops.slice(0, 3)).toEqual([0, 88, 176]);
+    expect(176 + KIND_HEIGHT.assignment).toBe(260);
     expect(drawn(segments)).toBe(3);
   });
 
-  it('draws all four events/tasks and sets contentHeight to 152', () => {
+  it('draws all four events/tasks and sets contentHeight to 292', () => {
     const { segments, overflow, contentHeight } = layoutWeek(
       WEEK_START,
       [
@@ -162,12 +162,12 @@ describe('variable bar heights', () => {
       ],
       BUDGET,
     );
-    // Four bars on one day is 28 + 28 + 42 + 42 of bar and three 4px gaps, so
-    // the last lane ends at 152.
+    // Four bars on one day is 56 + 56 + 84 + 84 of bar and three 4px gaps, so
+    // the last lane ends at 292.
     expect(drawn(segments)).toBe(4);
     expect(segments.filter((s) => s.hidden)).toHaveLength(0);
     expect(overflow[3]).toBe(0);
-    expect(contentHeight).toBe(152);
+    expect(contentHeight).toBe(292);
   });
 
   it('keeps a bar at its own height, not its lane’s', () => {
@@ -210,7 +210,7 @@ describe('variable bar heights', () => {
     expect(laneHeights[task.lane]).toBe(KIND_HEIGHT.assignment);
 
     // The mark packs in beside the event, and their shared lane keeps the
-    // taller one's height — a 20px bar must not shrink the lane under a 28px
+    // taller one's height — a 20px bar must not shrink the lane under a 56px
     // one, or the bar above would overlap it.
     expect(mark.lane).toBe(other.lane);
     expect(laneHeights[other.lane]).toBe(KIND_HEIGHT.event);
@@ -246,8 +246,8 @@ describe('lasso hit-testing', () => {
   /** Content-space y, `offset` px into the given row. */
   const at = (week: number, offset: number) => week * ROW_H + offset;
 
-  // Lanes of 28px events sit at 0 and 32, so in row coordinates the first two
-  // bars occupy [34, 62] and [66, 94].
+  // Lanes of 56px events sit at 0 and 60, so in row coordinates the first two
+  // bars occupy [34, 90] and [94, 150].
   const LANE_0 = DAY_HEADER_H + 5;
   const LANE_1 = DAY_HEADER_H + KIND_HEIGHT.event + LANE_GAP + 5;
 
@@ -321,10 +321,10 @@ describe('lasso hit-testing', () => {
   it('includes all bars since none are rolled into a chip anymore', () => {
     const many = Array.from({ length: 6 }, (_, i) => occ(`e${i}`, '2026-07-29'));
     const hits = occurrencesInMarquee(
-      { x0: 0, y0: at(10, 0), x1: 7 * COL_W, y1: at(10, 250) },
+      { x0: 0, y0: at(10, 0), x1: 7 * COL_W, y1: at(10, 400) },
       grid(many),
       METRICS,
-      (y0, y1) => [{ index: 10, start: 10 * ROW_H, end: 10 * ROW_H + 250 }],
+      (y0, y1) => [{ index: 10, start: 10 * ROW_H, end: 10 * ROW_H + 400 }],
     );
     expect(hits.size).toBe(6);
   });
