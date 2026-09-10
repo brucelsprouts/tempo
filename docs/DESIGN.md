@@ -299,6 +299,59 @@ since everything a selection does there is a chord); and the year view resolved
 to one month per row, which turned "what shape did this year have" into a 2100px
 scroll.
 
+## 15. An entry says what it belongs to
+
+The grid drew every entry as the same grey bar with a 2px category edge at each
+end. Legible when you looked straight at one, useless when you scanned: five
+entries called "Final Exam" in five course categories were five identical
+rectangles, and a 2px edge is the worst case for telling colours apart — small
+fields and peripheral vision are where hue discrimination fails first, and
+orange and blue fail worst.
+
+So the category moved from the edge into the bar. A bar is filled with its
+category colour mixed 50% into the bar grey — chosen on a slider, between a
+subtle tint and a solid fill — with a 3px leading edge in the full colour, and
+it wears a chip: the category's name on the full colour, in near-black. The chip
+is what tells two courses apart when their colours are close or repeat; the fill
+is what lets you find every CS4442 entry in a week without reading.
+
+The mixing happens in OKLab, in TypeScript, so the colour on screen is the
+colour the test measures. `tint.test.ts` holds every piece of text on a bar —
+title, secondary text, chip — to 4.5:1 on every preset and on every custom hue.
+That floor is why the secondary text is ink pulled toward the fill rather than
+the grid's grey (2.9:1 on a fill), why hover is a ring rather than a brighter
+fill (4.1:1 at 60%), and why a custom colour is a hue at the palette's own
+lightness rather than a free pick.
+
+Events and tasks doubled, to 56 and 84px, so a title wraps to a second line and
+the chip gets a line of its own. Birthdays and marks did not: one line already
+says everything they have. Rows still grow to fit, now with a floor under the
+last bar.
+
+Category colour is still the only hue on screen. What changed is how much of
+each bar it covers.
+
+## 16. A change to a series says which dates it means
+
+The form rewrote the whole series whatever you changed, so there was no way to
+change one date from it, or "from here on". Saving a change to a repeating entry
+now asks, the way Google does: THIS DATE, THIS AND LATER, or EVERY DATE — and
+only when something actually changed.
+
+THIS DATE is narrower than Google's, because a Tempo instance is the series seen
+on one day rather than an event of its own: an exception can rename, move and
+retime one date and nothing else. When a change touches anything an exception
+cannot hold, THIS DATE stays on screen, disabled, with the reason under it.
+
+THIS AND LATER cuts the series in two (`splitRule`). The earlier half ends the
+day before; the later half starts on the date with the edited rule; skipped
+dates go with their half; a count carries over as what is left of it. The store
+writes the new series first and ends the old one last, so a failure partway
+leaves a duplicate rather than a gap — the same seam group edits have, closed
+only by a transaction this app does not have. Locally it is one action with one
+undo. Where it would add nothing — the series' first date — or would renumber a
+counted title, it is not offered.
+
 ---
 
 ## Not built
