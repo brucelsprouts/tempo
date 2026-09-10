@@ -264,7 +264,11 @@ export interface MarqueeRect {
 
 export interface GridMetrics {
   colWidth: number;
-  /** Every row is this tall. The identity the whole scroll architecture rests on. */
+  /**
+   * A row's height where nothing measured says otherwise: the least a row is,
+   * and what every row is taken to be when no `getWeekRange` is given. Rows
+   * grow to fit their entries, so the grid passes measured rows instead.
+   */
   rowH: number;
   /** The day-number strip a segment's `top` is measured below. */
   headerH: number;
@@ -276,10 +280,12 @@ export interface GridMetrics {
  * Computed, never measured. Rows are virtualised, so a marquee dragged past the
  * viewport covers rows that have no elements to read a rect from — reading the
  * DOM would silently select only the part of the sweep that happened to be on
- * screen. Every row is exactly `rowH` tall and every segment's band inside its
- * row is already known, so the intersection is arithmetic that works just as
- * well for a row that was never mounted. It is also why no rAF throttle is
- * needed here: nothing is being measured, so nothing can force a layout.
+ * screen. Every row's extent is known — `getWeekRange` hands over the
+ * virtualiser's measurements, where a row never mounted stands at its estimate
+ * — and so is every segment's band inside its row, so the intersection is
+ * arithmetic that works just as well for a row that was never drawn. It is also
+ * why no rAF throttle is needed here: nothing is read from the DOM, so nothing
+ * can force a layout.
  *
  * `layoutOf` is a lookup rather than a prepared map because the range of weeks
  * to consider is itself part of the answer — the caller would have to redo this
