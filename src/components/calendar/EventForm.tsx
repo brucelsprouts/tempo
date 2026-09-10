@@ -27,6 +27,8 @@ import { parseTimeInput, TimePicker } from './TimePicker';
 import { WhenField } from './WhenField';
 import { LAST_MINUTE, normalizeWhen, ontoSeries, type WhenValue } from './when';
 import { clampInterval, MAX_INTERVAL, periodWord, repeatRule, type RepeatFreq } from './repeat';
+import { canSplitAt, oneDatePatch } from './scope';
+import { ScopePrompt } from './ScopePrompt';
 import { Button, Field, inputClass, SegmentedControl } from './ui';
 
 /**
@@ -169,6 +171,9 @@ export function EventForm({
   const updateEventFromDraft = useCalendar((s) => s.updateEventFromDraft);
   const deleteEvent = useCalendar((s) => s.deleteEvent);
   const cancelOccurrence = useCalendar((s) => s.cancelOccurrence);
+  const wouldChange = useCalendar((s) => s.wouldChange);
+  const editOccurrence = useCalendar((s) => s.editOccurrence);
+  const splitSeries = useCalendar((s) => s.splitSeries);
   const isOffline = useCalendar((s) => s.isOffline);
 
   const existing = occurrence?.event;
@@ -375,19 +380,23 @@ export function EventForm({
   }
 
   /**
-   * Save and close, whatever asked.
-   *
-   * Not a submit handler: the form submits into it, and so does clicking away
-   * from the modal, which is a mousedown on a backdrop this component cannot
-   * see. Both mean the same thing, so both arrive here.
-   *
-   * It closes *before* awaiting the write rather than after. Every store
-   * mutation is optimistic — the entry is already on the grid by the time the
-   * request leaves, and a rejection rolls it back and raises the error banner —
-   * so holding the modal open for a round-trip buys nothing and makes clicking
-   * away feel like it didn't take.
+   * Whether saving has to ask which dates a change is for: an existing
+   * repeating entry. Not a birthday — its one date is the anchor, and every
+   * edit to it means every year.
    */
-  function commit() {
+  const asksWhichDates =
+    mode === 'edit' && !readOnly && !!existing?.recurrence && existing.kind !== 'birthday';
+  const [asking, setAsking] = useState(false);
+
+  /**
+   * The form as a draft, with its dates read one of two ways.
+   *
+   * `series` is what EVERY DATE writes. The form opens on the occurrence you
+   * clicked, so a date typed into it reaches the row as a shift — `ontoSeries`.
+   * `shown` is the form as it reads, the occurrence's own dates: what THIS DATE
+   * compares against, and where THIS AND LATER starts the new series.
+   */
+  function draftFor(dates: 'series' | 'shown'): EventDraft {
     // An empty title is not a reason to refuse. Clicking away from a form you
     // filled in should not silently throw it out, and a draft with nothing in
     // it at all is still a block of time you deliberately marked — it just gets
@@ -396,28 +405,25 @@ export function EventForm({
 
     // A birthday is one all-day date whatever the WHEN field last held, and
     // `normalizeWhen` is what decides that an end pulled back before its start
-    // means a single day. Both were open-coded here in four lines that had to
-    // agree with the four in the form above them.
+    // means a single day.
     const w = normalizeWhen({ ...when, allDay: isBirthday ? true : allDay });
 
     /**
      * The row's own dates, which are not the ones on screen.
      *
-     * `null` for a new entry and for a birthday, whose field was already the
-     * row's — see `ontoSeries`, which is the identity when there is no series
-     * date to shift.
+     * `null` for a new entry, for a birthday, whose field was already the
+     * row's, and for the `shown` reading — see `ontoSeries`, which is the
+     * identity when there is no series date to shift.
      */
-    const span = existing && !opensOnSeries ? eventSpan(existing) : null;
-    const seriesStart = ontoSeries(w.startDate, opened.startDate, span?.start);
+    const span = dates === 'series' && existing && !opensOnSeries ? eventSpan(existing) : null;
+    const startDate = ontoSeries(w.startDate, opened.startDate, span?.start);
 
-    const shared = {
+    return {
       title: named,
       kind,
       allDay: w.allDay,
-      startDate: seriesStart,
-      endDate: isBirthday
-        ? seriesStart
-        : ontoSeries(w.endDate, opened.endDate, span?.end),
+      startDate,
+      endDate: isBirthday ? startDate : ontoSeries(w.endDate, opened.endDate, span?.end),
       startMinutes: w.allDay ? undefined : w.startMinutes,
       endMinutes: w.allDay ? undefined : w.endMinutes,
       categoryId,
@@ -434,18 +440,50 @@ export function EventForm({
       // turned into an ENTRY.
       status: kind === 'assignment' ? (existing?.status ?? null) : null,
       // `notify` is deliberately absent. It is the Google mirror flag, and the
-      // mirror does not exist — no route reads it. The column and the field
-      // stay for the day one is written; leaving it out of the draft means an
-      // edit preserves whatever a row already holds rather than resetting it.
+      // mirror does not exist — no route reads it. Leaving it out of the draft
+      // means an edit preserves whatever a row already holds.
       notes: notes.trim() || null,
-    } satisfies EventDraft;
+    };
+  }
 
-    onClose();
+  /**
+   * Save and close, whatever asked.
+   *
+   * Not a submit handler: the form submits into it, and so does clicking away
+   * from the modal, which is a mousedown on a backdrop this component cannot
+   * see. Both mean the same thing, so both arrive here.
+   *
+   * It closes *before* awaiting the write rather than after. Every store
+   * mutation is optimistic — the entry is already on the grid by the time the
+   * request leaves, and a rejection rolls it back and raises the error banner —
+   * so holding the modal open for a round-trip buys nothing and makes clicking
+   * away feel like it didn't take.
+   *
+   * A change to a repeating entry is the one exception: it stops and asks which
+   * dates the change is for, and the answer is what saves. While the question
+   * is up this does nothing, so a second click away cannot slip past it.
+   */
+  function commit() {
+    if (asking) return;
+    const draft = draftFor('series');
+
     if (mode === 'new') {
-      void createEvent(shared);
-    } else if (occurrence) {
-      void updateEventFromDraft(occurrence.eventId, shared);
+      onClose();
+      void createEvent(draft);
+      return;
     }
+    if (!occurrence) {
+      onClose();
+      return;
+    }
+    // Only when something changed: opening an entry to look at it and clicking
+    // away is not an edit, and must not be asked about as one.
+    if (asksWhichDates && wouldChange(occurrence.eventId, draft)) {
+      setAsking(true);
+      return;
+    }
+    onClose();
+    void updateEventFromDraft(occurrence.eventId, draft);
   }
 
   useImperativeHandle(ref, () => ({ commit }));
@@ -468,7 +506,7 @@ export function EventForm({
           MONTH and YEAR came to be written over the field next to them. The
           spans say `full` rather than `2` so they mean the same thing in both.
       */}
-      <fieldset disabled={readOnly} className="grid flex-1 grid-cols-1 gap-x-4 gap-y-4 overflow-y-auto px-4 py-4 sm:grid-cols-2 disabled:opacity-90">
+      <fieldset disabled={readOnly || asking} className="grid flex-1 grid-cols-1 gap-x-4 gap-y-4 overflow-y-auto px-4 py-4 sm:grid-cols-2 disabled:opacity-90">
         <div className="col-span-full">
           <Field label="[00] TITLE">
             <input
@@ -764,54 +802,74 @@ export function EventForm({
       </fieldset>
 
       <div className="shrink-0 space-y-2 border-t border-hair px-4 py-3">
-        {/* Wraps, because an edit on a recurring entry puts four buttons in
-            here and SAVE is `flex-1` — on a phone the other three were being
-            squeezed to their padding. */}
-        <div className="flex flex-wrap gap-2">
-          {readOnly ? (
-            <Button type="button" variant="quiet" onClick={onClose} className="flex-1">
-              CLOSE
-            </Button>
-          ) : (
-            <Button type="submit" variant="primary" className="flex-1">
-              {mode === 'new' ? 'CREATE' : 'SAVE'}
-            </Button>
-          )}
+        {asking && occurrence && existing ? (
+          <ScopePrompt
+            patch={oneDatePatch(existing, occurrence, draftFor('shown'))}
+            canSplit={canSplitAt(existing, occurrence)}
+            onThisDate={(patch) => {
+              onClose();
+              void editOccurrence(occurrence, patch);
+            }}
+            onThisAndLater={() => {
+              onClose();
+              void splitSeries(occurrence, draftFor('shown'));
+            }}
+            onEveryDate={() => {
+              onClose();
+              void updateEventFromDraft(occurrence.eventId, draftFor('series'));
+            }}
+            onBack={() => setAsking(false)}
+          />
+        ) : (
+          /* Wraps, because an edit on a recurring entry puts four buttons in
+             here and SAVE is `flex-1` — on a phone the other three were being
+             squeezed to their padding. */
+          <div className="flex flex-wrap gap-2">
+            {readOnly ? (
+              <Button type="button" variant="quiet" onClick={onClose} className="flex-1">
+                CLOSE
+              </Button>
+            ) : (
+              <Button type="submit" variant="primary" className="flex-1">
+                {mode === 'new' ? 'CREATE' : 'SAVE'}
+              </Button>
+            )}
 
-          {mode === 'edit' && occurrence && (
-            <>
-              {onHistory && (
-                <Button type="button" variant="quiet" onClick={onHistory}>
-                  HISTORY
-                </Button>
-              )}
-              {!readOnly && occurrence.event.recurrence && (
-                <Button
-                  type="button"
-                  variant="quiet"
-                  onClick={async () => {
-                    await cancelOccurrence(occurrence);
-                    onClose();
-                  }}
-                >
-                  SKIP THIS ONE
-                </Button>
-              )}
-              {!readOnly && (
-                <Button
-                  type="button"
-                  variant="quiet"
-                  onClick={async () => {
-                    await deleteEvent(occurrence.eventId);
-                    onClose();
-                  }}
-                >
-                  DELETE {occurrence.event.recurrence ? 'SERIES' : ''}
-                </Button>
-              )}
-            </>
-          )}
-        </div>
+            {mode === 'edit' && occurrence && (
+              <>
+                {onHistory && (
+                  <Button type="button" variant="quiet" onClick={onHistory}>
+                    HISTORY
+                  </Button>
+                )}
+                {!readOnly && occurrence.event.recurrence && (
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    onClick={async () => {
+                      await cancelOccurrence(occurrence);
+                      onClose();
+                    }}
+                  >
+                    SKIP THIS ONE
+                  </Button>
+                )}
+                {!readOnly && (
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    onClick={async () => {
+                      await deleteEvent(occurrence.eventId);
+                      onClose();
+                    }}
+                  >
+                    DELETE {occurrence.event.recurrence ? 'SERIES' : ''}
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
     </form>
   );

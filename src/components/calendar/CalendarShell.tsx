@@ -834,8 +834,12 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
           size="entry"
           title={top.mode === 'new' ? 'NEW ENTRY' : 'EDIT'}
           meta={
+            // Only a birthday still saves to every date unasked; any other
+            // repeating entry asks CHANGE WHICH DATES? when a change is saved.
             top.mode === 'edit' && top.occurrence.event.recurrence
-              ? 'EDITS APPLY TO THE WHOLE SERIES'
+              ? top.occurrence.event.kind === 'birthday'
+                ? 'EDITS APPLY TO THE WHOLE SERIES'
+                : 'REPEATS · SAVING ASKS WHICH DATES'
               : undefined
           }
           onClose={pop}
