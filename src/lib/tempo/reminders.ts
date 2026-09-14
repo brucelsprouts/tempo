@@ -41,6 +41,7 @@ export const TIMED_PRESETS: ReadonlyArray<{ minutes: number; label: string }> = 
 ];
 
 export const ALL_DAY_PRESETS: ReadonlyArray<{ minutes: number; label: string }> = [
+  { minutes: 5, label: '5 minutes before midnight' },
   { minutes: 0, label: 'Midnight, that day' },
   { minutes: -540, label: '09:00 that morning' },
   { minutes: 900, label: 'The day before, 09:00' },
@@ -57,12 +58,12 @@ export const ALL_DAY_PRESETS: ReadonlyArray<{ minutes: number; label: string }> 
  * the draft entirely.
  *
  * Assignments and milestones get the day-before pair because the useful moment
- * for a deadline is the evening you could still start it. Birthdays get a
- * single morning-before nudge, which is the last point buying something is
- * still possible.
+ * for a deadline is the evening you could still start it. Birthdays get five
+ * minutes before midnight, so the message is typed when the day begins, and
+ * 09:00 that morning for the nights you were asleep by then.
  */
 export function defaultReminders(kind: TempoEvent['kind'], allDay: boolean): Reminder[] {
-  if (kind === 'birthday') return [{ minutes: 0 }];
+  if (kind === 'birthday') return [{ minutes: 5 }, { minutes: -540 }];
   if (kind === 'assignment' || kind === 'milestone') {
     return allDay ? [{ minutes: 2340 }, { minutes: 900 }] : [{ minutes: 1440 }, { minutes: 120 }];
   }
@@ -237,8 +238,11 @@ export function dueReminders(
  */
 export function reminderText(due: DueReminder): { title: string; body: string } {
   const { occurrence, event, minutes } = due;
+  // Within the hour before midnight "tomorrow" undersells it; say the minutes.
   const when = occurrence.allDay
-    ? relativeDay(occurrence.date, due.fireAt, event.timezone)
+    ? minutes > 0 && minutes < 60
+      ? `${lead(minutes)} · midnight`
+      : relativeDay(occurrence.date, due.fireAt, event.timezone)
     : `${lead(minutes)} · ${clockLabel(occurrence.startMinutes ?? 0)}`;
   return { title: occurrence.title, body: when };
 }

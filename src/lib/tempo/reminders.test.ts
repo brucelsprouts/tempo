@@ -333,6 +333,27 @@ describe('reminderText', () => {
     expect(reminderText(due).body).toBe('tomorrow');
   });
 
+  it('counts the minutes to midnight rather than saying tomorrow', () => {
+    const e = event({
+      title: 'Mom',
+      startDate: '1974-06-14',
+      endDate: '1974-06-14',
+      anchorDate: '1974-06-14',
+      displayTemplate: '{title} > {yearsSince}',
+      recurrence: { freq: 'YEARLY', interval: 1, onInvalid: 'clamp' },
+      reminders: [{ minutes: 5 }],
+    });
+    const [due] = dueReminders(
+      [e],
+      NO_OVERRIDES,
+      new Date(Date.UTC(2026, 5, 1)),
+      new Date(Date.UTC(2026, 6, 1)),
+    );
+
+    expect(reminderLabel(5, true)).toBe('5 minutes before midnight');
+    expect(reminderText(due).body).toBe('in 5 min · midnight');
+  });
+
   it('says the clock time for a timed event', () => {
     const e = timed('2026-07-15', 14 * 60, { title: 'Dentist', reminders: [{ minutes: 30 }] });
     const w = MONTH(7);
@@ -349,8 +370,8 @@ describe('defaults and parsing', () => {
     expect(defaultReminders('assignment', false)).toEqual([{ minutes: 1440 }, { minutes: 120 }]);
   });
 
-  it('gives a birthday a midnight nudge', () => {
-    expect(defaultReminders('birthday', true)).toEqual([{ minutes: 0 }]);
+  it('nudges a birthday five minutes before midnight, and again that morning', () => {
+    expect(defaultReminders('birthday', true)).toEqual([{ minutes: 5 }, { minutes: -540 }]);
   });
 
   it('collapses duplicates and sorts longest lead first', () => {

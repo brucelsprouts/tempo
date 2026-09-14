@@ -134,8 +134,9 @@ that order. In a browser tab iOS refuses to even ask, and Tempo says so rather
 than showing a button that cannot work.
 
 Each entry then carries its own lead times — a day before *and* two hours before
-for assignments, half an hour for a timed event, the morning before for a
-birthday. The defaults follow the entry's type and are one click to change.
+for assignments, half an hour for a timed event, five minutes before midnight
+and 09:00 that morning for a birthday. The defaults follow the entry's type and
+are one click to change.
 
 ## Scripts
 
