@@ -341,12 +341,26 @@ describe('anchors', () => {
     expect(firedAt([e], w.after, w.upTo)).toEqual([instant(2026, 7, 17, 17 * 60).toISOString()]);
   });
 
-  it('is due at 23:55 when no due time is stated', () => {
-    const e = week({ reminders: [{ from: 'due', minutes: 5 }] });
+  it('is due when the last day ends when no due time is stated', () => {
+    const e = week({ reminders: [{ from: 'due', minutes: 60 }] });
+    const w = MONTH(7);
+
+    expect(firedAt([e], w.after, w.upTo)).toEqual([instant(2026, 7, 17, 23 * 60).toISOString()]);
+  });
+
+  it('leaves a late-night reminder where it is when nothing is due at a time', () => {
+    // 23:55 on the day it is due. With a stated due time of 23:55 this would be
+    // at the deadline and sent an hour early; with none, there is no moment for
+    // it to be after.
+    const e = event({
+      startDate: '2026-07-15',
+      endDate: '2026-07-15',
+      reminders: [{ from: 'dueDay', minutes: -(23 * 60 + 55) }],
+    });
     const w = MONTH(7);
 
     expect(firedAt([e], w.after, w.upTo)).toEqual([
-      instant(2026, 7, 17, 23 * 60 + 50).toISOString(),
+      instant(2026, 7, 15, 23 * 60 + 55).toISOString(),
     ]);
   });
 
@@ -586,11 +600,26 @@ describe('reminderText', () => {
 
   it('says when a deadline is due, with the due time', () => {
     const e = (reminders: TempoEvent['reminders']) =>
-      event({ startDate: '2026-07-13', endDate: '2026-07-17', reminders });
+      event({
+        startDate: '2026-07-13',
+        endDate: '2026-07-17',
+        dueMinutes: 23 * 60 + 55,
+        reminders,
+      });
 
     expect(body(e([{ from: 'dueDay', minutes: 900 }]))).toBe('due tomorrow · 11:55pm');
     expect(body(e([{ from: 'dueDay', minutes: -540 }]))).toBe('due today · 11:55pm');
     expect(body(e([{ from: 'dueDay', minutes: 2340 }]))).toBe('due in 2 days · 11:55pm');
+  });
+
+  it('says only the day when nothing states a time', () => {
+    const e = event({
+      startDate: '2026-07-13',
+      endDate: '2026-07-17',
+      reminders: [{ from: 'dueDay', minutes: 900 }],
+    });
+
+    expect(body(e)).toBe('due tomorrow');
   });
 
   it('says when a stretched entry starts, and how long until it is due', () => {
@@ -606,6 +635,7 @@ describe('reminderText', () => {
     const e = event({
       startDate: '2026-07-15',
       endDate: '2026-07-15',
+      dueMinutes: 23 * 60 + 55,
       reminders: [{ minutes: 900 }],
     });
     expect(body(e)).toBe('due tomorrow · 11:55pm');
@@ -625,37 +655,57 @@ describe('reminderText', () => {
 // ------------------------------------------------------------------ defaults
 
 describe('defaults and parsing', () => {
-  it('gives a one-off all-day entry a start, a day before, and the day it is due', () => {
-    expect(defaultReminders('event', true, false)).toEqual([
+  const DUE_AT_NIGHT = 23 * 60 + 55;
+
+  it('gives a deadline a start, a day before, and the day it is due', () => {
+    expect(
+      defaultReminders('event', { allDay: true, repeats: false, dueMinutes: DUE_AT_NIGHT }),
+    ).toEqual([
       { minutes: -540 },
       { from: 'dueDay', minutes: 900 },
       { from: 'dueDay', minutes: -540 },
     ]);
   });
 
+  it('gives an all-day entry with no due time one reminder, the morning before', () => {
+    // Rent is due on the first, not at 23:55 on the first. One reminder, early
+    // enough that there is still a day to do something about it.
+    expect(
+      defaultReminders('event', { allDay: true, repeats: false, dueMinutes: null }),
+    ).toEqual([{ from: 'dueDay', minutes: 900 }]);
+  });
+
+  it('gives a repeat with no due time that same single reminder', () => {
+    expect(defaultReminders('event', { allDay: true, repeats: true, dueMinutes: null })).toEqual(
+      defaultReminders('event', { allDay: true, repeats: false, dueMinutes: null }),
+    );
+  });
+
   it('gives a one-off with a time the day before and an hour before', () => {
-    expect(defaultReminders('event', false, false)).toEqual([
-      { from: 'dueDay', minutes: 900 },
-      { minutes: 60 },
-    ]);
+    expect(
+      defaultReminders('event', { allDay: false, repeats: false, dueMinutes: null }),
+    ).toEqual([{ from: 'dueDay', minutes: 900 }, { minutes: 60 }]);
   });
 
   it('gives a repeat one reminder, since it comes round again anyway', () => {
-    expect(defaultReminders('event', false, true)).toEqual([{ minutes: 30 }]);
-    expect(defaultReminders('event', true, true)).toEqual([{ from: 'dueDay', minutes: -540 }]);
+    expect(defaultReminders('event', { allDay: false, repeats: true, dueMinutes: null })).toEqual([
+      { minutes: 30 },
+    ]);
+    expect(
+      defaultReminders('event', { allDay: true, repeats: true, dueMinutes: DUE_AT_NIGHT }),
+    ).toEqual([{ from: 'dueDay', minutes: -540 }]);
   });
 
   it('treats marks and tasks as entries', () => {
-    expect(defaultReminders('milestone', true, false)).toEqual(
-      defaultReminders('event', true, false),
-    );
-    expect(defaultReminders('assignment', false, false)).toEqual(
-      defaultReminders('event', false, false),
-    );
+    const entry = { allDay: true, repeats: false, dueMinutes: DUE_AT_NIGHT };
+    expect(defaultReminders('milestone', entry)).toEqual(defaultReminders('event', entry));
+    expect(defaultReminders('assignment', entry)).toEqual(defaultReminders('event', entry));
   });
 
   it('nudges a birthday five minutes before midnight, and again that morning', () => {
-    expect(defaultReminders('birthday', true, true)).toEqual([{ minutes: 5 }, { minutes: -540 }]);
+    expect(
+      defaultReminders('birthday', { allDay: true, repeats: true, dueMinutes: null }),
+    ).toEqual([{ minutes: 5 }, { minutes: -540 }]);
   });
 
   it('collapses duplicates and sorts longest lead first', () => {

@@ -241,6 +241,15 @@ reminder moves with that edge when it is dragged. The anchor is part of the
 claim, because "09:00 the day it starts" and "09:00 the day it's due" are both
 -540.
 
+**An all-day entry need not say when it is due.** `due_minutes` is empty on a new
+one, and empty means due some time that day — rent on the first — so the entry is
+due when its last day ends, the notification says only the day, and nothing is
+moved earlier for landing after a deadline nobody stated. It is also what picks
+the defaults: with no due time one reminder, the morning before, because nobody
+knows how early in the day it is wanted; with a due time the three a deadline
+gets. That is why the form's DUE AT has 23:55 on a button beside it — the tap
+that says "this is a deadline" is the same tap that sets the reminders for one.
+
 Two corrections are applied per occurrence, in `planReminders`, which the entry
 form also reads so it can say what will happen. **Reminders landing on one moment
 send once** — a one-day entry's start and due reminders are the same instant —

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { LeadUnit } from '@/lib/tempo/reminders';
+import { NIGHT_DUE_MINUTES, type LeadUnit } from '@/lib/tempo/reminders';
 import { MAX_REMINDERS } from '@/lib/tempo/mappers';
 import {
   addRow,
@@ -37,8 +37,11 @@ interface Props {
   onRows: (rows: ReminderRow[]) => void;
   /** What each row says under itself, by row id. See `rowNotes`. */
   notes: Map<number, RowNote>;
-  /** All-day entries only: the due time, which the rows below count from. */
-  due?: { minutes: number; onChange: (minutes: number) => void };
+  /**
+   * All-day entries only: the due time, which the rows below count from, and
+   * which may be left empty for an entry due some time that day.
+   */
+  due?: { minutes: number | null; onChange: (minutes: number) => void; onClear: () => void };
 }
 
 const UNITS: readonly { value: LeadUnit; label: string }[] = [
@@ -55,12 +58,32 @@ export function ReminderField({ ctx, rows, onRows, notes, due }: Props): React.J
 
   return (
     <div className="space-y-2">
+      {/* The due time starts empty, because most of what is entered as a day is
+          wanted some time that day rather than at a minute of it — rent on the
+          first. 23:55 is one tap away for the things that are deadlines, which
+          is also what turns one reminder into the set of three. */}
       {due && (
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="label">DUE AT</span>
           <div className="w-20">
-            <TimePicker label="Due time" value={due.minutes} onChange={due.onChange} />
+            <TimePicker
+              label="Due time"
+              value={due.minutes}
+              onChange={due.onChange}
+              onClear={due.onClear}
+              placeholder="—"
+            />
           </div>
+          {due.minutes !== NIGHT_DUE_MINUTES && (
+            <button
+              type="button"
+              onClick={() => due.onChange(NIGHT_DUE_MINUTES)}
+              className="tap border border-dashed border-hair px-2 py-1 text-[10px] tracking-[0.1em] text-mute transition-colors hover:border-hairlit hover:text-dim"
+            >
+              23:55
+            </button>
+          )}
+          {due.minutes === null && <span className="label">ANY TIME THAT DAY.</span>}
         </div>
       )}
 

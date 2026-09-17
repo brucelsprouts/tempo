@@ -90,7 +90,7 @@ export function parseReminders(value: unknown): Reminder[] {
   return canonicalReminders(result.data);
 }
 
-/** A due time, or `null` for the default — including for anything out of range. */
+/** A due time, or `null` for an entry that states none — including one out of range. */
 export function parseDueMinutes(value: unknown): number | null {
   const result = dueMinutesSchema.safeParse(value);
   return result.success ? result.data : null;

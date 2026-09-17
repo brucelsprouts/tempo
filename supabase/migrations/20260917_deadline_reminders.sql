@@ -10,13 +10,14 @@
 -- table without the column is refused, and the edit rolls back.
 --
 -- Nothing already on the calendar changes. A stored reminder with no `from`
--- still counts from the start, and an entry with no due time is due at 23:55.
+-- still counts from the start, and an entry with no due time is due when its
+-- last day ends.
 
 -- ---------------------------------------------------------------- due times
 
--- Minutes past midnight on an all-day entry's last day. Null is 23:55, which is
--- when nearly everything is due, so only a deadline that says otherwise stores
--- one. An entry with a time is due when it starts and never holds one.
+-- Minutes past midnight on an all-day entry's last day. Null is an entry that
+-- states no time — due some time that day, and so due when the day ends. An
+-- entry with a time of its own is due when it starts and never holds one.
 alter table public.events
   add column if not exists due_minutes smallint;
 

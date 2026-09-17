@@ -102,9 +102,9 @@ export interface TempoEvent {
   endDate: CivilDate | null;
   /**
    * All-day events only: minutes past midnight on the last day that it is due
-   * by. `null` is 23:55, which is when nearly everything is due — so only a
-   * deadline that says otherwise stores one. An entry with a time is due when
-   * it starts, and holds none.
+   * by. `null` is an entry due some time that day and saying no more — rent on
+   * the first — and it is due when the day ends. An entry with a time is due
+   * when it starts, and holds none.
    */
   dueMinutes: number | null;
   timezone: string;

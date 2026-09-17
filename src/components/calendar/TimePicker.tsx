@@ -105,16 +105,31 @@ export function parseTimeInput(raw: string): number | null {
 }
 
 interface Props {
-  /** Minutes from midnight. */
-  value: number;
+  /** Minutes from midnight, or `null` for a field that may be left empty. */
+  value: number | null;
   onChange: (minutes: number) => void;
+  /**
+   * What emptying the field means, on the one field that may be empty: an
+   * all-day entry's due time, which is a time it *may* state rather than one it
+   * has. Without this, an unreadable field reverts — see `settle`.
+   */
+  onClear?: () => void;
+  /** Shown while the field is empty. */
+  placeholder?: string;
   /** Earliest selectable time, inclusive. */
   min?: number;
   /** Rendered by the caller's <Field>; used for the input's aria-label. */
   label: string;
 }
 
-export function TimePicker({ value, onChange, min, label }: Props): React.JSX.Element {
+export function TimePicker({
+  value,
+  onChange,
+  onClear,
+  placeholder,
+  min,
+  label,
+}: Props): React.JSX.Element {
   /**
    * What is being typed, or `null` for "nothing is".
    *
@@ -133,15 +148,21 @@ export function TimePicker({ value, onChange, min, label }: Props): React.JSX.El
   /**
    * Take whatever is in the field, and keep the old value if it is not a time.
    *
-   * Reverting on an unparseable string rather than clearing or complaining: the field
-   * cannot be empty — an entry with no end time is not a thing this app can store — so
-   * the only safe reading of `qqq` is that you did not change your mind about 09:00.
+   * Reverting on an unparseable string rather than clearing or complaining: a start or
+   * end time cannot be empty — an entry with no end time is not a thing this app can
+   * store — so the only safe reading of `qqq` is that you did not change your mind
+   * about 09:00.
+   *
+   * A field that may be empty is the exception, and only for an actually empty one:
+   * wiping the due time is how you say an entry is due some time that day. `qqq` still
+   * reverts there, because deleting a deadline is not what a typo means.
    */
   function settle() {
     if (text === null) return;
     const parsed = parseTimeInput(text);
     setText(null);
     if (parsed !== null) onChange(clamp(parsed));
+    else if (onClear && text.trim() === '') onClear();
   }
 
   /**
@@ -154,6 +175,9 @@ export function TimePicker({ value, onChange, min, label }: Props): React.JSX.El
    */
   function nudge(dir: 1 | -1) {
     const from = (text !== null ? parseTimeInput(text) : null) ?? value;
+    // An empty field has no time to move. The arrows do nothing rather than
+    // deciding on your behalf that a due time exists after all.
+    if (from === null) return;
     const grid = dir === 1 ? Math.floor(from / STEP) + 1 : Math.ceil(from / STEP) - 1;
     setText(null);
     onChange(clamp(grid * STEP));
@@ -166,7 +190,8 @@ export function TimePicker({ value, onChange, min, label }: Props): React.JSX.El
       // Deliberately not `type="time"`. That is the control this exists to replace,
       // and a browser that decided to render it natively again would undo the whole
       // component silently.
-      value={text ?? formatMinutes(value)}
+      value={text ?? (value === null ? '' : formatMinutes(value))}
+      placeholder={placeholder}
       onChange={(e) => setText(e.target.value)}
       // Selected, not just focused: the field already holds a time and the reason to
       // come here is to replace it, so the first keystroke should overwrite rather

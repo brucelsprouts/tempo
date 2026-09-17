@@ -3,6 +3,7 @@ import { canonicalReminders, defaultReminders } from '@/lib/tempo/reminders';
 import {
   addRow,
   fitRow,
+  ROW_OPTIONS,
   remindersFromRows,
   rowContext,
   rowNotes,
@@ -17,18 +18,34 @@ function row(over: Partial<ReminderRow>): ReminderRow {
   return { id: 0, when: 'dueDay', days: 1, at: 9 * 60, amount: 1, unit: 'hours', ...over };
 }
 
+const DUE_AT_NIGHT = 23 * 60 + 55;
+
+/** The three all-day defaults, which several tests read back as rows. */
+const allDayDefaults = defaultReminders('event', {
+  allDay: true,
+  repeats: false,
+  dueMinutes: DUE_AT_NIGHT,
+});
+
 describe('which rows an entry offers', () => {
-  it('reads the context off the type and the all-day switch', () => {
-    expect(rowContext('event', true)).toBe('allDay');
-    expect(rowContext('milestone', true)).toBe('allDay');
-    expect(rowContext('event', false)).toBe('timed');
-    expect(rowContext('birthday', true)).toBe('birthday');
+  it('reads the context off the type, the all-day switch and the due time', () => {
+    expect(rowContext('event', true, DUE_AT_NIGHT)).toBe('allDay');
+    expect(rowContext('milestone', true, 18 * 60)).toBe('allDay');
+    expect(rowContext('event', true, null)).toBe('anyTime');
+    expect(rowContext('event', false, null)).toBe('timed');
+    expect(rowContext('birthday', true, null)).toBe('birthday');
+  });
+
+  it('offers nothing counted back from a due time when there is none', () => {
+    expect(ROW_OPTIONS.anyTime.map((o) => o.value)).toEqual(
+      ROW_OPTIONS.allDay.map((o) => o.value).filter((v) => v !== 'beforeDue'),
+    );
   });
 });
 
 describe('reading reminders into rows', () => {
   it('reads the three all-day defaults as start day, a day before due, and due day', () => {
-    const rows = rowsFromReminders(defaultReminders('event', true, false), 'allDay');
+    const rows = rowsFromReminders(allDayDefaults, 'allDay');
     expect(rows.map((r) => [r.when, r.days, r.at])).toEqual([
       ['startDay', 0, 540],
       ['daysBeforeDue', 1, 540],
@@ -66,22 +83,24 @@ describe('reading reminders into rows', () => {
   });
 
   it('gives every row its own id', () => {
-    const rows = rowsFromReminders(defaultReminders('event', true, false), 'allDay');
+    const rows = rowsFromReminders(allDayDefaults, 'allDay');
     expect(new Set(rows.map((r) => r.id)).size).toBe(3);
   });
 });
 
 describe('writing rows back', () => {
   it('round-trips every default', () => {
-    for (const [kind, allDay, repeats] of [
-      ['event', true, false],
-      ['event', false, false],
-      ['event', true, true],
-      ['event', false, true],
-      ['birthday', true, true],
+    for (const [kind, allDay, repeats, dueMinutes] of [
+      ['event', true, false, DUE_AT_NIGHT],
+      ['event', true, false, null],
+      ['event', false, false, null],
+      ['event', true, true, DUE_AT_NIGHT],
+      ['event', true, true, null],
+      ['event', false, true, null],
+      ['birthday', true, true, null],
     ] as const) {
-      const reminders = defaultReminders(kind, allDay, repeats);
-      const ctx = rowContext(kind, allDay);
+      const reminders = defaultReminders(kind, { allDay, repeats, dueMinutes });
+      const ctx = rowContext(kind, allDay, dueMinutes);
       expect(remindersFromRows(rowsFromReminders(reminders, ctx), ctx)).toEqual(
         canonicalReminders(reminders),
       );
@@ -118,7 +137,7 @@ describe('writing rows back', () => {
       row({ id: 2, when: 'startDay' }),
       row({ id: 3, when: 'daysBeforeDue', days: 1 }),
     ];
-    expect(remindersFromRows(rows, 'allDay')).toEqual(defaultReminders('event', true, false));
+    expect(remindersFromRows(rows, 'allDay')).toEqual(allDayDefaults);
   });
 
   it('drops a duplicate, and anything the dispatcher would not send', () => {
@@ -159,13 +178,43 @@ describe('adding a row', () => {
   });
 
   it('adds something not already there, with an id of its own', () => {
-    const rows = rowsFromReminders(defaultReminders('event', false, false), 'timed');
+    const rows = rowsFromReminders(
+      defaultReminders('event', { allDay: false, repeats: false, dueMinutes: null }),
+      'timed',
+    );
     const next = addRow(rows, 'timed');
     const added = next[next.length - 1];
 
     expect(next).toHaveLength(rows.length + 1);
     expect(rows.some((r) => r.id === added.id)).toBe(false);
     expect(new Set(remindersFromRows(next, 'timed')).size).toBe(next.length);
+  });
+});
+
+describe('an all-day entry with no due time', () => {
+  it('turns a lead before the due time into the day and time it lands on', () => {
+    // Nothing is due at a time, so the entry is due when its last day ends:
+    // an hour before that is 23:00 on the day itself, and a week before is
+    // midnight six days earlier.
+    const hour = fitRow(row({ when: 'beforeDue', amount: 1, unit: 'hours' }), 'anyTime');
+    expect([hour.when, hour.at]).toEqual(['dueDay', 23 * 60]);
+
+    const week = fitRow(row({ when: 'beforeDue', amount: 1, unit: 'weeks' }), 'anyTime');
+    expect([week.when, week.days, week.at]).toEqual(['daysBeforeDue', 6, 0]);
+  });
+
+  it('keeps a stored lead on the moment it already fires', () => {
+    expect(
+      remindersFromRows(rowsFromReminders([{ from: 'due', minutes: 60 }], 'anyTime'), 'anyTime'),
+    ).toEqual([{ from: 'dueDay', minutes: -(23 * 60) }]);
+  });
+
+  it('adds the day itself rather than a lead it cannot offer', () => {
+    const defaults = defaultReminders('event', { allDay: true, repeats: false, dueMinutes: null });
+    const next = addRow(rowsFromReminders(defaults, 'anyTime'), 'anyTime');
+    const added = next[next.length - 1];
+
+    expect([added.when, added.at]).toEqual(['dueDay', 9 * 60]);
   });
 });
 
@@ -179,8 +228,8 @@ describe('what a row says under itself', () => {
   };
 
   it('says when two rows land on one moment, on the one not sent', () => {
-    const rows = rowsFromReminders(defaultReminders('event', true, false), 'allDay');
-    const notes = rowNotes(rows, 'allDay', oneDay, null, TZ);
+    const rows = rowsFromReminders(allDayDefaults, 'allDay');
+    const notes = rowNotes(rows, 'allDay', oneDay, DUE_AT_NIGHT, TZ);
 
     expect(notes.get(rows[0].id)).toEqual({ text: 'SAME MOMENT AS ANOTHER — SENT ONCE.', warn: false });
     expect(notes.get(rows[1].id)).toBeUndefined();
@@ -188,8 +237,8 @@ describe('what a row says under itself', () => {
   });
 
   it('says nothing about it once the entry is stretched', () => {
-    const rows = rowsFromReminders(defaultReminders('event', true, false), 'allDay');
-    const notes = rowNotes(rows, 'allDay', { ...oneDay, endDate: '2026-07-17' }, null, TZ);
+    const rows = rowsFromReminders(allDayDefaults, 'allDay');
+    const notes = rowNotes(rows, 'allDay', { ...oneDay, endDate: '2026-07-17' }, DUE_AT_NIGHT, TZ);
 
     expect(notes.size).toBe(0);
   });
@@ -215,7 +264,7 @@ describe('what a row says under itself', () => {
       row({ id: 3, when: 'dueDay' }),
       row({ id: 4, when: 'dueDay' }),
     ];
-    const notes = rowNotes(rows, 'allDay', { ...oneDay, endDate: '2026-09-15' }, null, TZ);
+    const notes = rowNotes(rows, 'allDay', { ...oneDay, endDate: '2026-09-15' }, DUE_AT_NIGHT, TZ);
 
     expect(notes.get(1)?.text).toBe('UP TO 4 WEEKS BEFORE.');
     expect(notes.get(2)?.text).toBe('UP TO 28 DAYS BEFORE.');

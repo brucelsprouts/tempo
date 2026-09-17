@@ -43,25 +43,32 @@ export interface ReminderRow {
  * Which rows make sense on this entry.
  *
  * - `allDay` has two days that can differ, a start and a due, and a due time.
+ * - `anyTime` is the same entry with the due time left empty. It is due some
+ *   time on its last day, so there is no moment to count back from and no
+ *   BEFORE DUE TIME row: every reminder it can hold is a day and a time.
  * - `timed` has one day, and is due when it starts — so its start day and due
  *   day are the same row, and a lead is "before it starts".
  * - `birthday` has one day and nothing due: a day and a time, and that is all.
  */
-export type RowContext = 'allDay' | 'timed' | 'birthday';
+export type RowContext = 'allDay' | 'anyTime' | 'timed' | 'birthday';
 
-export function rowContext(kind: EventKind, allDay: boolean): RowContext {
+export function rowContext(kind: EventKind, allDay: boolean, dueMinutes: number | null): RowContext {
   if (kind === 'birthday') return 'birthday';
-  return allDay ? 'allDay' : 'timed';
+  if (!allDay) return 'timed';
+  return dueMinutes === null ? 'anyTime' : 'allDay';
 }
 
+const ALL_DAY_OPTIONS: readonly { value: RowWhen; label: string }[] = [
+  { value: 'startDay', label: 'ON START DAY' },
+  { value: 'daysBeforeStart', label: 'DAYS BEFORE START' },
+  { value: 'dueDay', label: 'ON DUE DAY' },
+  { value: 'daysBeforeDue', label: 'DAYS BEFORE DUE' },
+  { value: 'beforeDue', label: 'BEFORE DUE TIME' },
+];
+
 export const ROW_OPTIONS: Record<RowContext, readonly { value: RowWhen; label: string }[]> = {
-  allDay: [
-    { value: 'startDay', label: 'ON START DAY' },
-    { value: 'daysBeforeStart', label: 'DAYS BEFORE START' },
-    { value: 'dueDay', label: 'ON DUE DAY' },
-    { value: 'daysBeforeDue', label: 'DAYS BEFORE DUE' },
-    { value: 'beforeDue', label: 'BEFORE DUE TIME' },
-  ],
+  allDay: ALL_DAY_OPTIONS,
+  anyTime: ALL_DAY_OPTIONS.filter((o) => o.value !== 'beforeDue'),
   timed: [
     { value: 'dueDay', label: 'ON THE DAY' },
     { value: 'daysBeforeDue', label: 'DAYS BEFORE' },
@@ -79,13 +86,25 @@ export const MAX_DAYS = 28;
 /**
  * A row as the entry it is on can hold it.
  *
- * Rows outlive a flip of the all-day switch or the type, and are not rewritten
- * when one happens — flipping back should find them as they were. So they are
- * fitted when read instead. A timed entry has one day, so a start-day row is a
- * due-day row there; a birthday has no due, so a due-day row is its one day,
- * and a lead before its midnight is the day and time that lead lands on.
+ * Rows outlive a flip of the all-day switch, the type or the due time, and are
+ * not rewritten when one happens — flipping back should find them as they were.
+ * So they are fitted when read instead. A timed entry has one day, so a
+ * start-day row is a due-day row there; a birthday has no due, so a due-day row
+ * is its one day, and a lead before its midnight is the day and time that lead
+ * lands on.
+ *
+ * With the due time emptied, a lead has nothing to count from, so it becomes
+ * the day and time it was already landing on — an hour before the end of the
+ * last day is 23:00 on it. Typing the due time back in restores the lead,
+ * because the row it was written on is still there.
  */
 export function fitRow(row: ReminderRow, ctx: RowContext): ReminderRow {
+  if (ctx === 'anyTime' && row.when === 'beforeDue') {
+    // The due point is the midnight *after* the last day, one day past the
+    // midnight a due-day row counts from.
+    const { days, at } = dayAndTime(leadMinutes(row.amount, row.unit) - 1440);
+    return { ...row, when: days === 0 ? 'dueDay' : 'daysBeforeDue', days, at };
+  }
   if (ctx === 'timed') {
     if (row.when === 'startDay') return { ...row, when: 'dueDay' };
     if (row.when === 'daysBeforeStart') return { ...row, when: 'daysBeforeDue' };
@@ -191,6 +210,14 @@ function amountAndUnit(minutes: number): { amount: number; unit: LeadUnit } {
 const CANDIDATES: Record<RowContext, readonly Omit<ReminderRow, 'id'>[]> = {
   allDay: [
     { when: 'beforeDue', days: 1, at: DAY_REMINDER_AT, amount: 1, unit: 'hours' },
+    { when: 'daysBeforeDue', days: 2, at: DAY_REMINDER_AT, amount: 1, unit: 'hours' },
+    { when: 'daysBeforeDue', days: 7, at: DAY_REMINDER_AT, amount: 1, unit: 'hours' },
+  ],
+  // No last call to offer, since nothing states a moment to be early for. The
+  // morning of instead: the entry starts with the morning before, and the
+  // reminder you reach for next is one on the day itself.
+  anyTime: [
+    { when: 'dueDay', days: 1, at: DAY_REMINDER_AT, amount: 1, unit: 'hours' },
     { when: 'daysBeforeDue', days: 2, at: DAY_REMINDER_AT, amount: 1, unit: 'hours' },
     { when: 'daysBeforeDue', days: 7, at: DAY_REMINDER_AT, amount: 1, unit: 'hours' },
   ],

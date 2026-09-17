@@ -133,12 +133,14 @@ from the icon, then **Settings → Notifications → Enable**. It has to be done
 that order. In a browser tab iOS refuses to even ask, and Tempo says so rather
 than showing a button that cannot work.
 
-Each entry then carries its own reminders. Something that happens once is told
-about the morning it starts, the morning before it's due, and the morning it's
-due — or, with a time, the morning before and an hour before. A repeat gets one:
-half an hour before, or the morning of. Birthdays get five minutes before midnight
-and 09:00 that morning. Every reminder can be moved, removed or added to, and an
-all-day entry is due at 23:55 unless it says otherwise.
+Each entry then carries its own reminders, and which ones it starts with depends
+on whether it says when it's due. An all-day entry that states no due time — rent
+on the first — gets one, the morning before, which is the last morning that still
+leaves a day to act. Fill the due time in, and it's a deadline: the morning it
+starts, the morning before it's due, and the morning it's due. Something with a
+time of its own gets the morning before and an hour before. A repeat gets one:
+half an hour before, or a morning. Birthdays get five minutes before midnight and
+09:00 that morning. Every reminder can be moved, removed or added to.
 
 Reminders count back from the start or from the deadline, so dragging an entry
 longer carries them with it. Run `supabase/migrations/20260917_deadline_reminders.sql`

@@ -27,11 +27,16 @@ import type {
 } from './types';
 
 /**
- * When an all-day entry is due if it does not say. Five to midnight rather than
+ * The due time the form's 23:55 button fills in: five to midnight rather than
  * midnight, because midnight is the start of the *next* day — and an assignment
  * due "on Friday" is one you can still hand in on Friday evening.
+ *
+ * A shortcut, not a default. An all-day entry with no due time is due when its
+ * last day ends, which is not the same claim: rent is due on the first, and
+ * saying it is due at 23:55 on the first would be inventing a deadline nobody
+ * set.
  */
-export const DEFAULT_DUE_MINUTES = 23 * 60 + 55;
+export const NIGHT_DUE_MINUTES = 23 * 60 + 55;
 
 /** The time of day a new day reminder is sent at. */
 export const DAY_REMINDER_AT = 9 * 60;
@@ -50,29 +55,48 @@ export const LATE_LEAD_MINUTES = 60;
  *
  * One set for everything that is not a birthday — this calendar is kept with
  * one kind of entry, categorised, and a deadline's needs do not change with
- * its category. Three for something that happens once: the morning it starts,
- * so there is a nudge to begin; the morning before it is due; and the morning
- * it is due. On a one-day entry the first and last are one moment and send
- * once, so a one-day entry sends two and a stretched one three without anyone
- * editing anything in between.
+ * its category. What they do change with is whether the entry says when it is
+ * due, because that is what decides how late a reminder can safely be.
+ *
+ * **A stated due time** makes it a deadline, and a deadline gets three: the
+ * morning it starts, so there is a nudge to begin; the morning before it is
+ * due; and the morning it is due. On a one-day entry the first and last are one
+ * moment and send once, so a one-day entry sends two and a stretched one three
+ * without anyone editing anything in between.
+ *
+ * **No due time** means it is wanted some time that day, and nobody knows
+ * which — rent on the first, a form to hand in, a book to return. One reminder,
+ * the morning before, which is the last morning that leaves a day to do
+ * anything about it. A repeat is the same: rent behaves the same way whether it
+ * was entered once or every month.
  *
  * With a time it is the morning before and an hour before — there is no start
- * day apart from the day it happens. A repeat gets one reminder, because it
- * comes round again: half an hour before a lecture, the morning rent is due.
+ * day apart from the day it happens. A repeat with a time gets one reminder,
+ * because it comes round again: half an hour before a lecture.
  *
  * Birthdays keep five minutes before midnight, so the message is typed when the
  * day begins, and 09:00 that morning for the nights you were asleep by then.
  */
-export function defaultReminders(kind: EventKind, allDay: boolean, repeats: boolean): Reminder[] {
+export function defaultReminders(
+  kind: EventKind,
+  entry: { allDay: boolean; repeats: boolean; dueMinutes: number | null },
+): Reminder[] {
+  const { allDay, repeats, dueMinutes } = entry;
+  const morningBefore: Reminder = {
+    from: 'dueDay',
+    minutes: allDayLeadMinutes(1, DAY_REMINDER_AT),
+  };
+
   if (kind === 'birthday') return [{ minutes: 5 }, { minutes: -DAY_REMINDER_AT }];
-  if (repeats) return allDay ? [{ from: 'dueDay', minutes: -DAY_REMINDER_AT }] : [{ minutes: 30 }];
-  return allDay
-    ? [
+  if (!allDay) return repeats ? [{ minutes: 30 }] : [morningBefore, { minutes: 60 }];
+  if (dueMinutes === null) return [morningBefore];
+  return repeats
+    ? [{ from: 'dueDay', minutes: -DAY_REMINDER_AT }]
+    : [
         { minutes: -DAY_REMINDER_AT },
-        { from: 'dueDay', minutes: allDayLeadMinutes(1, DAY_REMINDER_AT) },
+        morningBefore,
         { from: 'dueDay', minutes: -DAY_REMINDER_AT },
-      ]
-    : [{ from: 'dueDay', minutes: allDayLeadMinutes(1, DAY_REMINDER_AT) }, { minutes: 60 }];
+      ];
 }
 
 export type LeadUnit = 'minutes' | 'hours' | 'days' | 'weeks';
@@ -190,16 +214,22 @@ export function occurrenceStart(occ: OccurrenceTiming, event: Pick<TempoEvent, '
 /**
  * When an occurrence is due, as a real instant.
  *
- * An all-day one is due on its last day at the event's due time. One with a
- * time is due when it starts: a final is something you have to be at, and a
- * block of work with an hour on it is one you meant to begin then.
+ * An all-day one is due on its last day at the event's due time, or, with none
+ * stated, when that day ends — the first moment it is no longer that day. Not
+ * 23:55 with the field left empty: an entry due some time on Friday is not one
+ * a 23:00 reminder is late for, and treating it as one would move reminders
+ * earlier to beat a deadline nobody set.
+ *
+ * One with a time is due when it starts: a final is something you have to be
+ * at, and a block of work with an hour on it is one you meant to begin then.
  */
 export function occurrenceDue(
   occ: OccurrenceTiming,
   event: Pick<TempoEvent, 'timezone' | 'dueMinutes'>,
 ): Date {
   if (!occ.allDay) return occurrenceStart(occ, event);
-  return instantFromCivil(occ.endDate, event.dueMinutes ?? DEFAULT_DUE_MINUTES, event.timezone);
+  if (event.dueMinutes === null) return instantFromCivil(addDays(occ.endDate, 1), 0, event.timezone);
+  return instantFromCivil(occ.endDate, event.dueMinutes, event.timezone);
 }
 
 /** One reminder of one occurrence, with where it lands. */
@@ -376,13 +406,15 @@ function body(due: DueReminder): string {
       : `${lead(left)} · ${at}`;
   }
 
-  const at = clockLabel(event.dueMinutes ?? DEFAULT_DUE_MINUTES);
-  if (anchor === 'due' || due.late) return `due ${lead(left)} · ${at}`;
+  // An entry with no due time has no time to say, and inventing one would be
+  // stating a deadline the entry does not have: "due tomorrow", and that is all.
+  const at = event.dueMinutes === null ? '' : ` · ${clockLabel(event.dueMinutes)}`;
+  if (anchor === 'due' || due.late) return `due ${lead(left)}${at}`;
   // A start reminder on a one-day entry is a reminder about the day it is due.
   if (anchor === 'start' && occ.endDate !== occ.date) {
     return `starts ${relativeDay(occ.date, fireAt, tz)} · due ${relativeDay(occ.endDate, fireAt, tz)}`;
   }
-  return `due ${relativeDay(occ.endDate, fireAt, tz)} · ${at}`;
+  return `due ${relativeDay(occ.endDate, fireAt, tz)}${at}`;
 }
 
 function clockLabel(minutes: number): string {

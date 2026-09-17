@@ -9,7 +9,7 @@ import {
   renderTemplate,
   TEMPLATE_PRESETS,
 } from '@/lib/tempo/derive';
-import { DEFAULT_DUE_MINUTES, defaultReminders } from '@/lib/tempo/reminders';
+import { defaultReminders } from '@/lib/tempo/reminders';
 import type { EventKind, Occurrence, Recurrence } from '@/lib/tempo/types';
 import type { EntrySeed } from './CalendarShell';
 import { UNTITLED } from './constants';
@@ -244,11 +244,16 @@ export function EventForm({
   const needsAnchor = templateNeedsAnchor(effectiveTemplate);
 
   /**
-   * When an all-day entry is due, on its last day. Held as a time even at the
-   * default, so the field has something to show; saved as `null` at 23:55, so
-   * only a deadline that says otherwise stores one.
+   * When an all-day entry is due, on its last day, or `null` for one that is
+   * due some time that day and does not say when.
+   *
+   * Empty is the new entry's state, not 23:55: most of what gets entered as a
+   * day — rent, a form to hand in — is wanted that day rather than at a minute
+   * of it, and a time nobody typed is a deadline nobody set. It is also what
+   * picks the reminders below, so filling it in is the same gesture as saying
+   * "this one is a deadline".
    */
-  const [dueMinutes, setDueMinutes] = useState(existing?.dueMinutes ?? DEFAULT_DUE_MINUTES);
+  const [dueMinutes, setDueMinutes] = useState<number | null>(existing?.dueMinutes ?? null);
 
   /**
    * Reminders, as rows, and whether the user has taken them over.
@@ -263,9 +268,12 @@ export function EventForm({
    * An edit starts touched, because every value on an existing row was already
    * a decision, including the decision to have none.
    */
-  const ctx = rowContext(kind, allDay);
+  const ctx = rowContext(kind, allDay, dueMinutes);
   const [chosenRows, setChosenRows] = useState<ReminderRow[]>(() =>
-    rowsFromReminders(existing?.reminders ?? [], rowContext(existing?.kind ?? 'event', existing?.allDay ?? true)),
+    rowsFromReminders(
+      existing?.reminders ?? [],
+      rowContext(existing?.kind ?? 'event', existing?.allDay ?? true, existing?.dueMinutes ?? null),
+    ),
   );
   const [remindersTouched, setRemindersTouched] = useState(mode === 'edit');
 
@@ -276,7 +284,7 @@ export function EventForm({
   // rather than replacing them with a list of one.
   const rows = remindersTouched
     ? chosenRows
-    : rowsFromReminders(defaultReminders(kind, allDay, recurs), ctx);
+    : rowsFromReminders(defaultReminders(kind, { allDay, repeats: recurs, dueMinutes }), ctx);
   const reminders = remindersFromRows(rows, ctx);
   const rowNotesById = rowNotes(
     rows,
@@ -372,7 +380,7 @@ export function EventForm({
       endDate: isBirthday ? startDate : ontoSeries(w.endDate, opened.endDate, span?.end),
       startMinutes: w.allDay ? undefined : w.startMinutes,
       endMinutes: w.allDay ? undefined : w.endMinutes,
-      dueMinutes: ctx === 'allDay' && dueMinutes !== DEFAULT_DUE_MINUTES ? dueMinutes : null,
+      dueMinutes: ctx === 'allDay' ? dueMinutes : null,
       categoryId,
       recurrence: buildRecurrence(),
       // Always sent, including when empty. Unlike `notify` this field is the
@@ -607,7 +615,15 @@ export function EventForm({
                 setChosenRows(next);
               }}
               notes={rowNotesById}
-              due={ctx === 'allDay' ? { minutes: dueMinutes, onChange: setDueMinutes } : undefined}
+              due={
+                ctx === 'allDay' || ctx === 'anyTime'
+                  ? {
+                      minutes: dueMinutes,
+                      onChange: setDueMinutes,
+                      onClear: () => setDueMinutes(null),
+                    }
+                  : undefined
+              }
             />
           </Field>
         </div>
