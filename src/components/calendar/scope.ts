@@ -1,10 +1,11 @@
 import type { EventDraft } from '@/lib/store/calendar-store';
 import { same } from '@/lib/store/undo';
 import { eventSpan } from '@/lib/tempo/recurrence';
-import type { Occurrence, OccurrencePatch, TempoEvent } from '@/lib/tempo/types';
+import type { Occurrence, OccurrencePatch, Reminder, TempoEvent } from '@/lib/tempo/types';
 
-const minutesOf = (rs: { minutes: number }[] | undefined) =>
-  (rs ?? []).map((r) => r.minutes).sort((a, b) => a - b);
+/** A reminder list as comparable data: where each counts from, and how far. */
+const remindersOf = (rs: Reminder[] | undefined) =>
+  (rs ?? []).map((r) => `${r.from ?? 'start'}:${r.minutes}`).sort();
 
 /**
  * What the form's values mean for one date of a series — or `null` when they
@@ -12,10 +13,11 @@ const minutesOf = (rs: { minutes: number }[] | undefined) =>
  *
  * An exception can move a date, retime it and rename it; that is all an
  * `OccurrencePatch` holds. A change to anything else — the type, the category,
- * the reminders, the repeat, the derived label, the notes, the all-day switch —
- * is a change to what the series *is*, and one date cannot differ from its
- * series in those. Google allows it because every Google instance is a whole
- * event of its own; here an instance is the series seen on one day.
+ * the reminders, the due time, the repeat, the derived label, the notes, the
+ * all-day switch — is a change to what the series *is*, and one date cannot
+ * differ from its series in those. Google allows it because every Google
+ * instance is a whole event of its own; here an instance is the series seen on
+ * one day.
  *
  * `shown` is the form as it reads: the occurrence's dates, not the series'. An
  * empty patch means nothing one date could hold has changed.
@@ -28,7 +30,8 @@ export function oneDatePatch(
   const seriesLevel =
     shown.kind !== existing.kind ||
     (shown.categoryId ?? null) !== existing.categoryId ||
-    !same(minutesOf(shown.reminders), minutesOf(existing.reminders)) ||
+    !same(remindersOf(shown.reminders), remindersOf(existing.reminders)) ||
+    (shown.allDay ? (shown.dueMinutes ?? null) : null) !== existing.dueMinutes ||
     !same(shown.recurrence ?? null, existing.recurrence) ||
     (shown.displayTemplate ?? null) !== existing.displayTemplate ||
     (shown.anchorDate ?? null) !== existing.anchorDate ||

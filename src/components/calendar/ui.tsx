@@ -164,6 +164,10 @@ export function Popover({
 export const inputClass =
   'w-full border border-hair bg-panel px-2.5 py-2 text-[12px] text-ink outline-none transition-colors placeholder:text-mute focus:border-hairlit';
 
+/** A small number field: REPEATS' every-N count, and a reminder's days or amount. */
+export const numberClass =
+  'w-14 border border-hair bg-panel px-1.5 py-2 text-center text-[12px] tabular-nums text-ink outline-none transition-colors focus:border-hairlit';
+
 /**
  * A caption over what it names.
  *

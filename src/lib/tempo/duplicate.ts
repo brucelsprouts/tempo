@@ -109,6 +109,7 @@ export function copyableFields(
     kind: ev.kind,
     categoryId: ev.categoryId,
     allDay: ev.allDay,
+    dueMinutes: ev.dueMinutes,
     timezone: ev.timezone,
     recurrence: ev.recurrence,
     reminders: ev.reminders,

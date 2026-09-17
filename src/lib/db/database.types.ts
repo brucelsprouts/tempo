@@ -84,6 +84,7 @@ export type Database = {
           created_at: string
           deleted_at: string | null
           display_template: string | null
+          due_minutes: number | null
           end_date: string | null
           ends_at: string | null
           google_calendar_id: string | null
@@ -112,6 +113,7 @@ export type Database = {
           created_at?: string
           deleted_at?: string | null
           display_template?: string | null
+          due_minutes?: number | null
           end_date?: string | null
           ends_at?: string | null
           google_calendar_id?: string | null
@@ -140,6 +142,7 @@ export type Database = {
           created_at?: string
           deleted_at?: string | null
           display_template?: string | null
+          due_minutes?: number | null
           end_date?: string | null
           ends_at?: string | null
           google_calendar_id?: string | null
@@ -340,6 +343,7 @@ export type Database = {
       }
       reminder_deliveries: {
         Row: {
+          anchor: string
           event_id: string
           fire_at: string
           id: string
@@ -349,6 +353,7 @@ export type Database = {
           sent_at: string
         }
         Insert: {
+          anchor?: string
           event_id: string
           fire_at: string
           id?: string
@@ -358,6 +363,7 @@ export type Database = {
           sent_at?: string
         }
         Update: {
+          anchor?: string
           event_id?: string
           fire_at?: string
           id?: string

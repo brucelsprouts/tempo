@@ -15,6 +15,7 @@ function lecture(over: Partial<TempoEvent> = {}): TempoEvent {
     endsAt: null,
     startDate: '2026-09-01',
     endDate: '2026-09-01',
+    dueMinutes: null,
     timezone: 'America/Toronto',
     recurrence: { freq: 'WEEKLY', interval: 1 },
     reminders: [{ minutes: 900 }, { minutes: 2340 }],
@@ -113,6 +114,15 @@ describe('what a change means for one date', () => {
     expect(
       oneDatePatch(e, occ, shown(e, occ, { reminders: [{ minutes: 2340 }, { minutes: 900 }] })),
     ).toEqual({});
+  });
+
+  it('refuses a reminder moved to count from the due date', () => {
+    const moved = shown(e, occ, { reminders: [{ from: 'dueDay', minutes: 900 }, { minutes: 2340 }] });
+    expect(oneDatePatch(e, occ, moved)).toBeNull();
+  });
+
+  it('refuses a change to the due time', () => {
+    expect(oneDatePatch(e, occ, shown(e, occ, { dueMinutes: 18 * 60 }))).toBeNull();
   });
 });
 

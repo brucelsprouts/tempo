@@ -28,6 +28,7 @@ function allDayEvent(over: Partial<TempoEvent> = {}): TempoEvent {
     endsAt: null,
     startDate: '2026-07-30',
     endDate: '2026-07-30',
+    dueMinutes: null,
     timezone: 'America/Toronto',
     recurrence: null,
     reminders: [],

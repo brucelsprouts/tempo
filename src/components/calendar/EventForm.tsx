@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
+import { useEffect, useImperativeHandle, useMemo, useState, type Ref } from 'react';
 import { useCalendar, type EventDraft } from '@/lib/store/calendar-store';
 import { civil, parts, todayIn, yearsBetween, type CivilDate } from '@/lib/tempo/civil';
 import { eventSpan } from '@/lib/tempo/recurrence';
@@ -9,27 +9,25 @@ import {
   renderTemplate,
   TEMPLATE_PRESETS,
 } from '@/lib/tempo/derive';
-import {
-  ALL_DAY_PRESETS,
-  allDayLeadMinutes,
-  defaultReminders,
-  isSendableLead,
-  leadMinutes,
-  reminderLabel,
-  TIMED_PRESETS,
-  type LeadUnit,
-} from '@/lib/tempo/reminders';
-import type { EventKind, Occurrence, Recurrence, Reminder } from '@/lib/tempo/types';
+import { DEFAULT_DUE_MINUTES, defaultReminders } from '@/lib/tempo/reminders';
+import type { EventKind, Occurrence, Recurrence } from '@/lib/tempo/types';
 import type { EntrySeed } from './CalendarShell';
 import { UNTITLED } from './constants';
 import { DatePicker } from './DatePicker';
-import { parseTimeInput, TimePicker } from './TimePicker';
+import { ReminderField } from './ReminderField';
+import {
+  remindersFromRows,
+  rowContext,
+  rowNotes,
+  rowsFromReminders,
+  type ReminderRow,
+} from './reminder-rows';
 import { WhenField } from './WhenField';
 import { LAST_MINUTE, normalizeWhen, ontoSeries, type WhenValue } from './when';
 import { clampInterval, MAX_INTERVAL, periodWord, repeatRule, type RepeatFreq } from './repeat';
 import { canSplitAt, oneDatePatch } from './scope';
 import { ScopePrompt } from './ScopePrompt';
-import { Button, Field, inputClass, SegmentedControl } from './ui';
+import { Button, Field, inputClass, numberClass, SegmentedControl } from './ui';
 
 /**
  * The one form in the app.
@@ -129,10 +127,6 @@ const FREQS = [
   { value: 'MONTHLY', label: 'MONTH' },
   { value: 'YEARLY', label: 'YEAR' },
 ] as const satisfies readonly { value: RepeatFreq; label: string }[];
-
-/** A small number field: EVERY's count, and a custom reminder's amount. */
-const NUMBER_BOX =
-  'w-14 border border-hair bg-panel px-1.5 py-2 text-center text-[12px] tabular-nums text-ink outline-none transition-colors focus:border-hairlit';
 
 const TEMPLATES = [
   { value: 'none', label: 'PLAIN TITLE', template: null },
@@ -238,88 +232,6 @@ export function EventForm({
   );
   const [notes, setNotes] = useState(existing?.notes ?? '');
 
-  /**
-   * Reminders, and whether the user has taken them over.
-   *
-   * A new entry follows its kind — an assignment wants a day's warning and a
-   * two-hour one, a dentist appointment wants half an hour — and keeps
-   * following it while `kind` and the all-day switch are still being changed.
-   * The moment a chip is clicked that stops: `touched` is what makes the
-   * defaults a starting point rather than something that keeps overwriting a
-   * deliberate choice.
-   *
-   * An edit starts touched, because every value on an existing row was already
-   * a decision, including the decision to have none.
-   */
-  const [chosenReminders, setChosenReminders] = useState<Reminder[]>(
-    () => existing?.reminders ?? [],
-  );
-  const [remindersTouched, setRemindersTouched] = useState(mode === 'edit');
-
-  // Derived, not synchronised. Following `kind` and the all-day switch with an
-  // effect would mean a second render on every change to either, and this is
-  // the same fact stated once: until you pick, the defaults *are* the value.
-  const reminders = remindersTouched ? chosenReminders : defaultReminders(kind, allDay);
-
-  const presets = allDay ? ALL_DAY_PRESETS : TIMED_PRESETS;
-
-  function toggleReminder(minutes: number) {
-    // Built from what is on screen, which before the first click is the
-    // defaults — so the first chip you click adds to them rather than
-    // replacing them with a list of one.
-    const without = reminders.filter((r) => r.minutes !== minutes);
-    const deselecting = without.length !== reminders.length;
-
-    setRemindersTouched(true);
-    // Five is the parse ceiling, enforced by disabling the remaining chips
-    // rather than dropping one here: a click that silently removes an earlier
-    // choice to make room reads as the button being broken.
-    if (deselecting) setChosenReminders(without);
-    else if (reminders.length < 5) {
-      setChosenReminders([...reminders, { minutes }].sort((a, b) => b.minutes - a.minutes));
-    } else setChosenReminders(reminders);
-  }
-
-  /**
-   * The + CUSTOM row: open or not, and what it holds. Both shapes are kept, so
-   * flipping the all-day switch with the row open does not lose what was typed.
-   */
-  const [custom, setCustom] = useState<{
-    amount: number;
-    unit: LeadUnit;
-    days: number;
-    at: number;
-  } | null>(null);
-  const [customError, setCustomError] = useState<string | null>(null);
-  /** The custom row's time field. An Enter there has to be read off the field. */
-  const customTime = useRef<HTMLDivElement>(null);
-
-  // The presets, then every chosen reminder no preset covers: a custom lead, or
-  // one carried across a switch between timed and all-day. Left out, a reminder
-  // that still sends would be one the form hides.
-  const chips = [
-    ...presets,
-    ...reminders
-      .filter((r) => !presets.some((p) => p.minutes === r.minutes))
-      .map((r) => ({ minutes: r.minutes, label: reminderLabel(r.minutes, allDay) })),
-  ];
-
-  function addCustom(at = custom?.at) {
-    if (!custom || at === undefined) return;
-    const minutes = allDay
-      ? allDayLeadMinutes(custom.days, at)
-      : leadMinutes(custom.amount, custom.unit);
-    // Exactly the range the dispatcher sends. A reminder outside it would sit on
-    // the entry and never arrive.
-    if (!isSendableLead(minutes)) {
-      setCustomError(allDay ? 'UP TO 28 DAYS BEFORE.' : 'UP TO 4 WEEKS BEFORE.');
-      return;
-    }
-    setCustomError(null);
-    setCustom(null);
-    if (!reminders.some((r) => r.minutes === minutes)) toggleReminder(minutes);
-  }
-
   // A birthday is the general machinery with the dials pre-set, not a special
   // case: yearly recurrence, an anchor on the birth date, and an age template.
   const isBirthday = kind === 'birthday';
@@ -330,6 +242,54 @@ export function EventForm({
   const effectiveAnchor = isBirthday ? startDate : anchorDate;
   const recurs = effectiveFreq !== 'NONE';
   const needsAnchor = templateNeedsAnchor(effectiveTemplate);
+
+  /**
+   * When an all-day entry is due, on its last day. Held as a time even at the
+   * default, so the field has something to show; saved as `null` at 23:55, so
+   * only a deadline that says otherwise stores one.
+   */
+  const [dueMinutes, setDueMinutes] = useState(existing?.dueMinutes ?? DEFAULT_DUE_MINUTES);
+
+  /**
+   * Reminders, as rows, and whether the user has taken them over.
+   *
+   * A new entry follows what it is — three reminders for something that happens
+   * once, one for a repeat, a birthday's own pair — and keeps following while
+   * the type, the all-day switch and the repeat are still being changed. The
+   * moment a row is edited that stops: `touched` is what makes the defaults a
+   * starting point rather than something that keeps overwriting a deliberate
+   * choice.
+   *
+   * An edit starts touched, because every value on an existing row was already
+   * a decision, including the decision to have none.
+   */
+  const ctx = rowContext(kind, allDay);
+  const [chosenRows, setChosenRows] = useState<ReminderRow[]>(() =>
+    rowsFromReminders(existing?.reminders ?? [], rowContext(existing?.kind ?? 'event', existing?.allDay ?? true)),
+  );
+  const [remindersTouched, setRemindersTouched] = useState(mode === 'edit');
+
+  // Derived, not synchronised. Following the type and the switches with an
+  // effect would mean a second render on every change to any of them, and this
+  // is the same fact stated once: until you edit, the defaults *are* the value.
+  // The first edit is made to what is on screen, so it changes the defaults
+  // rather than replacing them with a list of one.
+  const rows = remindersTouched
+    ? chosenRows
+    : rowsFromReminders(defaultReminders(kind, allDay, recurs), ctx);
+  const reminders = remindersFromRows(rows, ctx);
+  const rowNotesById = rowNotes(
+    rows,
+    ctx,
+    {
+      allDay: isBirthday || allDay,
+      startDate,
+      endDate: isBirthday ? startDate : endDate,
+      startMinutes: when.startMinutes,
+    },
+    ctx === 'allDay' ? dueMinutes : null,
+    timezone,
+  );
 
   // Reported on every change, including the first render, so the bar appears
   // with the form rather than only once a field is touched. The title rides
@@ -412,6 +372,7 @@ export function EventForm({
       endDate: isBirthday ? startDate : ontoSeries(w.endDate, opened.endDate, span?.end),
       startMinutes: w.allDay ? undefined : w.startMinutes,
       endMinutes: w.allDay ? undefined : w.endMinutes,
+      dueMinutes: ctx === 'allDay' && dueMinutes !== DEFAULT_DUE_MINUTES ? dueMinutes : null,
       categoryId,
       recurrence: buildRecurrence(),
       // Always sent, including when empty. Unlike `notify` this field is the
@@ -585,7 +546,7 @@ export function EventForm({
                     }}
                     onBlur={() => setEveryText(null)}
                     aria-label="Repeat every"
-                    className={NUMBER_BOX}
+                    className={numberClass}
                   />
                   <span className="label">{periodWord(freq, every)}</span>
                 </span>
@@ -638,130 +599,16 @@ export function EventForm({
 
         <div className="col-span-full">
           <Field label="[06] REMIND ME" group>
-            {/* Chips rather than a select: reminders are a set, not a choice,
-                and the pairing people actually want — one to start, one to
-                turn up — is two clicks here and a nested multi-select in any
-                other control. */}
-            <div className="flex flex-wrap gap-1.5">
-              {chips.map(({ minutes, label }) => {
-                const on = reminders.some((r) => r.minutes === minutes);
-                const full = !on && reminders.length >= 5;
-                return (
-                  <button
-                    key={minutes}
-                    type="button"
-                    disabled={full}
-                    aria-pressed={on}
-                    onClick={() => toggleReminder(minutes)}
-                    className={`tap max-w-full truncate border px-2 py-1 text-[10px] tracking-[0.1em] transition-colors disabled:opacity-30 ${
-                      on
-                        ? 'border-hairlit bg-raised text-bright'
-                        : 'border-hair text-mute hover:border-hairlit hover:text-dim'
-                    }`}
-                  >
-                    {label.toUpperCase()}
-                  </button>
-                );
-              })}
-              <button
-                type="button"
-                disabled={reminders.length >= 5 || custom !== null}
-                onClick={() => setCustom({ amount: 1, unit: 'hours', days: 0, at: 8 * 60 })}
-                className="tap border border-dashed border-hair px-2 py-1 text-[10px] tracking-[0.1em] text-mute transition-colors hover:border-hairlit hover:text-dim disabled:opacity-30"
-              >
-                + CUSTOM
-              </button>
-            </div>
-            {custom && (
-              <div
-                className="mt-2 flex flex-wrap items-center gap-2"
-                // Enter adds, rather than submitting the whole form as it would
-                // from any other field.
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    // An Enter in the time field is also that field settling
-                    // what was typed into it, and the settled time has not
-                    // reached `custom` by the time this runs — so it is read
-                    // off the field, or the time it held before would be added.
-                    const typed = customTime.current?.contains(e.target as Node)
-                      ? parseTimeInput((e.target as HTMLInputElement).value)
-                      : null;
-                    addCustom(typed ?? undefined);
-                  }
-                }}
-              >
-                {allDay ? (
-                  <>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      max={28}
-                      value={custom.days}
-                      onChange={(e) =>
-                        setCustom({ ...custom, days: Math.max(0, Math.round(e.target.valueAsNumber || 0)) })
-                      }
-                      aria-label="Days before"
-                      className={NUMBER_BOX}
-                    />
-                    <span className="label">DAYS BEFORE, AT</span>
-                    <div className="w-24" ref={customTime}>
-                      <TimePicker
-                        label="Reminder time"
-                        value={custom.at}
-                        onChange={(at) => setCustom({ ...custom, at })}
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      value={custom.amount}
-                      onChange={(e) =>
-                        setCustom({ ...custom, amount: Math.max(0, Math.round(e.target.valueAsNumber || 0)) })
-                      }
-                      aria-label="How long before"
-                      className={NUMBER_BOX}
-                    />
-                    <select
-                      value={custom.unit}
-                      onChange={(e) => setCustom({ ...custom, unit: e.target.value as LeadUnit })}
-                      aria-label="Unit"
-                      className="border border-hair bg-panel px-2 py-2 text-[12px] text-ink outline-none focus:border-hairlit"
-                    >
-                      <option value="minutes">MINUTES</option>
-                      <option value="hours">HOURS</option>
-                      <option value="days">DAYS</option>
-                      <option value="weeks">WEEKS</option>
-                    </select>
-                    <span className="label">BEFORE</span>
-                  </>
-                )}
-                <Button type="button" onClick={() => addCustom()}>
-                  ADD
-                </Button>
-                <Button
-                  type="button"
-                  variant="quiet"
-                  onClick={() => {
-                    setCustom(null);
-                    setCustomError(null);
-                  }}
-                >
-                  CANCEL
-                </Button>
-              </div>
-            )}
-            {customError && (
-              <p className="label label-lit mt-2">{customError}</p>
-            )}
-            {reminders.length === 0 && (
-              <p className="label mt-2">SILENT — NOTHING WILL BE SENT FOR THIS ENTRY.</p>
-            )}
+            <ReminderField
+              ctx={ctx}
+              rows={rows}
+              onRows={(next) => {
+                setRemindersTouched(true);
+                setChosenRows(next);
+              }}
+              notes={rowNotesById}
+              due={ctx === 'allDay' ? { minutes: dueMinutes, onChange: setDueMinutes } : undefined}
+            />
           </Field>
         </div>
 

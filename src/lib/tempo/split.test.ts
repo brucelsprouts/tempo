@@ -15,6 +15,7 @@ function series(id: string, start: string, recurrence: Recurrence | null): Tempo
     endsAt: null,
     startDate: start,
     endDate: start,
+    dueMinutes: null,
     timezone: 'America/Toronto',
     recurrence,
     reminders: [],

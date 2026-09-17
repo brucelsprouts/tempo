@@ -53,10 +53,34 @@ export interface Recurrence {
  * rather than rename if the mirror is ever built. Worth the divergence: an
  * exam you are told about at midnight is an exam you are told about in your
  * sleep, and the alternative is having no same-day option at all.
+ *
+ * **`from` moves the point it counts back from**, because an entry stretched
+ * across a week has two ends and a deadline is the far one. Omitted is the
+ * start, which is what every reminder written before anchors existed means.
+ * See `ReminderAnchor`.
  */
 export interface Reminder {
   minutes: number;
+  /** Omitted means `'start'`. Never stored as `'start'`, so equal reminders compare equal. */
+  from?: Exclude<ReminderAnchor, 'start'>;
 }
+
+/**
+ * The point a reminder counts back from.
+ *
+ * - `start` — the start. Midnight on an all-day entry's first day; the start
+ *   time on an entry with one.
+ * - `dueDay` — midnight on the day it is due. An all-day entry's last day; the
+ *   day an entry with a time starts on.
+ * - `due` — the moment it is due. The due time on an all-day entry's last day;
+ *   the start time on an entry with one.
+ *
+ * Three rather than a "start or end" pair because a reminder is one of two
+ * shapes. "The day before, 09:00" is a time of day and has to stay 09:00 when
+ * the due time changes, so it counts from a midnight; "1 hour before" has to
+ * follow the due time, so it counts from the moment.
+ */
+export type ReminderAnchor = 'start' | 'dueDay' | 'due';
 
 /**
  * The stored definition of something on the calendar. For a recurring event
@@ -76,6 +100,13 @@ export interface TempoEvent {
   /** All-day events only: bare dates, end inclusive. */
   startDate: CivilDate | null;
   endDate: CivilDate | null;
+  /**
+   * All-day events only: minutes past midnight on the last day that it is due
+   * by. `null` is 23:55, which is when nearly everything is due — so only a
+   * deadline that says otherwise stores one. An entry with a time is due when
+   * it starts, and holds none.
+   */
+  dueMinutes: number | null;
   timezone: string;
 
   recurrence: Recurrence | null;

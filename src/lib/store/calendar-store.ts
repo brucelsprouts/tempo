@@ -74,6 +74,8 @@ export interface EventDraft {
   endDate: CivilDate;
   startMinutes?: number;
   endMinutes?: number;
+  /** All-day only. `null` or absent is the default, 23:55. */
+  dueMinutes?: number | null;
   categoryId?: string | null;
   recurrence?: Recurrence | null;
   reminders?: Reminder[];
@@ -1835,6 +1837,9 @@ function draftTiming(draft: EventDraft, tz: string) {
     // to hold it. Exactly one pair is ever populated.
     startDate: draft.allDay ? draft.startDate : null,
     endDate: draft.allDay ? draft.endDate : null,
+    // An entry with a time is due when it starts, so it keeps no due time —
+    // including one left over from before its time was switched on.
+    dueMinutes: draft.allDay ? (draft.dueMinutes ?? null) : null,
   };
 }
 

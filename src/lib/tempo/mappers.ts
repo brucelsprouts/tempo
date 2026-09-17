@@ -23,6 +23,7 @@ import type {
   TempoEvent,
   VersionReason,
 } from './types';
+import { canonicalReminders } from './reminders';
 
 const civilDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -42,12 +43,23 @@ const recurrenceSchema = z.object({
  * Bounded to Google's own reminder range at the top (40320 — four weeks) so the
  * field stays a rename rather than a translation, and to one day at the bottom,
  * which is as far after an all-day midnight as "on the morning of" can reach.
+ *
+ * `from` accepts `'start'` although nothing writes it, and the parse drops it:
+ * "counts from the start" has one spelling, so a list can be compared and
+ * deduplicated as data.
  */
 const reminderSchema = z.object({
   minutes: z.number().int().min(-1440).max(40320),
+  from: z.enum(['start', 'dueDay', 'due']).optional(),
 });
 
-const remindersSchema = z.array(reminderSchema).max(5);
+/** The most reminders one entry holds. A longer list is malformed, not truncated. */
+export const MAX_REMINDERS = 5;
+
+const remindersSchema = z.array(reminderSchema).max(MAX_REMINDERS);
+
+/** An all-day entry's due time: a minute of the day. */
+const dueMinutesSchema = z.number().int().min(0).max(1439);
 
 const patchSchema = z.object({
   title: z.string().optional(),
@@ -66,16 +78,22 @@ export function parseRecurrence(value: unknown): Recurrence | null {
 
 /**
  * Malformed reminders degrade to silence rather than throwing, matching
- * `parseRecurrence`. Duplicates are collapsed and the list is sorted longest
- * lead first, so "1 day, then 2 hours" is the stored order regardless of the
- * order it was clicked in — which makes the column diffable.
+ * `parseRecurrence`. Duplicates are collapsed and the list is sorted — by
+ * anchor, start first, then longest lead first — so "1 day, then 2 hours" is
+ * the stored order regardless of the order it was chosen in, which makes the
+ * column diffable.
  */
 export function parseReminders(value: unknown): Reminder[] {
   if (!value) return [];
   const result = remindersSchema.safeParse(value);
   if (!result.success) return [];
-  const unique = new Map(result.data.map((r) => [r.minutes, r]));
-  return [...unique.values()].sort((a, b) => b.minutes - a.minutes);
+  return canonicalReminders(result.data);
+}
+
+/** A due time, or `null` for the default — including for anything out of range. */
+export function parseDueMinutes(value: unknown): number | null {
+  const result = dueMinutesSchema.safeParse(value);
+  return result.success ? result.data : null;
 }
 
 export function parsePatch(value: unknown): OccurrencePatch {
@@ -104,6 +122,9 @@ const eventSchema = z.object({
   endsAt: z.string().nullable(),
   startDate: civilDate.nullable(),
   endDate: civilDate.nullable(),
+  // Defaulted for the same reason `reminders` is: snapshots written before due
+  // times existed have no such key.
+  dueMinutes: dueMinutesSchema.nullable().default(null),
   timezone: z.string(),
   recurrence: recurrenceSchema.nullable(),
   // Defaulted, not required: snapshots written before reminders existed have no
@@ -164,6 +185,7 @@ export function eventFromRow(row: EventRow): TempoEvent {
     endsAt: instant(row.ends_at),
     startDate: row.start_date,
     endDate: row.end_date,
+    dueMinutes: parseDueMinutes(row.due_minutes),
     timezone: row.timezone,
     recurrence: parseRecurrence(row.recurrence),
     reminders: parseReminders(row.reminders),
@@ -217,6 +239,7 @@ export function eventToRow(e: Partial<TempoEvent>): Partial<EventRow> {
   if (e.endsAt !== undefined) row.ends_at = e.endsAt;
   if (e.startDate !== undefined) row.start_date = e.startDate;
   if (e.endDate !== undefined) row.end_date = e.endDate;
+  if (e.dueMinutes !== undefined) row.due_minutes = e.dueMinutes;
   if (e.timezone !== undefined) row.timezone = e.timezone;
   if (e.recurrence !== undefined) row.recurrence = e.recurrence as never;
   if (e.reminders !== undefined) row.reminders = e.reminders as never;
@@ -257,8 +280,14 @@ export interface PortableEvent {
   ends_at?: string;
   timezone?: string;
   recurrence?: Recurrence;
-  /** Minutes before the start, longest lead first. Omitted when silent. */
-  reminders?: number[];
+  /**
+   * Minutes before the start, longest lead first; a reminder counted from
+   * somewhere else is a string naming where, as `dueDay:900`. Omitted when
+   * silent.
+   */
+  reminders?: (number | string)[];
+  /** All-day entries only, `HH:MM`, and only when it is not the default 23:55. */
+  due_time?: string;
   anchor_date?: string;
   display_template?: string;
   category?: string;
@@ -278,15 +307,21 @@ export function toPortable(e: TempoEvent, categoryName?: string): PortableEvent 
   if (e.allDay) {
     out.start_date = e.startDate ?? undefined;
     out.end_date = e.endDate ?? undefined;
+    if (e.dueMinutes !== null) {
+      const h = Math.floor(e.dueMinutes / 60);
+      out.due_time = `${String(h).padStart(2, '0')}:${String(e.dueMinutes % 60).padStart(2, '0')}`;
+    }
   } else {
     out.starts_at = e.startsAt ?? undefined;
     out.ends_at = e.endsAt ?? undefined;
     out.timezone = e.timezone;
   }
   if (e.recurrence) out.recurrence = e.recurrence;
-  // Flattened to bare numbers rather than `[{minutes: 30}]`: the export exists
+  // Flattened to bare values rather than `[{minutes: 30}]`: the export exists
   // to be read inside a frontmatter block, and a list of objects is not.
-  if (e.reminders.length) out.reminders = e.reminders.map((r) => r.minutes);
+  if (e.reminders.length) {
+    out.reminders = e.reminders.map((r) => (r.from ? `${r.from}:${r.minutes}` : r.minutes));
+  }
   if (e.anchorDate) out.anchor_date = e.anchorDate;
   if (e.displayTemplate) out.display_template = e.displayTemplate;
   if (categoryName) out.category = categoryName;

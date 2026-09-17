@@ -133,10 +133,16 @@ from the icon, then **Settings → Notifications → Enable**. It has to be done
 that order. In a browser tab iOS refuses to even ask, and Tempo says so rather
 than showing a button that cannot work.
 
-Each entry then carries its own lead times — a day before *and* two hours before
-for assignments, half an hour for a timed event, five minutes before midnight
-and 09:00 that morning for a birthday. The defaults follow the entry's type and
-are one click to change.
+Each entry then carries its own reminders. Something that happens once is told
+about the morning it starts, the morning before it's due, and the morning it's
+due — or, with a time, the morning before and an hour before. A repeat gets one:
+half an hour before, or the morning of. Birthdays get five minutes before midnight
+and 09:00 that morning. Every reminder can be moved, removed or added to, and an
+all-day entry is due at 23:55 unless it says otherwise.
+
+Reminders count back from the start or from the deadline, so dragging an entry
+longer carries them with it. Run `supabase/migrations/20260917_deadline_reminders.sql`
+alongside deploying the version that introduced this.
 
 ## Scripts
 

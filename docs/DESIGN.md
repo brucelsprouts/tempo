@@ -208,7 +208,7 @@ impossible: a deleted event cannot notify, a cancelled occurrence cannot notify,
 a rescheduled one notifies off its new time, and none of it needs cleanup.
 
 **The delivery table is a claim, not a log.** `reminder_deliveries` has a unique
-constraint on `(event_id, occurrence_date, minutes)`, and the dispatcher inserts
+constraint on `(event_id, occurrence_date, anchor, minutes)`, and the dispatcher inserts
 *before* it sends, forwarding only the rows the insert actually returned. Two
 overlapping ticks split the work instead of both sending it. Sending first and
 recording after would double-notify on any retry.
@@ -228,6 +228,25 @@ The cost is the RFC 5545 wart that a lead time spanning a DST transition lands
 an hour off; `reminders.test.ts` asserts that rather than hiding it. Negative
 offsets are the one divergence — an all-day entry has no time of day, so "09:00
 on the morning of" can only be said as -540.
+
+**A reminder counts back from the start, the due day, or the due moment.** An
+entry stretched across a week has two ends, and a deadline is the far one, so
+`Reminder.from` picks which: nothing (the start, and every reminder stored before
+anchors existed), `dueDay` (midnight on the day it is due) or `due` (the moment
+it is due — the due time on an all-day entry's last day, the start time on one
+with a time). Two anchors that sound alike because a reminder is one of two
+shapes: a time of day counts from a midnight, so it stays 09:00 when the due time
+changes; a lead counts from the moment, so it follows it. Anchored to an edge, a
+reminder moves with that edge when it is dragged. The anchor is part of the
+claim, because "09:00 the day it starts" and "09:00 the day it's due" are both
+-540.
+
+Two corrections are applied per occurrence, in `planReminders`, which the entry
+form also reads so it can say what will happen. **Reminders landing on one moment
+send once** — a one-day entry's start and due reminders are the same instant —
+and the one sent is the one nearer the deadline. **A time of day at or after the
+due moment is sent an hour before it instead**, since a 09:00 "today" on a 07:00
+exam is a reminder about something already happening.
 
 ## 13. The PWA installs; it does not pretend to work offline
 

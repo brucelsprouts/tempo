@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { eventFromRow, overrideFromRow } from '@/lib/tempo/mappers';
-import { dueReminders, reminderText } from '@/lib/tempo/reminders';
+import { dueReminders, reminderText, type DueReminder } from '@/lib/tempo/reminders';
 import { sendToAll } from '@/lib/push/send';
 import type { OccurrenceOverride } from '@/lib/tempo/types';
 
@@ -109,10 +109,11 @@ export async function POST(request: Request) {
         owner_id: eventOwner(eventRows ?? [], d.event.id),
         event_id: d.event.id,
         occurrence_date: d.seriesDate,
+        anchor: d.anchor,
         minutes: d.minutes,
         fire_at: d.fireAt.toISOString(),
       })),
-      { onConflict: 'event_id,occurrence_date,minutes', ignoreDuplicates: true },
+      { onConflict: 'event_id,occurrence_date,anchor,minutes', ignoreDuplicates: true },
     )
     .select();
 
@@ -121,9 +122,9 @@ export async function POST(request: Request) {
   }
 
   const claimed = new Set(
-    (claimedRows ?? []).map((r) => `${r.event_id}:${r.occurrence_date}:${r.minutes}`),
+    (claimedRows ?? []).map((r) => `${r.event_id}:${r.occurrence_date}:${r.anchor}:${r.minutes}`),
   );
-  const toSend = due.filter((d) => claimed.has(`${d.event.id}:${d.seriesDate}:${d.minutes}`));
+  const toSend = due.filter((d) => claimed.has(deliveryKey(d)));
 
   if (toSend.length === 0) {
     return NextResponse.json({ scanned: events.length, due: due.length, sent: 0, claimed: 0 });
@@ -148,7 +149,7 @@ export async function POST(request: Request) {
       url: `/?d=${d.occurrence.date}`,
       // One tag per reminder, so two leads on the same occurrence are two
       // notifications but a redelivered one replaces itself.
-      tag: `${d.event.id}:${d.seriesDate}:${d.minutes}`,
+      tag: deliveryKey(d),
     });
     sent += result.sent;
     pruned += result.pruned;
@@ -161,6 +162,11 @@ export async function POST(request: Request) {
     sent,
     pruned,
   });
+}
+
+/** A reminder's claim, spelled the way the delivery table's unique key reads. */
+function deliveryKey(d: DueReminder): string {
+  return `${d.event.id}:${d.seriesDate}:${d.anchor}:${d.minutes}`;
 }
 
 /** The owner of an event, from the rows already fetched. */

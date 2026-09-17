@@ -114,6 +114,7 @@ function event(over: Partial<TempoEvent>): TempoEvent {
     endsAt: null,
     startDate: '2026-08-10',
     endDate: '2026-08-10',
+    dueMinutes: null,
     timezone: TZ,
     recurrence: null,
     reminders: [],

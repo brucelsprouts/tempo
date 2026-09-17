@@ -42,6 +42,7 @@ function base(id: string, title: string, over: Partial<TempoEvent>): TempoEvent 
     endsAt: null,
     startDate: null,
     endDate: null,
+    dueMinutes: null,
     timezone: TZ,
     recurrence: null,
     reminders: [],

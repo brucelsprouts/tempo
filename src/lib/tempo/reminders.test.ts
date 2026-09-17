@@ -7,9 +7,10 @@ import {
   isSendableLead,
   leadMinutes,
   occurrenceStart,
-  reminderLabel,
+  planReminders,
   reminderText,
 } from './reminders';
+import { expandEvent } from './recurrence';
 import type { OccurrenceOverride, TempoEvent } from './types';
 
 // ------------------------------------------------------------------ fixtures
@@ -28,6 +29,7 @@ function event(over: Partial<TempoEvent> = {}): TempoEvent {
     endsAt: null,
     startDate: '2026-07-30',
     endDate: '2026-07-30',
+    dueMinutes: null,
     timezone: TZ,
     recurrence: null,
     reminders: [],
@@ -311,19 +313,231 @@ describe('occurrenceStart', () => {
   });
 });
 
-describe('reminderText', () => {
-  it('uses the derived title, so a birthday arrives with the age on it', () => {
+// ------------------------------------------------------------------- anchors
+
+describe('anchors', () => {
+  /** An assignment worked on Monday to Friday, 13–17 July. */
+  const week = (over: Partial<TempoEvent> = {}) =>
+    event({ startDate: '2026-07-13', endDate: '2026-07-17', ...over });
+
+  it('counts a due-day reminder back from the last day, not the first', () => {
+    const e = week({ reminders: [{ from: 'dueDay', minutes: 900 }] });
+    const w = MONTH(7);
+
+    expect(firedAt([e], w.after, w.upTo)).toEqual([instant(2026, 7, 16, 9 * 60).toISOString()]);
+  });
+
+  it('keeps a start reminder on the first day', () => {
+    const e = week({ reminders: [{ minutes: -540 }] });
+    const w = MONTH(7);
+
+    expect(firedAt([e], w.after, w.upTo)).toEqual([instant(2026, 7, 13, 9 * 60).toISOString()]);
+  });
+
+  it('counts a due reminder back from the due time', () => {
+    const e = week({ dueMinutes: 18 * 60, reminders: [{ from: 'due', minutes: 60 }] });
+    const w = MONTH(7);
+
+    expect(firedAt([e], w.after, w.upTo)).toEqual([instant(2026, 7, 17, 17 * 60).toISOString()]);
+  });
+
+  it('is due at 23:55 when no due time is stated', () => {
+    const e = week({ reminders: [{ from: 'due', minutes: 5 }] });
+    const w = MONTH(7);
+
+    expect(firedAt([e], w.after, w.upTo)).toEqual([
+      instant(2026, 7, 17, 23 * 60 + 50).toISOString(),
+    ]);
+  });
+
+  it('holds a time-of-day reminder at its time when the due time moves', () => {
+    const e = week({ dueMinutes: 18 * 60, reminders: [{ from: 'dueDay', minutes: 900 }] });
+    const w = MONTH(7);
+
+    expect(firedAt([e], w.after, w.upTo)).toEqual([instant(2026, 7, 16, 9 * 60).toISOString()]);
+  });
+
+  it('puts a timed entry’s due day on the day it starts', () => {
+    const e = timed('2026-07-15', 7 * 60, {
+      reminders: [{ from: 'dueDay', minutes: 900 }, { from: 'due', minutes: 60 }],
+    });
+    const w = MONTH(7);
+
+    expect(firedAt([e], w.after, w.upTo)).toEqual([
+      instant(2026, 7, 14, 9 * 60).toISOString(),
+      instant(2026, 7, 15, 6 * 60).toISOString(),
+    ]);
+  });
+
+  it('finds a deadline whose entry started before the window', () => {
     const e = event({
+      startDate: '2026-06-20',
+      endDate: '2026-07-15',
+      reminders: [{ from: 'dueDay', minutes: 900 }],
+    });
+    const w = MONTH(7);
+
+    expect(firedAt([e], w.after, w.upTo)).toEqual([instant(2026, 7, 14, 9 * 60).toISOString()]);
+  });
+
+  it('follows a dragged end, because the reminder is anchored to it', () => {
+    const e = week({
+      endDate: '2026-07-24',
+      reminders: [{ from: 'dueDay', minutes: 900 }],
+    });
+    const w = MONTH(7);
+
+    expect(firedAt([e], w.after, w.upTo)).toEqual([instant(2026, 7, 23, 9 * 60).toISOString()]);
+  });
+
+  it('carries the anchor into the identity, so equal minutes stay two reminders', () => {
+    const e = week({ reminders: [{ minutes: -540 }, { from: 'dueDay', minutes: -540 }] });
+    const w = MONTH(7);
+    const due = dueReminders([e], NO_OVERRIDES, w.after, w.upTo);
+
+    expect(due.map((d) => [d.anchor, d.minutes])).toEqual([
+      ['start', -540],
+      ['dueDay', -540],
+    ]);
+  });
+});
+
+describe('one moment, one notification', () => {
+  const three: TempoEvent['reminders'] = [
+    { minutes: -540 },
+    { from: 'dueDay', minutes: 900 },
+    { from: 'dueDay', minutes: -540 },
+  ];
+
+  it('sends a one-day entry’s start and due reminders once, as the due one', () => {
+    const e = event({ startDate: '2026-07-15', endDate: '2026-07-15', reminders: three });
+    const w = MONTH(7);
+    const due = dueReminders([e], NO_OVERRIDES, w.after, w.upTo);
+
+    expect(due.map((d) => [d.anchor, d.minutes])).toEqual([
+      ['dueDay', 900],
+      ['dueDay', -540],
+    ]);
+  });
+
+  it('sends all three once the entry is stretched', () => {
+    const e = event({ startDate: '2026-07-13', endDate: '2026-07-17', reminders: three });
+    const w = MONTH(7);
+
+    expect(firedAt([e], w.after, w.upTo)).toEqual([
+      instant(2026, 7, 13, 9 * 60).toISOString(),
+      instant(2026, 7, 16, 9 * 60).toISOString(),
+      instant(2026, 7, 17, 9 * 60).toISOString(),
+    ]);
+  });
+
+  it('prefers the reminder nearer the deadline on a two-day entry', () => {
+    // Starts Thursday, due Friday: "starts today" and "due tomorrow" are both
+    // Thursday 09:00.
+    const e = event({ startDate: '2026-07-16', endDate: '2026-07-17', reminders: three });
+    const w = MONTH(7);
+    const due = dueReminders([e], NO_OVERRIDES, w.after, w.upTo);
+
+    expect(due.map((d) => [d.anchor, d.minutes])).toEqual([
+      ['dueDay', 900],
+      ['dueDay', -540],
+    ]);
+  });
+
+  it('reports what it merged, for the form to say so', () => {
+    const e = event({
+      startDate: '2026-07-15',
+      endDate: '2026-07-15',
+      reminders: [{ minutes: -540 }, { from: 'dueDay', minutes: -540 }],
+    });
+    const [occ] = expandEvent(e, [], '2026-07-15', '2026-07-15');
+
+    expect(planReminders(occ, e).map((p) => [p.anchor, p.merged])).toEqual([
+      ['start', true],
+      ['dueDay', false],
+    ]);
+  });
+});
+
+describe('after the deadline', () => {
+  it('sends a 09:00 reminder for a 07:00 deadline an hour before it instead', () => {
+    const e = timed('2026-07-15', 7 * 60, { reminders: [{ from: 'dueDay', minutes: -540 }] });
+    const w = MONTH(7);
+    const [due] = dueReminders([e], NO_OVERRIDES, w.after, w.upTo);
+
+    expect(due.fireAt.toISOString()).toBe(instant(2026, 7, 15, 6 * 60).toISOString());
+    expect(due.late).toBe(true);
+  });
+
+  it('does the same on an all-day entry due early in the morning', () => {
+    const e = event({
+      startDate: '2026-07-15',
+      endDate: '2026-07-15',
+      dueMinutes: 7 * 60,
+      reminders: [{ from: 'dueDay', minutes: -540 }],
+    });
+    const w = MONTH(7);
+
+    expect(firedAt([e], w.after, w.upTo)).toEqual([instant(2026, 7, 15, 6 * 60).toISOString()]);
+  });
+
+  it('merges a moved reminder into a lead that lands on the same minute', () => {
+    const e = timed('2026-07-15', 7 * 60, {
+      reminders: [{ from: 'dueDay', minutes: -540 }, { minutes: 60 }],
+    });
+    const w = MONTH(7);
+    const due = dueReminders([e], NO_OVERRIDES, w.after, w.upTo);
+
+    expect(due.map((d) => [d.anchor, d.late])).toEqual([['start', false]]);
+  });
+
+  it('never moves a lead, which is before the time by definition', () => {
+    const e = timed('2026-07-15', 7 * 60, { reminders: [{ minutes: 0 }] });
+    const w = MONTH(7);
+    const [due] = dueReminders([e], NO_OVERRIDES, w.after, w.upTo);
+
+    expect(due.fireAt.toISOString()).toBe(instant(2026, 7, 15, 7 * 60).toISOString());
+    expect(due.late).toBe(false);
+  });
+
+  it('leaves a reminder before the deadline where it is', () => {
+    const e = event({
+      startDate: '2026-07-15',
+      endDate: '2026-07-15',
+      dueMinutes: 9 * 60 + 30,
+      reminders: [{ from: 'dueDay', minutes: -540 }],
+    });
+    const w = MONTH(7);
+
+    expect(firedAt([e], w.after, w.upTo)).toEqual([instant(2026, 7, 15, 9 * 60).toISOString()]);
+  });
+});
+
+// ---------------------------------------------------------------------- text
+
+describe('reminderText', () => {
+  /** The body of the one reminder `e` sends in July. */
+  function body(e: TempoEvent): string {
+    const w = MONTH(7);
+    const [due] = dueReminders([e], NO_OVERRIDES, w.after, w.upTo);
+    return reminderText(due).body;
+  }
+
+  const birthday = (reminders: TempoEvent['reminders']) =>
+    event({
       title: 'Mom',
+      kind: 'birthday',
       startDate: '1974-06-14',
       endDate: '1974-06-14',
       anchorDate: '1974-06-14',
       displayTemplate: '{title} > {yearsSince}',
       recurrence: { freq: 'YEARLY', interval: 1, onInvalid: 'clamp' },
-      reminders: [{ minutes: 900 }],
+      reminders,
     });
+
+  it('uses the derived title, so a birthday arrives with the age on it', () => {
     const [due] = dueReminders(
-      [e],
+      [birthday([{ minutes: 900 }])],
       NO_OVERRIDES,
       new Date(Date.UTC(2026, 5, 1)),
       new Date(Date.UTC(2026, 6, 1)),
@@ -334,23 +548,13 @@ describe('reminderText', () => {
   });
 
   it('counts the minutes to midnight rather than saying tomorrow', () => {
-    const e = event({
-      title: 'Mom',
-      startDate: '1974-06-14',
-      endDate: '1974-06-14',
-      anchorDate: '1974-06-14',
-      displayTemplate: '{title} > {yearsSince}',
-      recurrence: { freq: 'YEARLY', interval: 1, onInvalid: 'clamp' },
-      reminders: [{ minutes: 5 }],
-    });
     const [due] = dueReminders(
-      [e],
+      [birthday([{ minutes: 5 }])],
       NO_OVERRIDES,
       new Date(Date.UTC(2026, 5, 1)),
       new Date(Date.UTC(2026, 6, 1)),
     );
 
-    expect(reminderLabel(5, true)).toBe('5 minutes before midnight');
     expect(reminderText(due).body).toBe('in 5 min · midnight');
   });
 
@@ -361,17 +565,97 @@ describe('reminderText', () => {
 
     expect(reminderText(due)).toEqual({ title: 'Dentist', body: 'in 30 min · 2pm' });
   });
+
+  it('names the day and the time for a timed entry’s day reminders', () => {
+    const e = timed('2026-07-15', 7 * 60, { reminders: [{ from: 'dueDay', minutes: 900 }] });
+    expect(body(e)).toBe('tomorrow · 7am');
+  });
+
+  it('says how long is left when a reminder was moved before the deadline', () => {
+    const exam = timed('2026-07-15', 7 * 60, { reminders: [{ from: 'dueDay', minutes: -540 }] });
+    expect(body(exam)).toBe('in 1 hour · 7am');
+
+    const early = event({
+      startDate: '2026-07-15',
+      endDate: '2026-07-15',
+      dueMinutes: 7 * 60,
+      reminders: [{ from: 'dueDay', minutes: -540 }],
+    });
+    expect(body(early)).toBe('due in 1 hour · 7am');
+  });
+
+  it('says when a deadline is due, with the due time', () => {
+    const e = (reminders: TempoEvent['reminders']) =>
+      event({ startDate: '2026-07-13', endDate: '2026-07-17', reminders });
+
+    expect(body(e([{ from: 'dueDay', minutes: 900 }]))).toBe('due tomorrow · 11:55pm');
+    expect(body(e([{ from: 'dueDay', minutes: -540 }]))).toBe('due today · 11:55pm');
+    expect(body(e([{ from: 'dueDay', minutes: 2340 }]))).toBe('due in 2 days · 11:55pm');
+  });
+
+  it('says when a stretched entry starts, and how long until it is due', () => {
+    const e = event({
+      startDate: '2026-07-13',
+      endDate: '2026-07-17',
+      reminders: [{ minutes: -540 }],
+    });
+    expect(body(e)).toBe('starts today · due in 4 days');
+  });
+
+  it('calls a one-day entry’s start reminder what it is: due', () => {
+    const e = event({
+      startDate: '2026-07-15',
+      endDate: '2026-07-15',
+      reminders: [{ minutes: 900 }],
+    });
+    expect(body(e)).toBe('due tomorrow · 11:55pm');
+  });
+
+  it('counts a due-time lead down to the due time', () => {
+    const e = event({
+      startDate: '2026-07-15',
+      endDate: '2026-07-15',
+      dueMinutes: 18 * 60,
+      reminders: [{ from: 'due', minutes: 60 }],
+    });
+    expect(body(e)).toBe('due in 1 hour · 6pm');
+  });
 });
 
 // ------------------------------------------------------------------ defaults
 
 describe('defaults and parsing', () => {
-  it('pairs a long and a short lead for deadlines', () => {
-    expect(defaultReminders('assignment', false)).toEqual([{ minutes: 1440 }, { minutes: 120 }]);
+  it('gives a one-off all-day entry a start, a day before, and the day it is due', () => {
+    expect(defaultReminders('event', true, false)).toEqual([
+      { minutes: -540 },
+      { from: 'dueDay', minutes: 900 },
+      { from: 'dueDay', minutes: -540 },
+    ]);
+  });
+
+  it('gives a one-off with a time the day before and an hour before', () => {
+    expect(defaultReminders('event', false, false)).toEqual([
+      { from: 'dueDay', minutes: 900 },
+      { minutes: 60 },
+    ]);
+  });
+
+  it('gives a repeat one reminder, since it comes round again anyway', () => {
+    expect(defaultReminders('event', false, true)).toEqual([{ minutes: 30 }]);
+    expect(defaultReminders('event', true, true)).toEqual([{ from: 'dueDay', minutes: -540 }]);
+  });
+
+  it('treats marks and tasks as entries', () => {
+    expect(defaultReminders('milestone', true, false)).toEqual(
+      defaultReminders('event', true, false),
+    );
+    expect(defaultReminders('assignment', false, false)).toEqual(
+      defaultReminders('event', false, false),
+    );
   });
 
   it('nudges a birthday five minutes before midnight, and again that morning', () => {
-    expect(defaultReminders('birthday', true)).toEqual([{ minutes: 5 }, { minutes: -540 }]);
+    expect(defaultReminders('birthday', true, true)).toEqual([{ minutes: 5 }, { minutes: -540 }]);
   });
 
   it('collapses duplicates and sorts longest lead first', () => {
@@ -381,34 +665,32 @@ describe('defaults and parsing', () => {
     ]);
   });
 
+  it('keeps anchors, sorted by anchor then lead, and treats an explicit start as none', () => {
+    expect(
+      parseReminders([
+        { from: 'dueDay', minutes: -540 },
+        { from: 'start', minutes: -540 },
+        { from: 'due', minutes: 60 },
+        { from: 'dueDay', minutes: 900 },
+        { minutes: -540 },
+      ]),
+    ).toEqual([
+      { minutes: -540 },
+      { from: 'dueDay', minutes: 900 },
+      { from: 'dueDay', minutes: -540 },
+      { from: 'due', minutes: 60 },
+    ]);
+  });
+
   it('degrades a malformed column to silence rather than throwing', () => {
     expect(parseReminders('every so often')).toEqual([]);
     expect(parseReminders([{ minutes: 'soon' }])).toEqual([]);
+    expect(parseReminders([{ minutes: 30, from: 'lunch' }])).toEqual([]);
   });
 });
 
-describe('custom reminders', () => {
-  it('keeps a preset’s own words', () => {
-    expect(reminderLabel(60, false)).toBe('1 hour before');
-    expect(reminderLabel(900, true)).toBe('The day before, 09:00');
-  });
-
-  it('names a custom lead on a timed entry in its largest whole unit', () => {
-    expect(reminderLabel(180, false)).toBe('3 hours before');
-    expect(reminderLabel(45, false)).toBe('45 minutes before');
-    expect(reminderLabel(4320, false)).toBe('3 days before');
-    expect(reminderLabel(20160, false)).toBe('2 weeks before');
-    expect(reminderLabel(1, false)).toBe('1 minute before');
-    expect(reminderLabel(-30, false)).toBe('30 minutes after');
-  });
-
-  it('names one on an all-day entry as a day and a time', () => {
-    expect(reminderLabel(-480, true)).toBe('That day, 08:00');
-    expect(reminderLabel(60, true)).toBe('1 day before, 23:00');
-    expect(reminderLabel(allDayLeadMinutes(3, 8 * 60), true)).toBe('3 days before, 08:00');
-  });
-
-  it('builds leads from what the custom row asks for', () => {
+describe('lead arithmetic', () => {
+  it('builds leads from an amount and a unit, or a day and a time', () => {
     expect(leadMinutes(1, 'hours')).toBe(60);
     expect(leadMinutes(2, 'weeks')).toBe(20160);
     expect(allDayLeadMinutes(0, 9 * 60)).toBe(-540);
