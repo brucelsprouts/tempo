@@ -1,5 +1,5 @@
 import { civilInZone, minutesInZone, type CivilDate } from '@/lib/tempo/civil';
-import type { EventKind, EventStatus, TempoEvent } from '@/lib/tempo/types';
+import type { EventKind, TempoEvent } from '@/lib/tempo/types';
 
 /**
  * The epoch is a large fixed range rather than true unbounded infinity.
@@ -199,19 +199,11 @@ export const DEFAULT_CATEGORY_COLOR = '#8a9096';
  * Shared rather than local to one panel: the history surface and the deleted
  * list draw entries that are not on the calendar, and an entry that looked like
  * one thing on the grid and another in a list would be two entries as far as
- * anyone reading is concerned. A task is drawn by its status everywhere, so a
- * done one must not come back as an empty box without anyone unticking it.
+ * anyone reading is concerned.
  */
-export function glyphFor(e: Pick<TempoEvent, 'kind' | 'status'>): string {
-  if (e.kind === 'assignment') return e.status ? STATUS_GLYPH[e.status] : '[ ]';
+export function glyphFor(e: Pick<TempoEvent, 'kind'>): string {
   return KIND_GLYPH[e.kind];
 }
-
-export const STATUS_GLYPH: Record<EventStatus, string> = {
-  todo: '[ ]',
-  doing: '[~]',
-  done: '[x]',
-};
 
 export const KIND_GLYPH: Record<EventKind, string> = {
   event: '·',
