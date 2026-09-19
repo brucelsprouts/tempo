@@ -577,14 +577,12 @@ body {
     .bar-line.bar-tick .bar-time {
       display: none;
     }
-    /* The due time keeps its figures and loses its word: `23:55` is five
-       characters that have to fit whole, at the size the start time takes
-       here, and DUE is what its place beside the chip already says. */
+    /* The due time, at the size the start time takes here. `23:55` is five
+       characters that have to fit whole: a clipped time is the wrong time. It
+       has no word in front of it to drop at this width — its place beside the
+       chip is what says it is a deadline. */
     .bar-when {
       font-size: 9px;
-    }
-    .bar-due {
-      display: none;
     }
     /* An event gives its second title line to the chip: at this width, which
        course it is matters more than the end of its title. */

@@ -112,11 +112,16 @@ export function EventBar({
 
   const time = occ.allDay ? null : timeLabel(occ.startMinutes);
   /**
-   * When it is due, on the part of the bar in the week it is due. The time
-   * belongs to the last day, so a bar that carries on into next week leaves it
-   * to the row it ends in.
+   * When it is due, on every row the bar covers.
+   *
+   * It used to be drawn only on the row the bar ends in, on the grounds that
+   * the time belongs to the last day. But an entry spanning three weeks then
+   * carried its deadline only in the week it is due — the one week you least
+   * need telling — and the first two rows said nothing. The bar is one entry
+   * however many rows it is cut into, so every piece of it states the same
+   * deadline.
    */
-  const due = continuesAfter ? null : barDue(occ);
+  const due = barDue(occ);
 
   const tick = occ.kind === 'milestone';
   /** A birthday and a mark are one line and wear no chip. */
@@ -261,13 +266,18 @@ export function EventBar({
                 rather than under it, so a deadline costs the bar no height —
                 the line was already there. The chip gives way first: it
                 truncates and the time never does, because a clipped time is a
-                wrong time. */}
+                wrong time.
+
+                The time says it alone. It used to be labelled DUE, which is a
+                word spent saying what the only other time on a bar already
+                distinguishes it from: a start time leads the title, a deadline
+                sits at the end of the chip line, and an all-day entry never
+                shows both. */}
             {(category || due) && (
               <div className="bar-chips flex min-w-0 items-start gap-1.5">
                 <CategoryChip category={category} className="min-w-0" />
                 {due && (
                   <span className="bar-when shrink-0 tabular-nums" style={{ color: colors.soft }}>
-                    <span className="bar-due">DUE </span>
                     {due}
                   </span>
                 )}
