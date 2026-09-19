@@ -38,7 +38,7 @@ import type {
 const MAX_OCCURRENCES_PER_EVENT = 5000;
 
 /** The day-span an event occupies, in its own timezone. */
-interface Span {
+export interface Span {
   start: CivilDate;
   end: CivilDate;
   durationDays: number;
@@ -263,8 +263,11 @@ function exceededWindow(
  * applies when it decides where an edit goes: with no rule on the row, every
  * gesture rewrites the row itself and no exception is ever written. So an
  * exception found on one is a leftover by definition.
+ *
+ * Exported for the ICS export, which writes an exception only where the grid
+ * would draw one.
  */
-function isSeriesDate(
+export function isSeriesDate(
   rule: Recurrence | null,
   dtstart: CivilDate,
   date: CivilDate,
