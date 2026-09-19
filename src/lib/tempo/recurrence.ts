@@ -362,7 +362,6 @@ function buildOccurrence(
     startMinutes: patch.startMinutes ?? span.startMinutes,
     endMinutes: patch.endMinutes ?? span.endMinutes,
     kind: event.kind,
-    status: patch.status ?? event.status,
     categoryId: event.categoryId,
     isOverride: override !== undefined,
     readOnly: event.source === 'google' || event.kind === 'birthday',

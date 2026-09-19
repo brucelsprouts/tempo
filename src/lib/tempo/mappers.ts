@@ -142,10 +142,7 @@ const eventSchema = z.object({
   reminders: remindersSchema.default([]),
   anchorDate: civilDate.nullable(),
   displayTemplate: z.string().nullable(),
-  status: z
-    .enum(['todo', 'doing', 'done'])
-    .nullable()
-    .transform(() => null),
+  // No `status`: a snapshot of a task still carries one, and the parse drops it.
   notify: z.boolean(),
   source: z.enum(['tempo', 'google']),
   googleEventId: z.string().nullable(),
@@ -208,7 +205,6 @@ export function eventFromRow(row: EventRow): TempoEvent {
         || row.display_template === '{title} → {yearsSince}'
       ? '{title} > {yearsSince}'
       : row.display_template,
-    status: null,
     notify: row.notify,
     source: row.source,
     googleEventId: row.google_event_id,
@@ -259,7 +255,6 @@ export function eventToRow(e: Partial<TempoEvent>): Partial<EventRow> {
   if (e.reminders !== undefined) row.reminders = e.reminders as never;
   if (e.anchorDate !== undefined) row.anchor_date = e.anchorDate;
   if (e.displayTemplate !== undefined) row.display_template = e.displayTemplate;
-  if (e.status !== undefined) row.status = e.status;
   if (e.notify !== undefined) row.notify = e.notify;
   return row;
 }
@@ -300,12 +295,11 @@ export interface PortableEvent {
    * silent.
    */
   reminders?: (number | string)[];
-  /** All-day entries only, `HH:MM`, and only when it is not the default 23:55. */
+  /** All-day entries only, `HH:MM`, whenever one is stated. */
   due_time?: string;
   anchor_date?: string;
   display_template?: string;
   category?: string;
-  status?: string;
   notify: boolean;
   notes?: string;
 }
@@ -339,7 +333,6 @@ export function toPortable(e: TempoEvent, categoryName?: string): PortableEvent 
   if (e.anchorDate) out.anchor_date = e.anchorDate;
   if (e.displayTemplate) out.display_template = e.displayTemplate;
   if (categoryName) out.category = categoryName;
-  if (e.status) out.status = e.status;
   if (e.notes) out.notes = e.notes;
   return out;
 }

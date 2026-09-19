@@ -21,7 +21,6 @@ function series(id: string, start: string, recurrence: Recurrence | null): Tempo
     reminders: [],
     anchorDate: null,
     displayTemplate: null,
-    status: null,
     notify: false,
     source: 'tempo',
     googleEventId: null,

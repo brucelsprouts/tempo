@@ -35,7 +35,6 @@ function event(over: Partial<TempoEvent> = {}): TempoEvent {
     reminders: [],
     anchorDate: null,
     displayTemplate: null,
-    status: null,
     notify: false,
     source: 'tempo',
     googleEventId: null,
@@ -696,10 +695,9 @@ describe('defaults and parsing', () => {
     ).toEqual([{ from: 'dueDay', minutes: -540 }]);
   });
 
-  it('treats marks and tasks as entries', () => {
+  it('treats marks as entries', () => {
     const entry = { allDay: true, repeats: false, dueMinutes: DUE_AT_NIGHT };
     expect(defaultReminders('milestone', entry)).toEqual(defaultReminders('event', entry));
-    expect(defaultReminders('assignment', entry)).toEqual(defaultReminders('event', entry));
   });
 
   it('nudges a birthday five minutes before midnight, and again that morning', () => {

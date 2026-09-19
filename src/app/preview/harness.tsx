@@ -48,7 +48,6 @@ function base(id: string, title: string, over: Partial<TempoEvent>): TempoEvent 
     reminders: [],
     anchorDate: null,
     displayTemplate: null,
-    status: null,
     notify: false,
     source: 'tempo',
     googleEventId: null,

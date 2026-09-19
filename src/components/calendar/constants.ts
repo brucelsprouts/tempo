@@ -207,7 +207,6 @@ export function glyphFor(e: Pick<TempoEvent, 'kind'>): string {
 
 export const KIND_GLYPH: Record<EventKind, string> = {
   event: '·',
-  assignment: '[ ]',
   birthday: '✳',
   milestone: '◆',
 };

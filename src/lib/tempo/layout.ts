@@ -17,14 +17,13 @@ import type { EventKind, Occurrence } from './types';
 export const DAYS_PER_WEEK = 7;
 
 /**
- * Height carries importance — and, at these sizes, room.
+ * Height carries room.
  *
- * A task is still the loudest thing a day can contain and has to look like it
- * across seven columns without being read; colour cannot do that job, it is
- * spoken for by category. Events and tasks doubled so a title can wrap to a
- * second line and the category chip gets a line of its own: 28px held one
+ * Entries doubled so a title can wrap to a second line and the category chip —
+ * with, beside it, when the entry is due — gets a line of its own: 28px held one
  * truncated line, which is how five entries called "Final Exam" became five
- * identical grey bars.
+ * identical grey bars. A task stood taller again, at 84px, until TASK was
+ * retired.
  *
  * Birthdays and marks did not double, by request. A birthday is one line —
  * "Mom · 52" — and a mark is a tick: a moment rather than a span, with no
@@ -35,7 +34,6 @@ export const KIND_HEIGHT: Record<EventKind, number> = {
   milestone: 20,
   event: 56,
   birthday: 34,
-  assignment: 84,
 };
 
 export const LANE_GAP = 4;
@@ -96,7 +94,7 @@ export function weekDays(weekStart: CivilDate): CivilDate[] {
  * `budget` caps the drawn stack in *pixels* rather than in lanes, so a single
  * busy week can't blow the row height out and wreck the scroll rhythm; the
  * remainder becomes a "+N" chip. It is a pixel budget because lanes are no
- * longer a uniform height — three tasks and four events both fill the row, and
+ * longer a uniform height — a mark, a birthday and an entry are three heights, and
  * counting lanes could only be right for one of them.
  */
 export function layoutWeek(

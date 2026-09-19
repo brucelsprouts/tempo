@@ -387,7 +387,6 @@ function describe(version: EventVersion, next: TempoEvent | null): string {
   const changes: string[] = [];
   if (was.title !== next.title) changes.push(`title “${was.title}”`);
   if (when(was) !== when(next)) changes.push(`when ${when(was)}`);
-  if (was.status !== next.status) changes.push(`status ${was.status ?? 'none'}`);
   if (was.notes !== next.notes) changes.push('notes');
   if (countOf(version) !== null) changes.push(`${countOf(version)} exceptions`);
 

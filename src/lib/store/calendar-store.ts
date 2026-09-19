@@ -39,7 +39,6 @@ import { splitRule } from '@/lib/tempo/split';
 import type {
   Category,
   EventKind,
-  EventStatus,
   EventVersion,
   Occurrence,
   OccurrenceOverride,
@@ -83,7 +82,6 @@ export interface EventDraft {
   displayTemplate?: string | null;
   notify?: boolean;
   notes?: string | null;
-  status?: EventStatus | null;
 }
 
 interface CalendarState {
@@ -203,7 +201,6 @@ interface CalendarState {
     scope: EditScope,
   ) => Promise<void>;
   cancelOccurrence: (occ: Occurrence) => Promise<void>;
-  setStatus: (occ: Occurrence, status: EventStatus) => Promise<void>;
   createCategory: (name: string, color: string) => Promise<void>;
   updateCategory: (id: string, patch: { name?: string; color?: string }) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
@@ -1635,20 +1632,6 @@ export const useCalendar = create<CalendarState>((set, get) => {
       }));
     },
 
-    setStatus: async (occ, status) => {
-      if (occ.event.source === 'google') return;
-      captureVersion(occ.eventId, 'status');
-      const label = `Marked ${occ.title} ${status}`;
-      if (occ.event.recurrence) {
-        await patchOccurrence(occ, { status }, false, (merged) => ({
-          label,
-          touched: touchedOverrides([merged.id]),
-        }));
-        return;
-      }
-      await writeEvent(occ.eventId, { status }, { label, touched: touchedEvents([occ.eventId]) });
-    },
-
     createCategory: async (name, color) => {
       const ownerId = get().ownerId;
       if (!ownerId) return;
@@ -1814,7 +1797,6 @@ function draftFields(draft: EventDraft, tz: string) {
     reminders: draft.reminders ?? [],
     anchorDate: draft.anchorDate ?? null,
     displayTemplate: draft.displayTemplate ?? null,
-    status: draft.status ?? (draft.kind === 'assignment' ? 'todo' : null),
     ...draftTiming(draft, tz),
   };
 }

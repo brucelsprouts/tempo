@@ -120,7 +120,6 @@ function event(over: Partial<TempoEvent>): TempoEvent {
     reminders: [],
     anchorDate: null,
     displayTemplate: null,
-    status: null,
     notify: false,
     source: 'tempo',
     googleEventId: null,
@@ -189,7 +188,6 @@ function occurrenceOf(e: TempoEvent, date: string, endDate = date): Occurrence {
     startMinutes: null,
     endMinutes: null,
     kind: e.kind,
-    status: e.status,
     categoryId: e.categoryId,
     isOverride: false,
     readOnly: e.source === 'google',
@@ -1474,7 +1472,7 @@ describe('version capture', () => {
     expect(snapshotOf(version).overrides).toHaveLength(1);
   });
 
-  it('records a move, a resize, a status change and a delete under their own reasons', async () => {
+  it('records a move, a resize and a delete under their own reasons', async () => {
     const e = event({ id: 'e1', startDate: '2026-08-10', endDate: '2026-08-12' });
     seed([e]);
 
@@ -1482,12 +1480,11 @@ describe('version capture', () => {
     await useCalendar
       .getState()
       .resizeOccurrence(occurrenceOf(e, '2026-08-10', '2026-08-12'), 1, 'end', 'series');
-    await useCalendar.getState().setStatus(occurrenceOf(e, '2026-08-10'), 'done');
     await useCalendar.getState().deleteEvent('e1');
 
     expect(
       callsOn('event_versions', 'insert').map((c) => (c.payload as { reason: string }).reason),
-    ).toEqual(['move', 'resize', 'status', 'delete']);
+    ).toEqual(['move', 'resize', 'delete']);
   });
 
   it('records one version per entry a bulk delete takes', async () => {

@@ -39,7 +39,7 @@ describe('a row written as a task', () => {
   it('reads as an entry, with no status', () => {
     const e = eventFromRow(row({ kind: 'assignment', status: 'doing' }));
     expect(e.kind).toBe('event');
-    expect(e.status).toBeNull();
+    expect(e).not.toHaveProperty('status');
   });
 
   it('leaves the other kinds alone', () => {
@@ -69,7 +69,7 @@ describe('a version of a task', () => {
     };
     const parsed = versionFromRow(version);
     expect(parsed?.snapshot.event.kind).toBe('event');
-    expect(parsed?.snapshot.event.status).toBeNull();
+    expect(parsed?.snapshot.event).not.toHaveProperty('status');
     expect(parsed?.reason).toBe('status');
   });
 });

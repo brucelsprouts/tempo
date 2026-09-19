@@ -34,7 +34,6 @@ function allDayEvent(over: Partial<TempoEvent> = {}): TempoEvent {
     reminders: [],
     anchorDate: null,
     displayTemplate: null,
-    status: null,
     notify: false,
     source: 'tempo',
     googleEventId: null,

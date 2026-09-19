@@ -26,7 +26,6 @@ function occ(over: Partial<Occurrence>): Occurrence {
     startMinutes: null,
     endMinutes: null,
     kind: 'event',
-    status: null,
     categoryId: null,
     isOverride: false,
     readOnly: false,
