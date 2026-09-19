@@ -12,7 +12,7 @@ import { addDays, dayOfWeek, parts, todayIn, type CivilDate } from '@/lib/tempo/
 import { expandAll } from '@/lib/tempo/recurrence';
 import type { Occurrence } from '@/lib/tempo/types';
 import { DayView } from './DayView';
-import { TasksPane } from './TasksPane';
+import { EntriesPane } from './EntriesPane';
 import { HOUR_H_DEFAULT, MONTHS_LONG, WEEKDAYS } from './constants';
 import { zoomIn, zoomOut } from './timeline';
 import { Modal, SegmentedControl } from './ui';
@@ -69,7 +69,7 @@ export function DayModal({ date, onDate, onOpen, onNew, onClose }: Props) {
   );
 
   const wide = useWide();
-  const [pane, setPane] = useState<'day' | 'tasks'>('day');
+  const [pane, setPane] = useState<'day' | 'entries'>('day');
   const zoom = useSyncExternalStore(subscribeZoom, getZoomSnapshot, getServerZoomSnapshot);
 
   const { year, month, day } = parts(date);
@@ -131,9 +131,9 @@ export function DayModal({ date, onDate, onOpen, onNew, onClose }: Props) {
 
           It was missing outright. The 24-hour column creates on a tap, but a tap
           on an hour row says a time as well as a date — so from inside this
-          modal there was no way to add a birthday, a task or anything else that
-          simply belongs to the day. The tasks pane, which is where those live,
-          had no way to add one to the list it was showing.
+          modal there was no way to add a birthday, a deadline or anything else
+          that simply belongs to the day. The entries pane, which is where those
+          live, had no way to add one to the list it was showing.
         */}
         <button
           type="button"
@@ -152,7 +152,7 @@ export function DayModal({ date, onDate, onOpen, onNew, onClose }: Props) {
               value={pane}
               options={[
                 { value: 'day', label: 'DAY' },
-                { value: 'tasks', label: 'ENTRIES' },
+                { value: 'entries', label: 'ENTRIES' },
               ]}
               onChange={setPane}
               grow={false}
@@ -167,9 +167,9 @@ export function DayModal({ date, onDate, onOpen, onNew, onClose }: Props) {
             <DayView date={date} occurrences={occurrences} onOpen={onOpen} onNew={onNew} />
           </div>
         )}
-        {(wide || pane === 'tasks') && (
+        {(wide || pane === 'entries') && (
           <div className={PANE_H}>
-            <TasksPane occurrences={occurrences} onOpen={onOpen} />
+            <EntriesPane date={date} occurrences={occurrences} onOpen={onOpen} />
           </div>
         )}
       </div>
