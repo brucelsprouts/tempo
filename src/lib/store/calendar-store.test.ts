@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Occurrence, TempoEvent } from '@/lib/tempo/types';
+import type { EventDraft } from './calendar-store';
 
 /**
  * The store's mutation paths carry the decisions that are easiest to get subtly
@@ -2266,5 +2267,127 @@ describe('changing this date and later', () => {
       recurrence: { freq: 'WEEKLY', interval: 1, count: 10 },
     });
     expect(useCalendar.getState().events[1].recurrence?.count).toBe(8);
+  });
+});
+
+// ------------------------------------------------------- saving as you go
+
+describe('a popup that saves as you go', () => {
+  const snapshotOf = (call: RecordedCall) =>
+    (call.payload as { snapshot: { event: TempoEvent } }).snapshot;
+
+  const draft = (title: string): EventDraft => ({
+    title,
+    kind: 'event',
+    allDay: true,
+    startDate: '2026-08-10',
+    endDate: '2026-08-10',
+    reminders: [],
+  });
+
+  it('creates a new entry on its first save, and records it as one Created', async () => {
+    seed([]);
+    const store = useCalendar.getState();
+    const s = store.beginEdit();
+
+    store.saveDraft(s, 'n1', draft('Read'));
+    // On the calendar at once, before anything is written.
+    expect(useCalendar.getState().events.map((e) => e.title)).toEqual(['Read']);
+    expect(callsOn('events', 'upsert')).toHaveLength(0);
+
+    await store.endEdit(s);
+
+    expect(callsOn('events', 'upsert')).toHaveLength(1);
+    expect(lastCallOn('events', 'upsert')!.payload).toMatchObject({ id: 'n1', title: 'Read' });
+    expect(useCalendar.getState().undoStack.map((u) => u.label)).toEqual(['Created Read']);
+    // A new entry has no earlier shape to keep.
+    expect(callsOn('event_versions', 'insert')).toHaveLength(0);
+  });
+
+  it('writes only the newest draft when changes come quickly', async () => {
+    seed([]);
+    const store = useCalendar.getState();
+    const s = store.beginEdit();
+
+    store.saveDraft(s, 'n1', draft('R'));
+    store.saveDraft(s, 'n1', draft('Re'));
+    store.saveDraft(s, 'n1', draft('Read'));
+    await store.endEdit(s);
+
+    expect(
+      callsOn('events', 'upsert').map((c) => (c.payload as { title: string }).title),
+    ).toEqual(['Read']);
+  });
+
+  it('records an edit as one version of the shape before, and one undo that puts it back', async () => {
+    seed([event({ id: 'e1', title: 'Before' })]);
+    const store = useCalendar.getState();
+    const s = store.beginEdit();
+
+    store.saveDraft(s, 'e1', draft('Middle'));
+    await store.flushEdit(s);
+    store.saveDraft(s, 'e1', draft('After'));
+    await store.endEdit(s);
+
+    const versions = callsOn('event_versions', 'insert');
+    expect(versions).toHaveLength(1);
+    expect(snapshotOf(versions[0]).event.title).toBe('Before');
+    expect(useCalendar.getState().undoStack.map((u) => u.label)).toEqual(['Edited After']);
+
+    await useCalendar.getState().undo();
+    expect(useCalendar.getState().events[0].title).toBe('Before');
+  });
+
+  it('records nothing for a popup opened and closed without a change', async () => {
+    seed([event({ id: 'e1', title: 'Same' })]);
+    const store = useCalendar.getState();
+    const s = store.beginEdit();
+
+    store.saveDraft(s, 'e1', draft('Same'));
+    await store.endEdit(s);
+
+    expect(recorded.filter((c) => c.op !== 'select')).toHaveLength(0);
+    expect(useCalendar.getState().undoStack).toHaveLength(0);
+  });
+
+  it('puts back what the server has when the last save fails', async () => {
+    seed([event({ id: 'e1', title: 'Kept' })]);
+    const store = useCalendar.getState();
+    const s = store.beginEdit();
+
+    shouldFail = true;
+    store.saveDraft(s, 'e1', draft('Lost'));
+    await store.endEdit(s);
+
+    expect(useCalendar.getState().events[0].title).toBe('Kept');
+    expect(useCalendar.getState().error).toBe('write rejected');
+    expect(useCalendar.getState().undoStack).toHaveLength(0);
+  });
+
+  it('removes a new entry that never reached the server', async () => {
+    seed([]);
+    const store = useCalendar.getState();
+    const s = store.beginEdit();
+
+    shouldFail = true;
+    store.saveDraft(s, 'n1', draft('Never'));
+    await store.endEdit(s);
+
+    expect(useCalendar.getState().events).toHaveLength(0);
+  });
+
+  it('ignores the echo of its own row while the popup is open', async () => {
+    seed([event({ id: 'e1', title: 'Before' })]);
+    useCalendar.getState().connect();
+    const store = useCalendar.getState();
+    const s = store.beginEdit();
+
+    store.saveDraft(s, 'e1', draft('Typing'));
+    handlers.events?.({ eventType: 'UPDATE', new: row({ id: 'e1', title: 'Stale echo' }) });
+    expect(useCalendar.getState().events[0].title).toBe('Typing');
+
+    await store.endEdit(s);
+    handlers.events?.({ eventType: 'UPDATE', new: row({ id: 'e1', title: 'From the laptop' }) });
+    expect(useCalendar.getState().events[0].title).toBe('From the laptop');
   });
 });
