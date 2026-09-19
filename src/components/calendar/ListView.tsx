@@ -10,10 +10,12 @@ import {
 } from 'react';
 import { groupOverrides, useCalendar } from '@/lib/store/calendar-store';
 import { getClipboard, setClipboard } from '@/lib/store/clipboard';
-import { addDays, diffDays, parts, todayIn, type CivilDate } from '@/lib/tempo/civil';
+import { addDays, parts, todayIn, type CivilDate } from '@/lib/tempo/civil';
 import { expandAll, expandEvent, eventSpan } from '@/lib/tempo/recurrence';
 import type { Occurrence, Recurrence, TempoEvent } from '@/lib/tempo/types';
 import { DEFAULT_CATEGORY_COLOR, MONTHS, WEEKDAYS } from './constants';
+import { dueIn, dueMoment, dueSortKey, type DueMoment } from './due';
+import { formatMinutes } from './TimePicker';
 import { inputClass, SegmentedControl } from './ui';
 
 /**
@@ -21,31 +23,28 @@ import { inputClass, SegmentedControl } from './ui';
  *
  * Rows are stored *events*, not occurrences: a birthday is one entry that
  * happens 60 times, and a table that repeated it 60 times would be a log rather
- * than a database. The expansion still shows up, as a NEXT column — which is
- * the one derived fact you actually want when scanning the whole set.
+ * than a database. The expansion still shows up, as a DUE column — which is
+ * the one derived fact you actually want when scanning the whole set: what is
+ * due next, and when.
  */
 
 /** How far ahead to look for each row's next occurrence. Covers a yearly rule. */
 const HORIZON_DAYS = 400;
 
-type SortKey = 'title' | 'kind' | 'repeat' | 'start' | 'next' | 'category' | 'status';
-type GroupKey = 'none' | 'kind' | 'category' | 'status';
+type SortKey = 'title' | 'kind' | 'repeat' | 'start' | 'due' | 'category';
+type GroupKey = 'none' | 'kind' | 'category';
 
 const GROUPS = [
   { value: 'none', label: 'FLAT' },
   { value: 'kind', label: 'TYPE' },
   { value: 'category', label: 'CATEGORY' },
-  { value: 'status', label: 'STATUS' },
 ] as const;
 
 const KIND_LABEL: Record<string, string> = {
   event: 'ENTRY',
-  assignment: 'TASK',
   birthday: 'BIRTHDAY',
   milestone: 'MARK',
 };
-
-const STATUS_GLYPH = { todo: '[ ]', doing: '[~]', done: '[x]' } as const;
 
 interface Row {
   event: TempoEvent;
@@ -53,7 +52,11 @@ interface Row {
   occ: Occurrence | null;
   start: CivilDate;
   end: CivilDate;
-  next: CivilDate | null;
+  /**
+   * When the first occurrence still to finish is due: its last day and due
+   * time, or its start for an entry with a time. Null when there is none.
+   */
+  due: DueMoment | null;
   repeat: string;
   categoryName: string;
   color: string;
@@ -78,14 +81,20 @@ function shortDate(d: CivilDate): string {
   return `${String(day).padStart(2, '0')} ${MONTHS[month - 1]} ${String(year).slice(2)}`;
 }
 
-function relative(d: CivilDate, today: CivilDate): string {
-  const n = diffDays(d, today);
-  if (n === 0) return 'TODAY';
-  if (n === 1) return 'TOMORROW';
-  if (n > 0) return `IN ${n}D`;
-  // The search window starts today, so a start date in the past can only be a
-  // multi-day entry that is currently running — not something overdue.
-  return 'IN PROGRESS';
+/**
+ * The DUE cell as one line, for the phone's cards: `25 SEP 26 · 23:55 · IN 6D`.
+ *
+ * Counted to the deadline rather than to the start, so a multi-day entry that
+ * is under way says how long is left instead of IN PROGRESS.
+ */
+function dueLine(due: DueMoment, today: CivilDate): string {
+  return [
+    shortDate(due.date),
+    due.minutes === null ? null : formatMinutes(due.minutes),
+    dueIn(due.date, today),
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 /** Stable identity for "nothing is selected", so clearing twice re-renders once. */
@@ -120,7 +129,7 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
   const timezone = useCalendar((s) => s.timezone);
 
   const [query, setQuery] = useState('');
-  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'next', dir: 1 });
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'due', dir: 1 });
   const [group, setGroup] = useState<GroupKey>('none');
 
   const today = useMemo(() => todayIn(timezone), [timezone]);
@@ -129,10 +138,11 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
     const byEvent = groupOverrides(overrides);
 
     // One expansion pass for the whole table: the first occurrence each event
-    // still has ahead of it.
-    const nextByEvent = new Map<string, CivilDate>();
+    // still has ahead of it — including one that began before today and has
+    // not ended, since that one is still due.
+    const nextByEvent = new Map<string, Occurrence>();
     for (const occ of expandAll(events, byEvent, today, addDays(today, HORIZON_DAYS))) {
-      if (!nextByEvent.has(occ.eventId)) nextByEvent.set(occ.eventId, occ.date);
+      if (!nextByEvent.has(occ.eventId)) nextByEvent.set(occ.eventId, occ);
     }
 
     return events.map((event) => {
@@ -152,7 +162,7 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
         occ,
         start: span?.start ?? '—',
         end: span?.end ?? '—',
-        next: nextByEvent.get(event.id) ?? null,
+        due: nextByEvent.has(event.id) ? dueMoment(nextByEvent.get(event.id)!) : null,
         repeat: describeRecurrence(event.recurrence),
         categoryName: category?.name ?? '—',
         color: category?.color ?? DEFAULT_CATEGORY_COLOR,
@@ -177,14 +187,12 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
           return r.repeat;
         case 'start':
           return r.start;
-        // Rows with nothing ahead sort to the end in either direction rather
-        // than pretending to be the year 0.
-        case 'next':
-          return r.next ?? '￿';
+        // Rows with nothing ahead sort after everything rather than
+        // pretending to be the year 0.
+        case 'due':
+          return dueSortKey(r.due);
         case 'category':
           return r.categoryName;
-        case 'status':
-          return r.event.status ?? '￿';
       }
     };
 
@@ -197,11 +205,10 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
   const sections = useMemo(() => {
     if (group === 'none') return [{ label: null as string | null, rows: filtered }];
 
-    const key = (r: Row) => {
-      if (group === 'kind') return KIND_LABEL[r.event.kind] ?? r.event.kind.toUpperCase();
-      if (group === 'category') return r.categoryName.toUpperCase();
-      return (r.event.status ?? 'NONE').toUpperCase();
-    };
+    const key = (r: Row) =>
+      group === 'kind'
+        ? (KIND_LABEL[r.event.kind] ?? r.event.kind.toUpperCase())
+        : r.categoryName.toUpperCase();
 
     const map = new Map<string, Row[]>();
     for (const r of filtered) {
@@ -473,28 +480,19 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
                       aria-hidden
                     />
                     <span className="min-w-0 flex-1">
-                      <span
-                        className={`block truncate text-[12px] leading-tight ${
-                          r.event.status === 'done' ? 'text-mute line-through' : 'text-ink'
-                        }`}
-                      >
+                      <span className="block truncate text-[12px] leading-tight text-ink">
                         {r.event.title}
                       </span>
-                      {/* One line of metadata, in the order it gets read: when,
-                          then what. `flex-wrap` because a repeating task with a
-                          status has four things to say and a 343px row fits
-                          three of them. */}
+                      {/* One line of metadata, in the order it gets read: when
+                          it is due, then what it is. `flex-wrap` because a
+                          repeating entry due at a stated time has more to say
+                          than a 343px row fits. */}
                       <span className="label mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
                         <span className="tabular-nums text-dim">
-                          {r.next ? `${shortDate(r.next)} · ${relative(r.next, today)}` : 'PAST'}
+                          {r.due ? dueLine(r.due, today) : 'PAST'}
                         </span>
                         <span>{KIND_LABEL[r.event.kind] ?? r.event.kind}</span>
                         {r.repeat !== 'ONCE' && <span>{r.repeat}</span>}
-                        {r.event.status && (
-                          <span>
-                            {STATUS_GLYPH[r.event.status]} {r.event.status.toUpperCase()}
-                          </span>
-                        )}
                       </span>
                     </span>
                   </button>
@@ -527,9 +525,8 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
               <HeadCell label="TYPE" col="kind" sort={sort} onSort={toggleSort} />
               <HeadCell label="REPEATS" col="repeat" sort={sort} onSort={toggleSort} />
               <HeadCell label="SPAN" col="start" sort={sort} onSort={toggleSort} />
-              <HeadCell label="NEXT" col="next" sort={sort} onSort={toggleSort} />
+              <HeadCell label="DUE" col="due" sort={sort} onSort={toggleSort} />
               <HeadCell label="CATEGORY" col="category" sort={sort} onSort={toggleSort} />
-              <HeadCell label="STATUS" col="status" sort={sort} onSort={toggleSort} />
             </tr>
           </thead>
 
@@ -538,7 +535,7 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
               <Fragment key={section.label ?? '·'}>
                 {section.label && (
                   <tr>
-                    <td colSpan={8} className="border-y border-hair bg-sunken px-3 py-1.5">
+                    <td colSpan={7} className="border-y border-hair bg-sunken px-3 py-1.5">
                       <span className="label text-dim">{section.label}</span>
                       <span className="label ml-2">{section.rows.length}</span>
                     </td>
@@ -546,7 +543,6 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
                 )}
 
                 {section.rows.map((r) => {
-                  const past = r.next === null;
                   const lit = selection.has(r.event.id);
                   const locked = !r.occ || r.occ.readOnly;
                   return (
@@ -585,12 +581,7 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
                             style={{ background: r.color }}
                             aria-hidden
                           />
-                          <span
-                            className={`truncate ${r.event.status === 'done' ? 'text-mute line-through' : 'text-ink'}`}
-                          >
-                            {r.event.title}
-                          </span>
-                          {r.event.notify && <span className="label shrink-0">SYNC</span>}
+                          <span className="truncate text-ink">{r.event.title}</span>
                         </div>
                       </td>
                       <td className="label px-3 py-2 whitespace-nowrap">
@@ -610,28 +601,19 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
                         )}
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap tabular-nums">
-                        {r.next ? (
+                        {r.due ? (
                           <>
-                            <span className={past ? 'text-mute' : 'text-ink'}>
-                              {shortDate(r.next)}
-                            </span>
-                            <span className="label ml-2">{relative(r.next, today)}</span>
+                            <span className="text-ink">{shortDate(r.due.date)}</span>
+                            {r.due.minutes !== null && (
+                              <span className="ml-2 text-dim">{formatMinutes(r.due.minutes)}</span>
+                            )}
+                            <span className="label ml-2">{dueIn(r.due.date, today)}</span>
                           </>
                         ) : (
                           <span className="label">PAST</span>
                         )}
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap text-dim">{r.categoryName}</td>
-                      <td className="px-3 py-2 whitespace-nowrap text-dim">
-                        {r.event.status ? (
-                          <>
-                            <span className="text-mute">{STATUS_GLYPH[r.event.status]}</span>{' '}
-                            {r.event.status.toUpperCase()}
-                          </>
-                        ) : (
-                          <span className="label">—</span>
-                        )}
-                      </td>
                     </tr>
                   );
                 })}
@@ -640,7 +622,7 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
 
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-16 text-center">
+                <td colSpan={7} className="px-4 py-16 text-center">
                   <span className="label">
                     {rows.length === 0 ? 'NO ENTRIES YET · PRESS [A]' : 'NOTHING MATCHES'}
                   </span>
@@ -657,10 +639,9 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
 /**
  * A checkbox in the notation the table already speaks.
  *
- * `[ ]` and `[x]` are not a stylisation here — they are the same glyphs the
- * STATUS column prints, so a row reads in one alphabet rather than mixing a
- * drawn control into a table made of text. `[~]` is the header's partial state,
- * borrowed from `doing` for the same reason: it already means "some of this".
+ * `[ ]` and `[x]` are not a stylisation here — the table is made of text, and a
+ * checkbox written in it reads in the same alphabet rather than as a drawn
+ * control dropped into it. `[~]` is the header's partial state: some of this.
  *
  * A button rather than an `<input>`, because the indeterminate state of a real
  * checkbox is only reachable through a DOM property and cannot be expressed in

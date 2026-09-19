@@ -115,7 +115,6 @@ export function copyableFields(
     reminders: ev.reminders,
     anchorDate: ev.anchorDate,
     displayTemplate: ev.displayTemplate,
-    status: ev.status,
     notify: ev.notify,
   };
 }

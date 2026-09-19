@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useImperativeHandle, useMemo, useState, type Ref } from 'react';
-import { useCalendar, type EventDraft } from '@/lib/store/calendar-store';
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
+import { useCalendar, type EditSession, type EventDraft } from '@/lib/store/calendar-store';
+import { same } from '@/lib/store/undo';
 import { civil, parts, todayIn, yearsBetween, type CivilDate } from '@/lib/tempo/civil';
 import { eventSpan } from '@/lib/tempo/recurrence';
 import {
@@ -65,6 +66,11 @@ interface Props {
   mode: 'new' | 'edit';
   /** `new` only: what the entry is pre-filled with. */
   seed?: EntrySeed;
+  /**
+   * `new` only: the id the entry is saved under, chosen by the shell when it
+   * opened the popup — so every save of it is the same row.
+   */
+  newId?: string;
   /** `edit` only. */
   occurrence?: Occurrence;
   onClose: () => void;
@@ -72,9 +78,10 @@ interface Props {
    * `new` only. Drives the draft bar on the calendar behind — with the form at
    * the centre of the screen rather than under the cursor, this is the only
    * thing that says where the entry is going to land, and what it will say when
-   * it gets there.
+   * it gets there. `null` once the entry exists: from then on its real bar is on
+   * the calendar, updating as you type.
    */
-  onDraftChange?: (draft: DraftPreview) => void;
+  onDraftChange?: (draft: DraftPreview | null) => void;
   /**
    * `edit` only. Opens HISTORY on this entry — the only way to reach the
    * versions of something that was never deleted, since the panel's own list is
@@ -88,28 +95,14 @@ interface Props {
  * What an entry can be: an entry, a birthday, or a mark.
  *
  * ENTRY rather than EVENT — the word the rest of the app already uses (`+ NEW`,
- * `13 ENTRIES`). TASK is gone from the choices: this calendar is kept with
- * entries, and a task was an entry with a status nobody set.
+ * `13 ENTRIES`). There is no TASK: this calendar is kept with entries, a task
+ * was an entry with a status nobody set, and a row still written as one reads
+ * as an entry (`eventFromRow`).
  */
 const KINDS = [
   { value: 'event', label: 'ENTRY' },
   { value: 'birthday', label: 'BIRTHDAY' },
   { value: 'milestone', label: 'MARK' },
-] as const satisfies readonly { value: EventKind; label: string }[];
-
-/**
- * TASK, for the one case that still needs it: an entry that already is one.
- *
- * Retired from the form, not from the data — rows written as tasks still exist
- * and still render. Opening one offers TASK beside the others, so the control
- * shows its real type and it can be turned into an ENTRY; a control with no
- * cell for the current value would show nothing selected.
- */
-const KINDS_WITH_TASK = [
-  KINDS[0],
-  { value: 'assignment', label: 'TASK' },
-  KINDS[1],
-  KINDS[2],
 ] as const satisfies readonly { value: EventKind; label: string }[];
 
 /**
@@ -139,6 +132,7 @@ const TEMPLATES = [
 export function EventForm({
   mode,
   seed,
+  newId,
   occurrence,
   onClose,
   onDraftChange,
@@ -147,7 +141,10 @@ export function EventForm({
 }: Props) {
   const timezone = useCalendar((s) => s.timezone);
   const categories = useCalendar((s) => s.categories);
-  const createEvent = useCalendar((s) => s.createEvent);
+  const beginEdit = useCalendar((s) => s.beginEdit);
+  const saveDraft = useCalendar((s) => s.saveDraft);
+  const flushEdit = useCalendar((s) => s.flushEdit);
+  const endEdit = useCalendar((s) => s.endEdit);
   const updateEventFromDraft = useCalendar((s) => s.updateEventFromDraft);
   const deleteEvent = useCalendar((s) => s.deleteEvent);
   const cancelOccurrence = useCalendar((s) => s.cancelOccurrence);
@@ -299,14 +296,6 @@ export function EventForm({
     timezone,
   );
 
-  // Reported on every change, including the first render, so the bar appears
-  // with the form rather than only once a field is touched. The title rides
-  // along, which is what makes it fill in under the cursor as you type. No
-  // clamping on the way out any more — `when` cannot hold a backwards range.
-  useEffect(() => {
-    onDraftChange?.({ start: startDate, end: endDate, title });
-  }, [startDate, endDate, title, onDraftChange]);
-
   /** What the title will actually read as, this year. */
   const preview = useMemo(() => {
     if (!effectiveTemplate || !title) return null;
@@ -341,6 +330,72 @@ export function EventForm({
   const asksWhichDates =
     mode === 'edit' && !readOnly && !!existing?.recurrence && existing.kind !== 'birthday';
   const [asking, setAsking] = useState(false);
+
+  /**
+   * Whether this form saves as it changes: everything but a repeating entry,
+   * which cannot be written until it is known which dates a change is for, and
+   * anything this device may not edit.
+   */
+  const autosaves = !readOnly && !asksWhichDates;
+  const targetId = newId ?? occurrence?.eventId ?? null;
+
+  /** The draft as the form opened, which the first save is measured against. */
+  const [openedDraft] = useState(() => draftFor('series'));
+  /** The draft last handed to the store. */
+  const lastSaved = useRef<EventDraft | null>(null);
+  /** Whether the entry exists yet: an edit's always has, a new one's from its first save. */
+  const exists = useRef(mode === 'edit');
+
+  /**
+   * The popup's edit session: begun when it opens, ended when it unmounts —
+   * however that happens, closing or HISTORY stepping in front of it. Ending it
+   * writes anything still waiting and records the popup's changes as one undo.
+   * Begun in an effect rather than during render, so Strict Mode's rehearsal
+   * mount opens and closes an empty one instead of leaking it.
+   */
+  const session = useRef<EditSession | null>(null);
+  useEffect(() => {
+    const s = beginEdit();
+    session.current = s;
+    // A phone suspends a page it has hidden, and a timer that has not fired by
+    // then never does: switching apps is the moment to write.
+    const hidden = () => {
+      if (document.visibilityState === 'hidden') void flushEdit(s);
+    };
+    document.addEventListener('visibilitychange', hidden);
+    return () => {
+      document.removeEventListener('visibilitychange', hidden);
+      session.current = null;
+      void endEdit(s);
+    };
+  }, [beginEdit, flushEdit, endEdit]);
+
+  /**
+   * Hand the store the form as it stands, if it has changed since last time.
+   *
+   * `force` is for the one save that is not a change: closing a new entry
+   * nobody touched, which still creates it, as UNTITLED.
+   */
+  function save(force = false) {
+    if (!autosaves || !session.current || !targetId) return;
+    const draft = draftFor('series');
+    if (!force && same(draft, lastSaved.current ?? openedDraft)) return;
+    lastSaved.current = draft;
+    exists.current = true;
+    saveDraft(session.current, targetId, draft);
+  }
+
+  // After every render: the fields are this form's state, and this is where
+  // that state reaches the calendar. Most renders change nothing, and `save`
+  // then does nothing.
+  useEffect(() => save());
+
+  // Reported after every render too, and after the save above, so a first
+  // save and the draft bar giving way to the real one happen in the same
+  // commit. The shell ignores a report that changes nothing.
+  useEffect(() => {
+    onDraftChange?.(exists.current ? null : { start: startDate, end: endDate, title });
+  });
 
   /**
    * The form as a draft, with its dates read one of two ways.
@@ -389,11 +444,6 @@ export function EventForm({
       reminders,
       anchorDate: effectiveTemplate ? effectiveAnchor : null,
       displayTemplate: effectiveTemplate,
-      // A task keeps the status it has: `draftFields` fills a missing one with
-      // `todo`, so leaving it out reset `doing` every time a task was saved from
-      // here. Anything that is not a task has none — including a task just
-      // turned into an ENTRY.
-      status: kind === 'assignment' ? (existing?.status ?? null) : null,
       // `notify` is deliberately absent. It is the Google mirror flag, and the
       // mirror does not exist — no route reads it. Leaving it out of the draft
       // means an edit preserves whatever a row already holds.
@@ -402,43 +452,36 @@ export function EventForm({
   }
 
   /**
-   * Save and close, whatever asked.
+   * Close, keeping what is in the fields, whatever asked.
    *
-   * Not a submit handler: the form submits into it, and so does clicking away
-   * from the modal, which is a mousedown on a backdrop this component cannot
-   * see. Both mean the same thing, so both arrive here.
+   * Every way out comes here — the bottom button, Enter, clicking away, the
+   * header's button and Escape, which the shell routes through `dismissEntry`
+   * — and they all mean the same thing now: keep it. The saving already
+   * happened as the fields changed; this settles the last details.
    *
-   * It closes *before* awaiting the write rather than after. Every store
-   * mutation is optimistic — the entry is already on the grid by the time the
-   * request leaves, and a rejection rolls it back and raises the error banner —
-   * so holding the modal open for a round-trip buys nothing and makes clicking
-   * away feel like it didn't take.
-   *
-   * A change to a repeating entry is the one exception: it stops and asks which
+   * A change to a repeating entry is the exception: it stops and asks which
    * dates the change is for, and the answer is what saves. While the question
    * is up this does nothing, so a second click away cannot slip past it.
    */
   function commit() {
     if (asking) return;
-    const draft = draftFor('series');
 
-    if (mode === 'new') {
+    if (asksWhichDates && occurrence) {
+      // Only when something changed: opening an entry to look at it and
+      // clicking away is not an edit, and must not be asked about as one.
+      if (wouldChange(occurrence.eventId, draftFor('series'))) {
+        setAsking(true);
+        return;
+      }
       onClose();
-      void createEvent(draft);
       return;
     }
-    if (!occurrence) {
-      onClose();
-      return;
-    }
-    // Only when something changed: opening an entry to look at it and clicking
-    // away is not an edit, and must not be asked about as one.
-    if (asksWhichDates && wouldChange(occurrence.eventId, draft)) {
-      setAsking(true);
-      return;
-    }
+
+    // A new entry nobody touched is still created — under UNTITLED, the name
+    // its draft bar has had the whole time. Anything else is saved already,
+    // bar a last keystroke whose save has not run yet, which this catches.
+    save(mode === 'new' && !exists.current);
     onClose();
-    void updateEventFromDraft(occurrence.eventId, draft);
   }
 
   useImperativeHandle(ref, () => ({ commit }));
@@ -493,7 +536,7 @@ export function EventForm({
           <Field label="[01] TYPE" group>
             <SegmentedControl
               value={kind}
-              options={existing?.kind === 'assignment' ? KINDS_WITH_TASK : KINDS}
+              options={KINDS}
               onChange={(k) => {
                 setKind(k);
                 if (k === 'birthday') setWhen((w) => ({ ...w, allDay: true }));
@@ -669,6 +712,7 @@ export function EventForm({
               void updateEventFromDraft(occurrence.eventId, draftFor('series'));
             }}
             onBack={() => setAsking(false)}
+            onDiscard={onClose}
           />
         ) : (
           /* Wraps, because an edit on a recurring entry puts four buttons in
@@ -680,8 +724,11 @@ export function EventForm({
                 CLOSE
               </Button>
             ) : (
+              // DONE rather than SAVE: nothing waits for it. It is the same close
+              // as clicking away, kept because the bottom of a form is where a
+              // thumb goes looking for the way out.
               <Button type="submit" variant="primary" className="flex-1">
-                {mode === 'new' ? 'CREATE' : 'SAVE'}
+                DONE
               </Button>
             )}
 

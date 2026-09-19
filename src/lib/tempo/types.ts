@@ -1,7 +1,10 @@
 import type { CivilDate } from './civil';
 
-export type EventKind = 'event' | 'assignment' | 'milestone' | 'birthday';
-export type EventStatus = 'todo' | 'doing' | 'done';
+/**
+ * What an entry is. `assignment` — TASK — is retired: the database still
+ * accepts it, and `eventFromRow` reads it as `event`.
+ */
+export type EventKind = 'event' | 'milestone' | 'birthday';
 export type EventSource = 'tempo' | 'google';
 export type Frequency = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
 
@@ -125,7 +128,6 @@ export interface TempoEvent {
   /** Evaluated per occurrence at render time. See `derive.ts`. */
   displayTemplate: string | null;
 
-  status: EventStatus | null;
   notify: boolean;
   source: EventSource;
   googleEventId: string | null;
@@ -161,7 +163,6 @@ export interface OccurrencePatch {
   endDate?: CivilDate;
   startMinutes?: number;
   endMinutes?: number;
-  status?: EventStatus;
 }
 
 /**
@@ -193,7 +194,6 @@ export interface Occurrence {
   endMinutes: number | null;
 
   kind: EventKind;
-  status: EventStatus | null;
   categoryId: string | null;
   isOverride: boolean;
   /** Google-sourced instances render dimmed and refuse drag. */
@@ -207,7 +207,12 @@ export interface Category {
   sortOrder: number;
 }
 
-/** What produced a version. Ordered roughly by how much it changed. */
+/**
+ * What produced a version. Ordered roughly by how much it changed.
+ *
+ * `status` is no longer written; versions recorded by TASK's status control
+ * still carry it, and still have to be readable.
+ */
 export type VersionReason = 'edit' | 'move' | 'resize' | 'status' | 'delete';
 
 /**

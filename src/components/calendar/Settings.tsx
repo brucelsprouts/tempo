@@ -39,10 +39,14 @@ export const SHORTCUTS: ReadonlyArray<{
   { keys: ['D'], meaning: 'Open the focused day' },
   { keys: ['SPACE'], meaning: 'Centre on today' },
   { keys: ['1', '2', '3'], joiner: '/', meaning: 'Scroll · List · Year' },
-  { keys: ['/'], meaning: 'Filter, in list view' },
+  { keys: ['/'], meaning: 'Filter the list' },
   { keys: ['ESC'], meaning: 'Unwind one layer' },
   { keys: ['DEL'], meaning: 'Delete the selection' },
-  { keys: ['⌘', 'Z'], joiner: '+', meaning: 'Undo, while the toast is up' },
+  { keys: ['⌘', 'Z'], joiner: '+', meaning: 'Undo the last change' },
+  { keys: ['⌘', 'C'], joiner: '+', meaning: 'Copy the selection' },
+  { keys: ['⌘', 'V'], joiner: '+', meaning: 'Paste on the day under the pointer' },
+  { keys: ['⌘', 'D'], joiner: '+', meaning: 'Duplicate the selection' },
+  { keys: ['+', '−', '0'], joiner: '/', meaning: 'Day timeline: zoom in · out · fit' },
   { keys: ['←', '→'], joiner: '/', meaning: 'Move selection ∓1 day' },
   { keys: ['↑', '↓'], joiner: '/', meaning: 'Move selection ∓7 days' },
   { keys: ['DRAG'], meaning: 'Lasso-select, on empty grid' },
@@ -142,12 +146,23 @@ export function Settings({ email, onClose, onSignOut, readOnly }: Props) {
       <Categories />
 
       <Section label="DATA" meta={`${events.length} ENTRIES · ${overrides.length} EXCEPTIONS`}>
-        <a
-          href="/api/export"
-          className="tap inline-flex items-center border border-hair px-3 py-2 text-[10px] tracking-[0.14em] text-dim transition-colors hover:border-hairlit hover:text-ink"
-        >
-          EXPORT ALL AS JSON
-        </a>
+        {/* Two files, because they answer different needs: JSON is the
+            database, for Obsidian or a script; ICS is the calendar, for
+            importing into another calendar app. */}
+        <div className="flex flex-wrap gap-2">
+          <a
+            href="/api/export"
+            className="tap inline-flex items-center border border-hair px-3 py-2 text-[10px] tracking-[0.14em] text-dim transition-colors hover:border-hairlit hover:text-ink"
+          >
+            EXPORT ALL AS JSON
+          </a>
+          <a
+            href="/api/export?format=ics"
+            className="tap inline-flex items-center border border-hair px-3 py-2 text-[10px] tracking-[0.14em] text-dim transition-colors hover:border-hairlit hover:text-ink"
+          >
+            EXPORT ALL AS ICS
+          </a>
+        </div>
       </Section>
 
       <Notifications />

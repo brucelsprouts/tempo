@@ -506,6 +506,15 @@ body {
     vertical-align: top;
   }
 
+  /* When an all-day entry is due, beside its chip. On the chip's line and at
+     its line height, so it costs the bar nothing; typed here rather than in
+     utilities, like the chip, so the width tiers below can resize it. */
+  .bar-when {
+    font-size: 11px;
+    line-height: 15px;
+    white-space: nowrap;
+  }
+
   /* One entry, one hover: every bar of the hovered entry, both halves of one
      that crosses a week (see `entry-focus.ts`). A ring rather than a brighter
      fill — at 60% the secondary text would drop to 4.1:1. */
@@ -568,21 +577,17 @@ body {
     .bar-line.bar-tick .bar-time {
       display: none;
     }
-    /* A task's second line, same problem. The status glyph and the word DUE are
-       the two things that lose: `[x]` is three characters of a bar that fits
-       about four, and a due date on a bar drawn inside its own day column is
-       being said twice — the column is the date. A finished task still reads as
-       one, by the strike-through and the dimming it already wears. */
-    .bar-meta {
+    /* The due time keeps its figures and loses its word: `23:55` is five
+       characters that have to fit whole, at the size the start time takes
+       here, and DUE is what its place beside the chip already says. */
+    .bar-when {
       font-size: 9px;
     }
-    .bar-glyph,
     .bar-due {
       display: none;
     }
     /* An event gives its second title line to the chip: at this width, which
-       course it is matters more than the end of its title. Tasks have the
-       height to keep both. */
+       course it is matters more than the end of its title. */
     .bar-event .bar-clamp {
       -webkit-line-clamp: 1;
     }

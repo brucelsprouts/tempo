@@ -17,6 +17,10 @@ import { Button } from './ui';
  * Escape goes BACK to the form rather than closing it: the edit is not lost,
  * only the question. Stopped here, so the shell's window listener never sees it
  * — the same mechanism the date picker uses.
+ *
+ * DISCARD is the one way out of the popup that does not keep what you did.
+ * Everything else saves as you go; a repeating entry cannot until it knows
+ * which dates, so dropping the change has to be said out loud.
  */
 export function ScopePrompt({
   patch,
@@ -25,6 +29,7 @@ export function ScopePrompt({
   onThisAndLater,
   onEveryDate,
   onBack,
+  onDiscard,
 }: {
   patch: OccurrencePatch | null;
   canSplit: boolean;
@@ -32,6 +37,7 @@ export function ScopePrompt({
   onThisAndLater: () => void;
   onEveryDate: () => void;
   onBack: () => void;
+  onDiscard: () => void;
 }) {
   const oneDate = patch && Object.keys(patch).length > 0 ? patch : null;
 
@@ -84,6 +90,9 @@ export function ScopePrompt({
         </Button>
         <Button type="button" variant="quiet" onClick={onBack}>
           BACK
+        </Button>
+        <Button type="button" variant="quiet" onClick={onDiscard}>
+          DISCARD
         </Button>
       </div>
       {!oneDate && <p className="label mt-2">ONE DATE CAN ONLY CHANGE ITS TITLE, DATE AND TIME.</p>}

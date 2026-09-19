@@ -774,7 +774,7 @@ export function ContinuousCalendar({
       setMarquee(null);
       // Below the slop the gesture was a click, and a click on empty grid
       // creates nothing — it drops the selection. Creating is the day header's
-      // `+`, the `N` key and `+ NEW`, and nothing else; whitespace that made
+      // `+`, the `A` key and `+ NEW`, and nothing else; whitespace that made
       // entries would fight the lasso for the same press.
       if (!armed.current) setSelection(NOTHING);
       armed.current = false;

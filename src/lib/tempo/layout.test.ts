@@ -26,7 +26,6 @@ function occ(key: string, date: string, endDate = date): Occurrence {
     startMinutes: null,
     endMinutes: null,
     kind: 'event',
-    status: null,
     categoryId: null,
     isOverride: false,
     readOnly: false,
@@ -124,7 +123,6 @@ describe('variable bar heights', () => {
   const kinded = (key: string, kind: EventKind, date = '2026-07-29'): Occurrence => ({
     ...occ(key, date),
     kind,
-    status: kind === 'assignment' ? 'todo' : null,
   });
 
   const drawn = (segs: { hidden: boolean }[]) => segs.filter((s) => !s.hidden).length;
@@ -140,80 +138,77 @@ describe('variable bar heights', () => {
     expect(drawn(segments)).toBe(4);
   });
 
-  it('stacks three tasks — 0, 88, 176, last bottom at 260', () => {
+  it('stacks three birthdays — 0, 38, 76, last bottom at 110', () => {
     const { segments, laneTops } = layoutWeek(
       WEEK_START,
-      Array.from({ length: 3 }, (_, i) => kinded(`t${i}`, 'assignment')),
+      Array.from({ length: 3 }, (_, i) => kinded(`b${i}`, 'birthday')),
       BUDGET,
     );
-    expect(laneTops.slice(0, 3)).toEqual([0, 88, 176]);
-    expect(176 + KIND_HEIGHT.assignment).toBe(260);
+    expect(laneTops.slice(0, 3)).toEqual([0, 38, 76]);
+    expect(76 + KIND_HEIGHT.birthday).toBe(110);
     expect(drawn(segments)).toBe(3);
   });
 
-  it('draws all four events/tasks and sets contentHeight to 292', () => {
+  it('draws two birthdays and two events and sets contentHeight to 192', () => {
     const { segments, overflow, contentHeight } = layoutWeek(
       WEEK_START,
       [
-        kinded('t0', 'assignment'),
-        kinded('t1', 'assignment'),
+        kinded('b0', 'birthday'),
+        kinded('b1', 'birthday'),
         kinded('e0', 'event'),
         kinded('e1', 'event'),
       ],
       BUDGET,
     );
-    // Four bars on one day is 56 + 56 + 84 + 84 of bar and three 4px gaps, so
-    // the last lane ends at 292.
+    // Four bars on one day is 34 + 34 + 56 + 56 of bar and three 4px gaps, so
+    // the last lane ends at 192.
     expect(drawn(segments)).toBe(4);
     expect(segments.filter((s) => s.hidden)).toHaveLength(0);
     expect(overflow[3]).toBe(0);
-    expect(contentHeight).toBe(292);
+    expect(contentHeight).toBe(192);
   });
 
   it('keeps a bar at its own height, not its lane’s', () => {
-    // A short bar sharing a lane row with a task must not be stretched to match.
+    // A short bar sharing a lane with an entry must not be stretched to match.
     const { segments } = layoutWeek(
       WEEK_START,
-      [kinded('task', 'assignment', '2026-07-26'), kinded('mark', 'milestone', '2026-07-30')],
+      [kinded('entry', 'event', '2026-07-26'), kinded('mark', 'milestone', '2026-07-30')],
       BUDGET,
     );
     const mark = segments.find((s) => s.occurrence.key === 'mark')!;
-    const task = segments.find((s) => s.occurrence.key === 'task')!;
-    expect(mark.lane).toBe(task.lane); // same lane — they don't overlap
+    const entry = segments.find((s) => s.occurrence.key === 'entry')!;
+    expect(mark.lane).toBe(entry.lane); // same lane — they don't overlap
     expect(mark.height).toBe(KIND_HEIGHT.milestone);
-    expect(task.height).toBe(KIND_HEIGHT.assignment);
-    expect(mark.top).toBe(task.top);
+    expect(entry.height).toBe(KIND_HEIGHT.event);
+    expect(mark.top).toBe(entry.top);
   });
 
   it('sizes a lane by its tallest occupant', () => {
     const { segments, laneHeights, laneTops } = layoutWeek(
       WEEK_START,
       [
-        kinded('task', 'assignment', '2026-07-26'),
-        // Shares the task's column, so it is forced into a different lane
-        // rather than packing in beside it — which is the case being measured.
+        kinded('birthday', 'birthday', '2026-07-26'),
+        // Shares the birthday's column, so it is forced into a different lane
+        // rather than packing in beside it.
         kinded('other', 'event', '2026-07-26'),
         // Clear of both, so it joins whichever lane has room. It is the short
-        // bar that must not shrink its lane below the task's height.
+        // bar that must not shrink its lane below the birthday's height.
         kinded('mark', 'milestone', '2026-07-30'),
       ],
       BUDGET,
     );
 
-    // Which lane the task landed in is a tiebreak detail, not the behaviour
-    // under test — asserting lane 0 would make this fail if the sort ever
-    // changed its mind about two same-day bars.
-    const task = segments.find((s) => s.occurrence.key === 'task')!;
+    const birthday = segments.find((s) => s.occurrence.key === 'birthday')!;
     const other = segments.find((s) => s.occurrence.key === 'other')!;
     const mark = segments.find((s) => s.occurrence.key === 'mark')!;
 
-    expect(laneHeights[task.lane]).toBe(KIND_HEIGHT.assignment);
-
-    // The mark packs in beside the event, and their shared lane keeps the
-    // taller one's height — a 20px bar must not shrink the lane under a 56px
-    // one, or the bar above would overlap it.
-    expect(mark.lane).toBe(other.lane);
     expect(laneHeights[other.lane]).toBe(KIND_HEIGHT.event);
+
+    // The mark packs in beside the birthday, and their shared lane keeps the
+    // taller one's height — a 20px bar must not shrink the lane under a 34px
+    // one, or the bar below would overlap it.
+    expect(mark.lane).toBe(birthday.lane);
+    expect(laneHeights[birthday.lane]).toBe(KIND_HEIGHT.birthday);
 
     // Tops are cumulative: every lane begins one gap below the previous lane's
     // full height, whatever mix of kinds produced it.

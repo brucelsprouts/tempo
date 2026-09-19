@@ -14,6 +14,7 @@ import type { Category, Occurrence } from '@/lib/tempo/types';
 import { MONTHS } from './constants';
 import { CategoryChip } from './CategoryChip';
 import { barColors } from './tint';
+import { dayDue } from './due';
 import {
   applyDrag,
   DAY_MINUTES,
@@ -264,6 +265,7 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
           {bars.map((occ) => {
             const category = categoryFor(occ.categoryId);
             const colors = barColors(category?.color ?? null);
+            const due = dayDue(occ, date);
             return (
               <button
                 key={occ.key}
@@ -280,6 +282,11 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
               >
                 <span className="min-w-0 flex-1 truncate">{occ.title}</span>
                 <CategoryChip category={category} className="max-w-[45%] shrink-0" />
+                {due && (
+                  <span className="shrink-0 tabular-nums" style={{ color: colors.soft }}>
+                    {due}
+                  </span>
+                )}
               </button>
             );
           })}

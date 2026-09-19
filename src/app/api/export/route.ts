@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { toICS } from '@/lib/tempo/ics';
 import {
   categoryFromRow,
   eventFromRow,
@@ -8,45 +9,63 @@ import {
 } from '@/lib/tempo/mappers';
 
 /**
- * Everything, in a flat human-readable shape.
+ * Everything, in one of two shapes.
  *
- * The point is that this file is legible without the app that produced it —
- * each event is one object whose keys map 1:1 onto Obsidian frontmatter, with
- * category resolved to its name rather than a foreign key. Recurring events
- * export as their rule, not as thousands of expanded occurrences.
+ * JSON by default: the database, legible without the app that produced it —
+ * each event one object whose keys map 1:1 onto Obsidian frontmatter, category
+ * resolved to its name, recurring events as their rule rather than thousands of
+ * expanded occurrences.
+ *
+ * `?format=ics`: the calendar, for importing into another one. See `ics.ts` for
+ * the one place the two disagree — derived titles.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
-  const [events, categories, overrides] = await Promise.all([
+  const [eventRows, categoryRows, overrideRows] = await Promise.all([
     supabase.from('events').select('*'),
     supabase.from('categories').select('*'),
     supabase.from('occurrence_overrides').select('*'),
   ]);
 
-  const failure = events.error ?? categories.error ?? overrides.error;
+  const failure = eventRows.error ?? categoryRows.error ?? overrideRows.error;
   if (failure) return NextResponse.json({ error: failure.message }, { status: 500 });
 
-  const cats = new Map((categories.data ?? []).map((c) => [c.id, categoryFromRow(c)]));
+  const cats = new Map((categoryRows.data ?? []).map((c) => [c.id, categoryFromRow(c)]));
+  const events = (eventRows.data ?? []).map(eventFromRow);
+  const overrides = (overrideRows.data ?? []).map(overrideFromRow);
+  const day = new Date().toISOString().slice(0, 10);
+
+  if (request.nextUrl.searchParams.get('format') === 'ics') {
+    return new NextResponse(
+      toICS({ events, overrides, categories: [...cats.values()], now: new Date() }),
+      {
+        headers: {
+          'content-type': 'text/calendar; charset=utf-8',
+          'content-disposition': `attachment; filename="tempo-${day}.ics"`,
+        },
+      },
+    );
+  }
 
   const payload = {
     format: 'tempo.export.v1',
     exportedAt: new Date().toISOString(),
     categories: [...cats.values()],
-    events: (events.data ?? [])
-      .map(eventFromRow)
-      .map((e) => toPortable(e, e.categoryId ? cats.get(e.categoryId)?.name : undefined)),
-    overrides: (overrides.data ?? []).map(overrideFromRow),
+    events: events.map((e) =>
+      toPortable(e, e.categoryId ? cats.get(e.categoryId)?.name : undefined),
+    ),
+    overrides,
   };
 
   return new NextResponse(JSON.stringify(payload, null, 2), {
     headers: {
       'content-type': 'application/json; charset=utf-8',
-      'content-disposition': `attachment; filename="tempo-${new Date().toISOString().slice(0, 10)}.json"`,
+      'content-disposition': `attachment; filename="tempo-${day}.json"`,
     },
   });
 }

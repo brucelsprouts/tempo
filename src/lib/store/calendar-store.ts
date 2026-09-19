@@ -39,7 +39,6 @@ import { splitRule } from '@/lib/tempo/split';
 import type {
   Category,
   EventKind,
-  EventStatus,
   EventVersion,
   Occurrence,
   OccurrenceOverride,
@@ -51,6 +50,7 @@ import type {
 } from '@/lib/tempo/types';
 
 import { EMPTY_TOUCHED, movedNothing, planRows, same, type Snapshot, type Touched } from './undo';
+import { createWriter, type Writer } from './writer';
 
 /** Whether an edit applies to one instance or rewrites the whole series. */
 export type EditScope = 'occurrence' | 'series';
@@ -64,6 +64,35 @@ export interface UndoEntry {
   at: number;
   before: Snapshot;
   touched: Touched;
+}
+
+/** A popup's claim on the calendar while it saves as you go. See `beginEdit`. */
+export interface EditSession {
+  readonly id: number;
+}
+
+/** What the entry popup's header says about its saves. */
+export type EditStatus = 'idle' | 'saving' | 'saved' | 'failed';
+
+/**
+ * How long a popup waits after the last change before writing it.
+ *
+ * Long enough that a word typed at speed is one write rather than a dozen, short
+ * enough that the header says SAVED before you have reached for the next field.
+ */
+const DRAFT_DELAY = 400;
+
+/** One open popup session. Held outside the store's state: nothing renders it. */
+interface Session {
+  /** The calendar as it stood when the popup opened. */
+  before: Snapshot;
+  /** Event ids this popup has written. */
+  touched: Set<string>;
+  /** Each written row as the server last accepted it — `null` for one it has never had. */
+  confirmed: Map<string, TempoEvent | null>;
+  writer: Writer;
+  /** Whether the latest write was refused, and why. */
+  failed: string | null;
 }
 
 export interface EventDraft {
@@ -83,7 +112,6 @@ export interface EventDraft {
   displayTemplate?: string | null;
   notify?: boolean;
   notes?: string | null;
-  status?: EventStatus | null;
 }
 
 interface CalendarState {
@@ -203,7 +231,6 @@ interface CalendarState {
     scope: EditScope,
   ) => Promise<void>;
   cancelOccurrence: (occ: Occurrence) => Promise<void>;
-  setStatus: (occ: Occurrence, status: EventStatus) => Promise<void>;
   createCategory: (name: string, color: string) => Promise<void>;
   updateCategory: (id: string, patch: { name?: string; color?: string }) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
@@ -221,6 +248,29 @@ interface CalendarState {
   undoStack: UndoEntry[];
   /** Take back the last action. */
   undo: () => Promise<void>;
+
+  /**
+   * How the open popup's saves stand, for its header. One popup is open at a
+   * time, so one value is enough; `idle` until something has changed.
+   */
+  editStatus: EditStatus;
+  /**
+   * Start saving an entry popup as it changes. Remembers how the calendar
+   * stood, so closing it can record everything it did as one undo.
+   */
+  beginEdit: () => EditSession;
+  /**
+   * The popup's current draft of one entry: on the calendar now, written
+   * shortly, and created if it does not exist yet.
+   */
+  saveDraft: (session: EditSession, eventId: string, draft: EventDraft) => void;
+  /** Write whatever is waiting, now — the app is being hidden. */
+  flushEdit: (session: EditSession) => Promise<void>;
+  /**
+   * Close the session: write what is waiting, then record the popup's changes
+   * as one undo entry, and one version for each entry that existed before.
+   */
+  endEdit: (session: EditSession) => Promise<void>;
 }
 
 /** Seeded once, so a fresh calendar has colours to assign immediately. */
@@ -271,6 +321,13 @@ export const useCalendar = create<CalendarState>((set, get) => {
    * calendar for a value no component reads.
    */
   let channel: ReturnType<typeof supabase.channel> | null = null;
+
+  /** Open popup sessions, by id. See `beginEdit`. */
+  const sessions = new Map<number, Session>();
+  let nextSession = 1;
+
+  /** Whether an open popup is writing this row — and so owns it until it closes. */
+  const editing = (id: string) => [...sessions.values()].some((s) => s.touched.has(id));
 
   /**
    * Apply optimistically, persist, restore the snapshot if the write fails —
@@ -341,29 +398,67 @@ export const useCalendar = create<CalendarState>((set, get) => {
    * mutation, ahead of the `set`.
    */
   function captureVersion(eventId: string, reason: VersionReason) {
-    const { ownerId, events, deleted, overrides } = get();
-    if (!ownerId) return;
+    const { events, deleted, overrides } = get();
 
     // The trash as well as the live list: a version can be captured for an
     // entry that is already deleted, which is what makes rolling one back to
     // an older shape possible without restoring it first.
     const event = events.find((e) => e.id === eventId) ?? deleted.find((e) => e.id === eventId);
     if (!event) return;
+    recordVersion(event, overrides.filter((o) => o.eventId === eventId), reason);
+  }
 
+  /**
+   * Write one recorded shape. Split from `captureVersion` because a popup's
+   * version is the shape from before it opened, which is no longer in the store
+   * by the time it closes — the session hands it over instead.
+   */
+  function recordVersion(event: TempoEvent, overrides: OccurrenceOverride[], reason: VersionReason) {
+    const ownerId = get().ownerId;
+    if (!ownerId) return;
     void supabase
       .from('event_versions')
       .insert({
         owner_id: ownerId,
-        event_id: eventId,
+        event_id: event.id,
         reason,
-        snapshot: {
-          event,
-          overrides: overrides.filter((o) => o.eventId === eventId),
-        } as never,
+        snapshot: { event, overrides } as never,
       })
       .then(({ error }) => {
         if (error) warnOnce(error.message);
       });
+  }
+
+  /**
+   * One session write: the row as the calendar now shows it, created or
+   * updated in one statement.
+   *
+   * Read from the store when it runs rather than captured when it was
+   * scheduled, so a write that waited behind another sends the newest draft.
+   */
+  async function writeDraft(s: Session, id: string) {
+    const ownerId = get().ownerId;
+    const row = get().events.find((e) => e.id === id);
+    if (!ownerId || !row) return;
+
+    let refused: string | null = null;
+    try {
+      const { error } = await supabase
+        .from('events')
+        .upsert({ id, owner_id: ownerId, title: row.title, ...eventToRow(row) });
+      refused = error?.message ?? null;
+    } catch (e) {
+      refused = e instanceof Error ? e.message : 'Save failed';
+    }
+
+    if (refused) {
+      s.failed = refused;
+      set({ editStatus: 'failed' });
+      return;
+    }
+    s.failed = null;
+    s.confirmed.set(id, row);
+    if (!s.writer.queued) set({ editStatus: 'saved' });
   }
 
   /**
@@ -421,6 +516,9 @@ export const useCalendar = create<CalendarState>((set, get) => {
 
     if (!payload.new) return;
     const incoming = eventFromRow(payload.new);
+    // A popup saving this row is the authority on it until it closes. Its own
+    // echo can arrive a keystroke late and would flicker the bar backwards.
+    if (editing(incoming.id)) return;
     set((s) => ({
       events:
         incoming.deletedAt === null
@@ -762,6 +860,7 @@ export const useCalendar = create<CalendarState>((set, get) => {
     error: null,
     isOffline: false,
     cachedAt: null,
+    editStatus: 'idle',
 
     dismissError: () => set({ error: null }),
 
@@ -955,18 +1054,7 @@ export const useCalendar = create<CalendarState>((set, get) => {
       const tz = get().timezone;
 
       const id = crypto.randomUUID();
-
-      const event: TempoEvent = {
-        id,
-        ...draftFields(draft, tz),
-        timezone: tz,
-        notify: draft.notify ?? false,
-        source: 'tempo',
-        googleEventId: null,
-        deletedAt: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
+      const event = newEvent(id, draft, tz);
 
       await optimistic(
         () => set((s) => ({ events: [...s.events, event] })),
@@ -1407,6 +1495,92 @@ export const useCalendar = create<CalendarState>((set, get) => {
       if (ok) set((s) => ({ undoStack: s.undoStack.slice(1) }));
     },
 
+    beginEdit: () => {
+      const id = nextSession++;
+      const { events, overrides, categories, deleted } = get();
+      sessions.set(id, {
+        before: { events, overrides, categories, deleted },
+        touched: new Set(),
+        confirmed: new Map(),
+        writer: createWriter(DRAFT_DELAY),
+        failed: null,
+      });
+      set({ editStatus: 'idle' });
+      return { id };
+    },
+
+    saveDraft: (session, eventId, draft) => {
+      const s = sessions.get(session.id);
+      if (!s || get().isOffline) return;
+
+      const tz = get().timezone;
+      const current = get().events.find((e) => e.id === eventId);
+      const next = current ? { ...current, ...draftFields(draft, tz) } : newEvent(eventId, draft, tz);
+      if (current && same(current, next)) return;
+
+      // What the server holds before this popup's first write to the row, which
+      // is what a failure that never recovers puts back.
+      if (!s.confirmed.has(eventId)) s.confirmed.set(eventId, current ?? null);
+      s.touched.add(eventId);
+
+      set((st) => ({
+        events: current
+          ? st.events.map((e) => (e.id === eventId ? next : e))
+          : [...st.events, next],
+        editStatus: 'saving',
+      }));
+      s.writer.schedule(() => writeDraft(s, eventId));
+    },
+
+    flushEdit: async (session) => {
+      await sessions.get(session.id)?.writer.flush();
+    },
+
+    /**
+     * The popup is closing, however it closed.
+     *
+     * A refused write gets one more try on the way out — the refusal may have
+     * been a moment without signal. If that fails too, the calendar goes back
+     * to what the server last accepted, and the error banner says why: showing
+     * an edit the server does not have would be the one lie worse than losing
+     * it.
+     */
+    endEdit: async (session) => {
+      const s = sessions.get(session.id);
+      if (!s) return;
+      await s.writer.flush();
+      if (s.failed) {
+        for (const id of s.touched) await writeDraft(s, id);
+      }
+      sessions.delete(session.id);
+
+      if (s.failed) {
+        set((st) => ({ events: restoreConfirmed(st.events, s.confirmed), error: s.failed }));
+      }
+      set({ editStatus: 'idle' });
+
+      const touched: Touched = { ...EMPTY_TOUCHED, events: [...s.touched] };
+      if (movedNothing(s.before, get(), touched)) return;
+
+      for (const id of s.touched) {
+        const was = s.before.events.find((e) => e.id === id);
+        if (was) recordVersion(was, s.before.overrides.filter((o) => o.eventId === id), 'edit');
+      }
+      const [first] = s.touched;
+      const created = !s.before.events.some((e) => e.id === first);
+      set((st) => ({
+        undoStack: [
+          {
+            label: `${created ? 'Created' : 'Edited'} ${titleOf(first)}`,
+            at: Date.now(),
+            before: s.before,
+            touched,
+          },
+          ...st.undoStack,
+        ].slice(0, UNDO_CAP),
+      }));
+    },
+
     moveOccurrence: async (occ, deltaDays, scope) => {
       if (occ.readOnly || deltaDays === 0) return;
       captureVersion(occ.eventId, 'move');
@@ -1635,20 +1809,6 @@ export const useCalendar = create<CalendarState>((set, get) => {
       }));
     },
 
-    setStatus: async (occ, status) => {
-      if (occ.event.source === 'google') return;
-      captureVersion(occ.eventId, 'status');
-      const label = `Marked ${occ.title} ${status}`;
-      if (occ.event.recurrence) {
-        await patchOccurrence(occ, { status }, false, (merged) => ({
-          label,
-          touched: touchedOverrides([merged.id]),
-        }));
-        return;
-      }
-      await writeEvent(occ.eventId, { status }, { label, touched: touchedEvents([occ.eventId]) });
-    },
-
     createCategory: async (name, color) => {
       const ownerId = get().ownerId;
       if (!ownerId) return;
@@ -1814,9 +1974,36 @@ function draftFields(draft: EventDraft, tz: string) {
     reminders: draft.reminders ?? [],
     anchorDate: draft.anchorDate ?? null,
     displayTemplate: draft.displayTemplate ?? null,
-    status: draft.status ?? (draft.kind === 'assignment' ? 'todo' : null),
     ...draftTiming(draft, tz),
   };
+}
+
+/** A new row from a draft: the draft's fields, and the ones only a new row has. */
+function newEvent(id: string, draft: EventDraft, tz: string): TempoEvent {
+  const now = new Date().toISOString();
+  return {
+    id,
+    ...draftFields(draft, tz),
+    timezone: tz,
+    notify: draft.notify ?? false,
+    source: 'tempo',
+    googleEventId: null,
+    deletedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/** The calendar with each of a session's rows put back as the server last accepted it. */
+function restoreConfirmed(
+  events: TempoEvent[],
+  confirmed: Map<string, TempoEvent | null>,
+): TempoEvent[] {
+  let out = events;
+  for (const [id, row] of confirmed) {
+    out = row ? out.map((e) => (e.id === id ? row : e)) : out.filter((e) => e.id !== id);
+  }
+  return out;
 }
 
 /**

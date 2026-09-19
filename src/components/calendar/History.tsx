@@ -218,10 +218,8 @@ function DeletedPane({
                   // it is the target rather than a separate chevron.
                   className="flex min-w-0 flex-1 items-center gap-2 text-left"
                 >
-                  {/* `w-5` and no wrapping: the task glyphs are three
-                      characters (`[ ]`, `[x]`), which overflow a 16px column
-                      and break across two lines — so a deleted task rendered
-                      as a bracket stacked on a bracket. */}
+                  {/* `w-5` and no wrapping: one column for every kind's mark,
+                      so the titles beside them line up. */}
                   <span className="w-5 shrink-0 whitespace-nowrap text-center text-[11px] text-mute">
                     {glyphFor(entry)}
                   </span>
@@ -389,7 +387,6 @@ function describe(version: EventVersion, next: TempoEvent | null): string {
   const changes: string[] = [];
   if (was.title !== next.title) changes.push(`title “${was.title}”`);
   if (when(was) !== when(next)) changes.push(`when ${when(was)}`);
-  if (was.status !== next.status) changes.push(`status ${was.status ?? 'none'}`);
   if (was.notes !== next.notes) changes.push('notes');
   if (countOf(version) !== null) changes.push(`${countOf(version)} exceptions`);
 

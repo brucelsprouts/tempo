@@ -380,6 +380,60 @@ only by a transaction this app does not have. Locally it is one action with one
 undo. Where it would add nothing — the series' first date — or would renumber a
 counted title, it is not offered.
 
+## 17. A deadline is drawn where it is due
+
+An all-day entry's due time was read by the reminders and the form and drawn by
+nothing, so an assignment due at 18:00 looked exactly like one due whenever —
+which is how a 07:00 final comes to be remembered as 19:00. It is drawn now
+beside the category chip, on the bar's bottom line: that line was already there,
+so a deadline costs a bar no height, and a time beside the course reads as that
+course's deadline. Only on the part of the bar in the week it is due, because the
+time belongs to the last day; and not on a phone's one-day bar, where the chip
+has already given up its line — the day panel says it there.
+
+The day panel and the list say it from the same rules (`due.ts`). The list's NEXT
+became DUE: a multi-day assignment is worked on from its first day and judged by
+its last, so what is due next is the order worth sorting by, and IN PROGRESS was
+the answer to a different question.
+
+TASK is gone from the data model as well as the form. A task was an entry with a
+status nobody set; a row still written as one reads as an entry and is written
+back as one the next time it is saved. The kind and the column stay in the
+database, unused — nothing destructive to reach a tidier schema.
+
+## 18. The popup saves as you go
+
+The entry popup wrote nothing until it closed, and on a phone its only way out —
+the header's × — threw everything away: the backdrop is a 12px frame there, and ×
+was wired to Escape's meaning, "no". It saves as its fields change now, and every
+way out keeps: clicking away, Enter, DONE, × and Escape. The calendar behind
+updates at once; the database 400ms after the last edit, at once on close, and at
+once when the app is hidden, since a phone suspends a hidden page before a
+pending timer fires.
+
+A popup is one edit session. It remembers how the calendar stood when it opened,
+and closing it records everything it did as one undo and one version per entry —
+so a title typed a letter at a time is still one "Edited …", and UNDO on the toast
+is how a change is taken back now that Escape is not. A new entry is written on
+its first change, and closing one nobody touched still creates it as UNTITLED,
+which is what clicking away always did.
+
+A repeating entry is the exception, because a change to it cannot be saved until
+it is known which dates it is for. It keeps its question for the close, where
+every way out now asks rather than some of them discarding, and the question has
+a DISCARD for the change you did not mean.
+
+## 19. The calendar exports as ICS too
+
+JSON is the database, legible; ICS is the calendar, portable — asked for on the
+first day so everything could be re-imported elsewhere. They disagree in one
+place. ICS gives a repeating event one title, so an entry whose title changes by
+occurrence ("Mom > 52") is written out one occurrence at a time, from its start
+to ten years ahead; everything else is one rule with its skipped and moved dates.
+A repeating entry with a time keeps its zone rather than UTC, or a 09:00 lecture
+would import at 10:00 for half the year. Reminders stay behind: they count from
+anchors ICS has no words for, and whatever imports the file sets its own.
+
 ---
 
 ## Not built
