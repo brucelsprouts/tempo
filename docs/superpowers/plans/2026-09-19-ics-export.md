@@ -292,6 +292,8 @@ import {
   civilInZone,
   instantFromCivil,
   LAST_MINUTE_OF_DAY,
+  maxDate,
+  minDate,
   type CivilDate,
 } from './civil';
 import { eventSpan, expandEvent, isSeriesDate, type Span } from './recurrence';
@@ -410,9 +412,16 @@ function asRule(event: TempoEvent, overrides: OccurrenceOverride[], shared: stri
   out.push(...shared, 'END:VEVENT');
 
   for (const o of live.filter((x) => !x.cancelled)) {
-    const occ = expandEvent(event, [o], o.occurrenceDate, o.occurrenceDate).find(
-      (x) => x.seriesDate === o.occurrenceDate,
-    );
+    // Expansion keeps what overlaps the window it is asked about, and a moved
+    // date is found where it went — so the window spans where it was and
+    // where it is.
+    const moved = o.patch.startDate ?? o.occurrenceDate;
+    const occ = expandEvent(
+      event,
+      [o],
+      minDate(o.occurrenceDate, moved),
+      maxDate(o.occurrenceDate, o.patch.endDate ?? moved),
+    ).find((x) => x.seriesDate === o.occurrenceDate);
     if (!occ) continue;
     out.push(
       'BEGIN:VEVENT',
