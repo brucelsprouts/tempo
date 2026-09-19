@@ -401,6 +401,28 @@ status nobody set; a row still written as one reads as an entry and is written
 back as one the next time it is saved. The kind and the column stay in the
 database, unused — nothing destructive to reach a tidier schema.
 
+## 18. The popup saves as you go
+
+The entry popup wrote nothing until it closed, and on a phone its only way out —
+the header's × — threw everything away: the backdrop is a 12px frame there, and ×
+was wired to Escape's meaning, "no". It saves as its fields change now, and every
+way out keeps: clicking away, Enter, DONE, × and Escape. The calendar behind
+updates at once; the database 400ms after the last edit, at once on close, and at
+once when the app is hidden, since a phone suspends a hidden page before a
+pending timer fires.
+
+A popup is one edit session. It remembers how the calendar stood when it opened,
+and closing it records everything it did as one undo and one version per entry —
+so a title typed a letter at a time is still one "Edited …", and UNDO on the toast
+is how a change is taken back now that Escape is not. A new entry is written on
+its first change, and closing one nobody touched still creates it as UNTITLED,
+which is what clicking away always did.
+
+A repeating entry is the exception, because a change to it cannot be saved until
+it is known which dates it is for. It keeps its question for the close, where
+every way out now asks rather than some of them discarding, and the question has
+a DISCARD for the change you did not mean.
+
 ---
 
 ## Not built
