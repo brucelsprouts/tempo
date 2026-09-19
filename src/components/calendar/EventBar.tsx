@@ -7,6 +7,7 @@ import type { WeekSegment } from '@/lib/tempo/layout';
 import type { Category, Occurrence } from '@/lib/tempo/types';
 import { DAYS_PER_WEEK, KIND_HEIGHT } from '@/lib/tempo/layout';
 import { CategoryChip } from './CategoryChip';
+import { barDue } from './due';
 import { useEntryFocus } from './entry-focus';
 import { barColors } from './tint';
 
@@ -45,8 +46,6 @@ function timeLabel(minutes: number | null): string | null {
   // the title, and mixed widths make a column of chips look ragged.
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
-
-const STATUS_GLYPH = { todo: '[ ]', doing: '[~]', done: '[x]' } as const;
 
 /**
  * How much of each end of a bar grabs a resize rather than a move.
@@ -112,10 +111,13 @@ export function EventBar({
   const span = endCol - startCol + 1;
 
   const time = occ.allDay ? null : timeLabel(occ.startMinutes);
-  const glyph = occ.kind === 'assignment' && occ.status ? STATUS_GLYPH[occ.status] : null;
-  const done = occ.status === 'done';
+  /**
+   * When it is due, on the part of the bar in the week it is due. The time
+   * belongs to the last day, so a bar that carries on into next week leaves it
+   * to the row it ends in.
+   */
+  const due = continuesAfter ? null : barDue(occ);
 
-  const task = occ.kind === 'assignment';
   const tick = occ.kind === 'milestone';
   /** A birthday and a mark are one line and wear no chip. */
   const oneLine = tick || occ.kind === 'birthday';
@@ -175,7 +177,6 @@ export function EventBar({
         continuesBefore ? 'pl-1' : 'pl-1.5',
         editable ? 'cursor-grab' : 'cursor-default',
         occ.event.source === 'google' ? 'opacity-70' : '',
-        done ? 'opacity-45' : '',
       ].join(' ')}
       {...attributes}
       {...listeners}
@@ -225,9 +226,9 @@ export function EventBar({
         className={[
           'bar-body flex min-w-0 flex-1 flex-col',
           oneLine ? 'justify-center' : 'justify-between',
-          // Events alone give up a title line to the chip in the middle width
+          // Two-line bars give up a title line to the chip in the middle width
           // tier; see `.bar-event` in globals.css.
-          oneLine || task ? '' : 'bar-event',
+          oneLine ? '' : 'bar-event',
         ].join(' ')}
       >
         {oneLine ? (
@@ -243,48 +244,35 @@ export function EventBar({
           </div>
         ) : (
           <>
-            {/* The title, with what precedes it: the time on an event, the
-                status box on a task. Under 90px of content `.bar-line` turns
-                the column and the time moves above the title. The title is its
-                own flex column, so a second line hangs under itself rather than
-                under the time. */}
+            {/* The title, with the time an entry starts at before it. Under
+                90px of content `.bar-line` turns the column and the time moves
+                above the title. The title is its own flex column, so a second
+                line hangs under itself rather than under the time. */}
             <div className="bar-line flex gap-1.5">
-              {task
-                ? glyph && (
-                    <span className="bar-glyph shrink-0 tabular-nums" style={{ color: colors.soft }}>
-                      {glyph}
-                    </span>
-                  )
-                : time && (
-                    <span className="bar-time shrink-0 tabular-nums" style={{ color: colors.soft }}>
-                      {time}
-                    </span>
-                  )}
-              <span className={`bar-title bar-clamp ${done ? 'line-through' : ''}`}>{occ.title}</span>
+              {time && (
+                <span className="bar-time shrink-0 tabular-nums" style={{ color: colors.soft }}>
+                  {time}
+                </span>
+              )}
+              <span className="bar-title bar-clamp">{occ.title}</span>
             </div>
 
-            {/* Everything else sits on the bottom edge together: a task's due
-                line, then the chip. */}
-            <div className="flex min-w-0 flex-col gap-[3px]">
-              {task && (
-                <div
-                  className="bar-meta truncate text-[11px] leading-tight tabular-nums"
-                  style={{ color: colors.soft }}
-                >
-                  {time ?? (
-                    <>
-                      <span className="bar-due">DUE </span>
-                      {occ.endDate.slice(5)}
-                    </>
-                  )}
-                </div>
-              )}
-              {category && (
-                <div className="bar-chips flex min-w-0">
-                  <CategoryChip category={category} />
-                </div>
-              )}
-            </div>
+            {/* The bottom line: the chip, then when it is due. Beside the chip
+                rather than under it, so a deadline costs the bar no height —
+                the line was already there. The chip gives way first: it
+                truncates and the time never does, because a clipped time is a
+                wrong time. */}
+            {(category || due) && (
+              <div className="bar-chips flex min-w-0 items-start gap-1.5">
+                <CategoryChip category={category} className="min-w-0" />
+                {due && (
+                  <span className="bar-when shrink-0 tabular-nums" style={{ color: colors.soft }}>
+                    <span className="bar-due">DUE </span>
+                    {due}
+                  </span>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
