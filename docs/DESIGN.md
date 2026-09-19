@@ -380,6 +380,27 @@ only by a transaction this app does not have. Locally it is one action with one
 undo. Where it would add nothing — the series' first date — or would renumber a
 counted title, it is not offered.
 
+## 17. A deadline is drawn where it is due
+
+An all-day entry's due time was read by the reminders and the form and drawn by
+nothing, so an assignment due at 18:00 looked exactly like one due whenever —
+which is how a 07:00 final comes to be remembered as 19:00. It is drawn now
+beside the category chip, on the bar's bottom line: that line was already there,
+so a deadline costs a bar no height, and a time beside the course reads as that
+course's deadline. Only on the part of the bar in the week it is due, because the
+time belongs to the last day; and not on a phone's one-day bar, where the chip
+has already given up its line — the day panel says it there.
+
+The day panel and the list say it from the same rules (`due.ts`). The list's NEXT
+became DUE: a multi-day assignment is worked on from its first day and judged by
+its last, so what is due next is the order worth sorting by, and IN PROGRESS was
+the answer to a different question.
+
+TASK is gone from the data model as well as the form. A task was an entry with a
+status nobody set; a row still written as one reads as an entry and is written
+back as one the next time it is saved. The kind and the column stay in the
+database, unused — nothing destructive to reach a tidier schema.
+
 ---
 
 ## Not built
