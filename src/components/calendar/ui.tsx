@@ -383,21 +383,12 @@ export function Modal({
   title,
   meta,
   onClose,
-  onDismiss,
   size = 'settings',
   children,
 }: {
   title: string;
   meta?: string;
   onClose: () => void;
-  /**
-   * Clicking away, when that has to mean something other than the header's
-   * button. The entry form commits a draft on click-off and throws it away on
-   * Escape, and the header button is labelled ESC — so it answers to `onClose`
-   * with the key, and only the backdrop comes through here. Defaults to
-   * `onClose`, which is what every other surface wants.
-   */
-  onDismiss?: () => void;
   size?: keyof typeof MODAL_WIDTH;
   children: React.ReactNode;
 }) {
@@ -465,8 +456,12 @@ export function Modal({
     (e.shiftKey ? stops[stops.length - 1] : stops[0]).focus();
   }
 
-  /** Mousedown anywhere on the backdrop dismisses. */
-  const backdrop = { onMouseDown: onDismiss ?? onClose, 'aria-hidden': true } as const;
+  /**
+   * Mousedown anywhere on the backdrop is the same as the header's button:
+   * every surface means one thing by leaving, and the entry form's "keep it"
+   * is decided in the form, not here.
+   */
+  const backdrop = { onMouseDown: onClose, 'aria-hidden': true } as const;
 
   return (
     <div

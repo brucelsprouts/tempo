@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { useCalendar } from '@/lib/store/calendar-store';
+import { useCalendar, type EditStatus } from '@/lib/store/calendar-store';
 import { getZoomSnapshot, setZoom } from '@/lib/store/day-zoom';
 import {
   getServerViewSnapshot,
@@ -58,7 +58,8 @@ export interface EntrySeed {
  */
 type Overlay =
   | { kind: 'day'; date: CivilDate }
-  | { kind: 'entry'; mode: 'new'; seed: EntrySeed }
+  /** `id` is chosen here, when the popup opens, so every save of the entry is one row. */
+  | { kind: 'entry'; mode: 'new'; seed: EntrySeed; id: string }
   | { kind: 'entry'; mode: 'edit'; occurrence: Occurrence }
   | { kind: 'settings' }
   /** `focus` opens the version list on one entry, which is how a form reaches it. */
@@ -137,6 +138,24 @@ function Actions({
   );
 }
 
+/**
+ * The entry popup's second line: how its saves stand, or what closing will ask.
+ *
+ * A repeating entry other than a birthday saves on close, once it knows which
+ * dates a change is for; everything else saves as you go and says so.
+ */
+function entryMeta(
+  top: Extract<Overlay, { kind: 'entry' }>,
+  status: EditStatus,
+): string | undefined {
+  const event = top.mode === 'edit' ? top.occurrence.event : null;
+  if (event?.recurrence && event.kind !== 'birthday') return 'REPEATS · CLOSING ASKS WHICH DATES';
+  if (status === 'saving') return 'SAVING…';
+  if (status === 'saved') return 'SAVED';
+  if (status === 'failed') return 'NOT SAVED · WILL RETRY';
+  return event?.kind === 'birthday' ? 'EDITS APPLY TO EVERY YEAR' : undefined;
+}
+
 export function CalendarShell({ email, onSignOut, banner }: Props) {
   const status = useCalendar((s) => s.status);
   const error = useCalendar((s) => s.error);
@@ -147,6 +166,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   const undo = useCalendar((s) => s.undo);
   const isOffline = useCalendar((s) => s.isOffline);
   const cachedAt = useCalendar((s) => s.cachedAt);
+  const editStatus = useCalendar((s) => s.editStatus);
 
   const view = useSyncExternalStore(subscribeView, getViewSnapshot, getServerViewSnapshot);
   const today = todayIn(timezone);
@@ -187,13 +207,13 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   const replaceTop = (o: Overlay) => setOverlays((s) => [...s.slice(0, -1), o]);
 
   /**
-   * Clicking away from the entry form keeps what you typed.
+   * Every way out of the entry popup keeps what you did.
    *
-   * The two ways out of the form mean opposite things, which is the whole of
-   * this feature: clicking off is "yes, that one" and Escape is "no, forget
-   * it". Escape stays on `pop` and never comes through here. A brand-new entry
-   * with nothing typed into it still commits — under `UNTITLED`, which the
-   * draft bar has been calling it the whole time.
+   * The form saves as its fields change, so closing is no longer a decision
+   * about whether to keep anything: clicking away, Escape and the header's
+   * button all end up here, and the form settles the last details (see its
+   * `commit`). The one question left is a repeating entry's — which dates a
+   * change is for.
    */
   function dismissEntry() {
     if (formRef.current) formRef.current.commit();
@@ -209,6 +229,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
       kind: 'entry',
       mode: 'new',
       seed: { start, end: seed?.end ?? start, startMinutes: seed?.startMinutes },
+      id: crypto.randomUUID(),
     });
   }
 
@@ -266,9 +287,12 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
    * `useCallback` breaks the first half of that loop and returning the previous
    * object unchanged lets React bail out of the second.
    */
-  const handleDraftChange = useCallback((next: DraftPreview) => {
+  const handleDraftChange = useCallback((next: DraftPreview | null) => {
     setDraft((d) =>
-      d && d.start === next.start && d.end === next.end && d.title === next.title ? d : next,
+      d === next ||
+      (d && next && d.start === next.start && d.end === next.end && d.title === next.title)
+        ? d
+        : next,
     );
   }, []);
 
@@ -374,7 +398,10 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
       // Escape is right, and making the toast eat a press would not be.
       setToast(null);
       if (overlays.length > 0) {
-        pop();
+        // The entry popup keeps what you did on every way out, this one too —
+        // it saves as you go, so there is nothing left for Escape to discard.
+        if (top?.kind === 'entry') dismissEntry();
+        else pop();
       } else if (!selectionSurface()?.unwind() && typing) {
         // The grid's own layer sits under the stack: the selection. Blurring is
         // last because it is not a layer — in the scroll view there is nothing
@@ -851,23 +878,15 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
         <Modal
           size="entry"
           title={top.mode === 'new' ? 'NEW ENTRY' : 'EDIT'}
-          meta={
-            // Only a birthday still saves to every date unasked; any other
-            // repeating entry asks CHANGE WHICH DATES? when a change is saved.
-            top.mode === 'edit' && top.occurrence.event.recurrence
-              ? top.occurrence.event.kind === 'birthday'
-                ? 'EDITS APPLY TO THE WHOLE SERIES'
-                : 'REPEATS · SAVING ASKS WHICH DATES'
-              : undefined
-          }
-          onClose={pop}
-          onDismiss={dismissEntry}
+          meta={entryMeta(top, editStatus)}
+          onClose={dismissEntry}
         >
           {top.mode === 'new' ? (
             <EventForm
-              key={`new-${top.seed.start}-${top.seed.end}-${top.seed.startMinutes ?? 'allday'}`}
+              key={top.id}
               ref={formRef}
               mode="new"
+              newId={top.id}
               seed={top.seed}
               onClose={pop}
               onDraftChange={handleDraftChange}
