@@ -77,7 +77,7 @@ function timed(
 
 /**
  * Five entries with one title, told apart only by their categories — the case
- * the category chips exist for — plus a multi-day task, a club and an entry
+ * the category chips exist for — plus a multi-day deadline, a club and an entry
  * with no category, whose plain grey bar has to stay distinct from every tint.
  */
 function finalsWeek(monday: CivilDate): TempoEvent[] {
@@ -89,10 +89,9 @@ function finalsWeek(monday: CivilDate): TempoEvent[] {
     timed('f4', 'Final Exam', day(3), 19 * 60, 22 * 60, { categoryId: 'c5' }),
     timed('f5', 'Final Exam', day(4), 12 * 60, 15 * 60, { categoryId: 'c9' }),
     base('f6', 'Final project', {
-      kind: 'assignment',
-      status: 'doing',
       startDate: day(0),
       endDate: day(2),
+      dueMinutes: 23 * 60 + 55,
       categoryId: 'c5',
     }),
     timed('f7', 'Chess club', day(1), 18 * 60, 19 * 60, { categoryId: 'c10' }),
@@ -142,26 +141,25 @@ function fixtures(today: CivilDate): TempoEvent[] {
       categoryId: 'c1',
     }),
 
+    // Deadlines: one that crosses into next week, one due at a time that is
+    // not the usual 23:55, and one already past.
     base('s1', 'CS4442 — final project', {
-      kind: 'assignment',
-      status: 'doing',
       startDate: d(1),
       endDate: d(9),
+      dueMinutes: 23 * 60 + 55,
       categoryId: 'c3',
       notify: true,
     }),
     base('s2', 'Reading response 04', {
-      kind: 'assignment',
-      status: 'todo',
       startDate: d(3),
       endDate: d(3),
+      dueMinutes: 18 * 60,
       categoryId: 'c3',
     }),
     base('s3', 'Stats problem set', {
-      kind: 'assignment',
-      status: 'done',
       startDate: d(-3),
       endDate: d(-3),
+      dueMinutes: 23 * 60 + 55,
       categoryId: 'c3',
     }),
 
@@ -233,8 +231,6 @@ useCalendar.setState({
       deletedAt: new Date(Date.now() - 3_600_000).toISOString(),
     }),
     base('d2', 'Old reading response', {
-      kind: 'assignment',
-      status: 'todo',
       startDate: todayIn(TZ),
       endDate: todayIn(TZ),
       categoryId: 'c3',

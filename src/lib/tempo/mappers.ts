@@ -61,13 +61,17 @@ const remindersSchema = z.array(reminderSchema).max(MAX_REMINDERS);
 /** An all-day entry's due time: a minute of the day. */
 const dueMinutesSchema = z.number().int().min(0).max(1439);
 
+/**
+ * An exception's patch. A `status` key — one date of a repeating task ticked
+ * off — is dropped by the parse rather than refused: TASK is retired, and the
+ * rest of what the exception says still stands.
+ */
 const patchSchema = z.object({
   title: z.string().optional(),
   startDate: civilDate.optional(),
   endDate: civilDate.optional(),
   startMinutes: z.number().int().min(0).max(1439).optional(),
   endMinutes: z.number().int().min(0).max(1440).optional(),
-  status: z.enum(['todo', 'doing', 'done']).optional(),
 });
 
 export function parseRecurrence(value: unknown): Recurrence | null {
@@ -115,7 +119,11 @@ const eventSchema = z.object({
   id: z.string(),
   title: z.string(),
   notes: z.string().nullable(),
-  kind: z.enum(['event', 'assignment', 'milestone', 'birthday']),
+  // A snapshot of a task is a snapshot of an entry now, so rolling back to one
+  // restores an entry. See `eventFromRow`.
+  kind: z
+    .enum(['event', 'assignment', 'milestone', 'birthday'])
+    .transform((k) => (k === 'assignment' ? 'event' : k)),
   categoryId: z.string().nullable(),
   allDay: z.boolean(),
   startsAt: z.string().nullable(),
@@ -134,7 +142,10 @@ const eventSchema = z.object({
   reminders: remindersSchema.default([]),
   anchorDate: civilDate.nullable(),
   displayTemplate: z.string().nullable(),
-  status: z.enum(['todo', 'doing', 'done']).nullable(),
+  status: z
+    .enum(['todo', 'doing', 'done'])
+    .nullable()
+    .transform(() => null),
   notify: z.boolean(),
   source: z.enum(['tempo', 'google']),
   googleEventId: z.string().nullable(),
@@ -178,7 +189,10 @@ export function eventFromRow(row: EventRow): TempoEvent {
     id: row.id,
     title: row.title,
     notes: row.notes,
-    kind: row.kind,
+    // TASK is retired. A row still written as one is an entry with a status
+    // nobody sets any more, so it reads as an entry and is written back as one
+    // the next time it is saved; `20260919_retire_tasks.sql` converts the rest.
+    kind: row.kind === 'assignment' ? 'event' : row.kind,
     categoryId: row.category_id,
     allDay: row.all_day,
     startsAt: instant(row.starts_at),
@@ -194,7 +208,7 @@ export function eventFromRow(row: EventRow): TempoEvent {
         || row.display_template === '{title} → {yearsSince}'
       ? '{title} > {yearsSince}'
       : row.display_template,
-    status: row.status,
+    status: null,
     notify: row.notify,
     source: row.source,
     googleEventId: row.google_event_id,
