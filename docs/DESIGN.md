@@ -423,6 +423,17 @@ it is known which dates it is for. It keeps its question for the close, where
 every way out now asks rather than some of them discarding, and the question has
 a DISCARD for the change you did not mean.
 
+## 19. The calendar exports as ICS too
+
+JSON is the database, legible; ICS is the calendar, portable — asked for on the
+first day so everything could be re-imported elsewhere. They disagree in one
+place. ICS gives a repeating event one title, so an entry whose title changes by
+occurrence ("Mom > 52") is written out one occurrence at a time, from its start
+to ten years ahead; everything else is one rule with its skipped and moved dates.
+A repeating entry with a time keeps its zone rather than UTC, or a 09:00 lecture
+would import at 10:00 for half the year. Reminders stay behind: they count from
+anchors ICS has no words for, and whatever imports the file sets its own.
+
 ---
 
 ## Not built

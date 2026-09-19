@@ -187,7 +187,8 @@ lifted out on its own.
   that's expected.
 - **`/api/export`** returns every event as flat JSON whose keys map 1:1 onto
   Obsidian frontmatter. Recurring events export as their rule, not as expanded
-  occurrences — the export is the same size as the database.
+  occurrences — the export is the same size as the database. `?format=ics`
+  returns the same calendar as an `.ics` file for any other calendar app.
 - **Installable, with push reminders.** Add it to your Home Screen and entries
   notify you at their own lead times. Setup is three env vars and one migration —
   see [Reminders](#reminders) below.
