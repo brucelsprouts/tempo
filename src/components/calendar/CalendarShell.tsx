@@ -168,6 +168,19 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   /** The live entry form, when one is open. See `dismissEntry`. */
   const formRef = useRef<EntryFormHandle>(null);
 
+  /**
+   * `/` pressed outside the list. The list has to mount before its filter
+   * exists, so the focus waits for the render that shows it — see the effect
+   * below — rather than guessing at a frame.
+   */
+  const filterWanted = useRef(false);
+
+  useEffect(() => {
+    if (view !== 'list' || !filterWanted.current) return;
+    filterWanted.current = false;
+    searchRef.current?.focus();
+  }, [view]);
+
   const push = (o: Overlay) => setOverlays((s) => [...s, o]);
   const pop = () => setOverlays((s) => s.slice(0, -1));
   /** Same layer, different contents — the day modal's ‹ › steppers. */
@@ -560,10 +573,15 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
       case '3':
         setViewPreference('year');
         break;
+      // The filter, from anywhere: the list is where searching happens, so
+      // asking for it from another view is asking to go there.
       case '/':
+        e.preventDefault();
         if (view === 'list') {
-          e.preventDefault();
           searchRef.current?.focus();
+        } else {
+          filterWanted.current = true;
+          setViewPreference('list');
         }
         break;
       case ',':
@@ -619,7 +637,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
     <div className="safe-shell flex h-full flex-col">
       {isOffline && cachedAt && (
         <div className="bg-raised border-b border-hair px-3 py-1.5 text-center text-[10px] tracking-[0.2em] text-dim select-none shrink-0">
-          ⚠️ OFFLINE · VIEWING CACHED CALENDAR (AS OF {new Date(cachedAt).toLocaleString().toUpperCase()})
+          ! OFFLINE · VIEWING CACHED CALENDAR (AS OF {new Date(cachedAt).toLocaleString().toUpperCase()})
         </div>
       )}
       {/*
