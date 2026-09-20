@@ -1,0 +1,99 @@
+/**
+ * Tempo — which backups survive, and how a backup's filename is spelled.
+ *
+ * Split out from `backup.mts` so it can be tested. This is the half of the
+ * script that deletes things, and it is the half with no network, no clock of
+ * its own and no filesystem — the window is always passed in, which is what
+ * makes the boundaries testable at all.
+ */
+
+export interface Backup {
+  name: string;
+  at: Date;
+}
+
+/** `2026-09-19T20-30-00Z` — ISO, with the colons a filename cannot hold. */
+export function stamp(at: Date): string {
+  return at.toISOString().replace(/\.\d+Z$/, 'Z').replace(/:/g, '-');
+}
+
+/** The inverse, or nothing for a file this script did not write. */
+export function unstamp(name: string): Date | null {
+  const m = /^tempo-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})Z\.json$/.exec(name);
+  if (!m) return null;
+  const at = new Date(`${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`);
+  return Number.isNaN(at.getTime()) ? null : at;
+}
+
+/** Newest first. */
+export function parseBackups(names: string[]): Backup[] {
+  return names
+    .map((name) => ({ name, at: unstamp(name) }))
+    .filter((f): f is Backup => f.at !== null)
+    .sort((a, b) => b.at.getTime() - a.at.getTime());
+}
+
+/**
+ * Which backups survive.
+ *
+ * The same shape as the app's own version retention, and for the same reason:
+ * counting backups answers the wrong question. "Keep the last 20" means a week
+ * where you ran the script often silently pushes out the copy from before the
+ * mistake you are trying to undo — and the whole point of a backup is the one
+ * from *before* you noticed.
+ *
+ *   under a week    every run. You still remember what you changed.
+ *   under 3 months  the newest of each day.
+ *   under 2 years   the newest of each month.
+ *   beyond          dropped.
+ *
+ * Plus a floor of three, so a calendar left alone for years does not age out of
+ * having any backup at all.
+ */
+export function survivors(files: Backup[], now: Date): Set<string> {
+  const ageDays = (at: Date) => (now.getTime() - at.getTime()) / 86_400_000;
+  const newestPer = new Map<string, Backup>();
+  const keep = new Set<string>();
+
+  for (const f of files) {
+    const days = ageDays(f.at);
+    if (days < 7) {
+      keep.add(f.name);
+      continue;
+    }
+
+    // UTC calendar days and months, deliberately: grouping by the runner's
+    // local midnight would mean a backup folder that thins differently
+    // depending on where you were sitting when you ran it.
+    const bucket =
+      days < 90
+        ? f.at.toISOString().slice(0, 10)
+        : days < 730
+          ? f.at.toISOString().slice(0, 7)
+          : null;
+    if (bucket === null) continue;
+
+    const held = newestPer.get(bucket);
+    if (!held || f.at > held.at) newestPer.set(bucket, f);
+  }
+
+  for (const f of newestPer.values()) keep.add(f.name);
+
+  // The floor is a safety net, not a tier: it tops the folder up to three only
+  // when everything above kept fewer than that — the folder of a calendar left
+  // alone long enough for every tier to age out.
+  //
+  // Conditional rather than an unconditional "always keep the newest three",
+  // which sounds equivalent and is not: it would pin recent files the daily and
+  // monthly tiers had just deliberately thinned, so "the newest of each month"
+  // would quietly mean "the newest of each month, plus a couple of stragglers".
+  if (keep.size < 3) {
+    const newestFirst = [...files].sort((a, b) => b.at.getTime() - a.at.getTime());
+    for (const f of newestFirst) {
+      if (keep.size >= 3) break;
+      keep.add(f.name);
+    }
+  }
+
+  return keep;
+}

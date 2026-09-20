@@ -9,6 +9,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    // `scripts` too: the backup script's retention rules decide which files get
+    // deleted, which is not logic to leave untested just because it lives
+    // outside the app.
+    include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
   },
 });

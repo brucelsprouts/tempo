@@ -2,7 +2,12 @@ import { timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { eventFromRow, overrideFromRow } from '@/lib/tempo/mappers';
-import { dueReminders, reminderText, type DueReminder } from '@/lib/tempo/reminders';
+import {
+  dueReminders,
+  reminderText,
+  MIN_LEAD_MINUTES,
+  type DueReminder,
+} from '@/lib/tempo/reminders';
 import { sendToAll } from '@/lib/push/send';
 import type { OccurrenceOverride } from '@/lib/tempo/types';
 
@@ -34,6 +39,64 @@ export const runtime = 'nodejs';
  */
 const CATCHUP_MINUTES = 60;
 
+/**
+ * The columns a reminder is computed from, and nothing else.
+ *
+ * This query ran as `select('*')`, once a minute, forever — 43,200 pulls of
+ * every event that holds a reminder, every month. Egress is the one free-tier
+ * limit a one-person calendar can plausibly reach, and this is the query that
+ * walks it there; `notes` alone can outweigh the rest of the row.
+ *
+ * Nothing below reads the rest: the expansion needs the schedule, the title and
+ * the template, `reminderText` needs the kind and the due time, and the claim
+ * needs the owner.
+ */
+const REMINDER_COLUMNS =
+  'id,owner_id,title,kind,all_day,starts_at,ends_at,start_date,end_date,due_minutes,timezone,recurrence,reminders,anchor_date,display_template,notify' as const;
+
+/**
+ * Stand-ins for the columns the select above deliberately does not fetch.
+ *
+ * `eventFromRow` maps a whole row and three of the fields it fills are not
+ * nullable, so the alternative to padding here is a second mapper free to drift
+ * from the one the app uses. The expansion does copy two of these onto each
+ * occurrence — `categoryId`, and `source` by way of `readOnly` — but both are
+ * for rendering, and nothing on the path to a notification looks at either.
+ *
+ * If that stops being true, the column belongs in the select, not here.
+ */
+const UNFETCHED = {
+  notes: null,
+  category_id: null,
+  source: 'tempo',
+  google_event_id: null,
+  google_calendar_id: null,
+  google_sync_hash: null,
+  google_synced_at: null,
+  // Retired: nothing sets it and nothing reads it. See 20260919_retire_tasks.sql.
+  status: null,
+  // Filtered on in the query, so a row that comes back is always live.
+  deleted_at: null,
+  created_at: '1970-01-01T00:00:00.000Z',
+  updated_at: '1970-01-01T00:00:00.000Z',
+} as const;
+
+/**
+ * How far into the past an event can sit and still owe you a notification.
+ *
+ * A reminder fires at most `-MIN_LEAD_MINUTES` after the point it counts from
+ * (the floor is one day *after*), a tick looks `CATCHUP_MINUTES` back, and a
+ * bare date is compared without a zone, which a far-eastern offset can shift by
+ * most of a day. Doubling the sum leaves all three covered several times over.
+ *
+ * The point is what it excludes: a calendar accumulates finished events forever,
+ * and none of them can ever fire again. Without this the per-minute scan grows
+ * for as long as you use the app.
+ */
+const REACHABLE_DAYS = Math.ceil(
+  (2 * (-MIN_LEAD_MINUTES + CATCHUP_MINUTES)) / 1440,
+) + 1;
+
 export async function POST(request: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
@@ -47,11 +110,28 @@ export async function POST(request: Request) {
   const now = new Date();
   const after = new Date(now.getTime() - CATCHUP_MINUTES * 60_000);
 
+  const cutoff = new Date(now.getTime() - REACHABLE_DAYS * 1440 * 60_000);
+  const cutoffDate = cutoff.toISOString().slice(0, 10);
+
   const { data: eventRows, error: eventsError } = await supabase
     .from('events')
-    .select('*')
+    .select(REMINDER_COLUMNS)
     .is('deleted_at', null)
-    .not('reminders', 'is', null);
+    .not('reminders', 'is', null)
+    // A series is always kept: its rule may still be producing occurrences, and
+    // deciding otherwise means evaluating UNTIL and COUNT in PostgREST. A
+    // one-off is kept only while it is still within reach, by whichever of its
+    // four schedule columns it actually uses — an OR, so a null column simply
+    // does not vote.
+    .or(
+      [
+        'recurrence.not.is.null',
+        `ends_at.gte.${cutoff.toISOString()}`,
+        `starts_at.gte.${cutoff.toISOString()}`,
+        `end_date.gte.${cutoffDate}`,
+        `start_date.gte.${cutoffDate}`,
+      ].join(','),
+    );
 
   if (eventsError) {
     return NextResponse.json({ error: eventsError.message }, { status: 500 });
@@ -62,7 +142,9 @@ export async function POST(request: Request) {
   // person's calendar — a few hundred rows — so the filter is free here and
   // uses the same parse the app does, including its treatment of malformed
   // values as silence.
-  const events = (eventRows ?? []).map(eventFromRow).filter((e) => e.reminders.length > 0);
+  const events = (eventRows ?? [])
+    .map((row) => eventFromRow({ ...UNFETCHED, ...row }))
+    .filter((e) => e.reminders.length > 0);
   if (events.length === 0) {
     return NextResponse.json({ scanned: 0, due: 0, sent: 0, claimed: 0 });
   }
