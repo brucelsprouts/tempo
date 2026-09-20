@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { AUTH_COOKIE_NAME } from '@/lib/supabase/cookie';
 
 /**
  * The single locked door.
@@ -41,6 +42,10 @@ export async function proxy(request: NextRequest) {
     process.env.SUPABASE_INTERNAL_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
     {
+      // Must match the browser's, which the internal URL would otherwise
+      // change — and a middleware that cannot find the session bounces every
+      // signed-in request straight back to the login page.
+      cookieOptions: { name: AUTH_COOKIE_NAME },
       cookies: {
         getAll: () => request.cookies.getAll(),
         setAll: (list) => {

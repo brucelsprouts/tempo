@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import type { Database } from '@/lib/db/database.types';
+import { AUTH_COOKIE_NAME } from './cookie';
 
 /**
  * Where the server reaches Supabase.
@@ -30,6 +31,8 @@ export async function createClient() {
     SERVER_URL,
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
     {
+      // Must match the browser's, which SERVER_URL would otherwise change.
+      cookieOptions: { name: AUTH_COOKIE_NAME },
       cookies: {
         getAll: () => cookieStore.getAll(),
         setAll: (list) => {
@@ -57,6 +60,7 @@ export function createServiceClient() {
   if (!key) throw new Error('SUPABASE_SERVICE_ROLE_KEY is not set');
 
   return createServerClient<Database>(SERVER_URL, key, {
+    cookieOptions: { name: AUTH_COOKIE_NAME },
     cookies: { getAll: () => [], setAll: () => {} },
   });
 }
