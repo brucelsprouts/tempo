@@ -62,11 +62,24 @@ describe('survivors', () => {
     expect(names).toContain(old(400).name);
   });
 
-  it('drops everything past two years', () => {
-    const files = [old(0), old(1), old(2), old(900), old(1000)];
+  it('thins to one a year past two years, and keeps it for good', () => {
+    // Four from the same calendar year, all older than two years, plus one
+    // from a different year. The old tail is the whole point of the change:
+    // it used to be dropped outright.
+    const files = [old(0), old(800), old(830), old(860), old(1200)];
     const names = kept(files);
-    expect(names).not.toContain(old(900).name);
-    expect(names).not.toContain(old(1000).name);
+    const sameYear = [old(800), old(830), old(860)].filter((f) => names.includes(f.name));
+    expect(sameYear).toHaveLength(1);
+    expect(sameYear[0].name).toBe(old(800).name);
+    expect(names).toContain(old(1200).name);
+  });
+
+  it('never drops the oldest backup there is', () => {
+    // A ten-year-old calendar. Three recent backups already satisfy the floor,
+    // so the old one surviving has to be the yearly tier holding it rather than
+    // the safety net — which is the distinction this tier exists to make.
+    const files = [old(0), old(1), old(2), old(3650)];
+    expect(kept(files)).toContain(old(3650).name);
   });
 
   it('keeps the newest three however old they are', () => {
