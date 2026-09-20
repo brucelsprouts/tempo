@@ -124,11 +124,25 @@ async function run() {
   const hash = createHash('sha256').update(JSON.stringify(tables)).digest('hex').slice(0, 16);
 
   const existing = await listBackups();
-  let unchanged = false;
+  let previous: { contentHash?: string; tables?: { events?: unknown[] } } | null = null;
   if (existing.length > 0) {
-    const newest = JSON.parse(await readFile(join(DIR, existing[0].name), 'utf8'));
-    unchanged = newest.contentHash === hash;
+    previous = JSON.parse(await readFile(join(DIR, existing[0].name), 'utf8'));
   }
+
+  // The one failure the rest of this script cannot see. A service-role key that
+  // has been rotated, or an RLS policy that starts applying, returns success
+  // and zero rows — a valid-looking empty file that then becomes newest-of-day
+  // and prunes away the good backup taken the same morning. Throwing here means
+  // nothing is written and nothing is pruned, and the exit code is non-zero.
+  const before = previous?.tables?.events?.length ?? 0;
+  if (tables.events.length === 0 && before > 0) {
+    throw new Error(
+      `events came back empty, but ${existing[0].name} holds ${before}. ` +
+        `Refusing to write or prune. Check SUPABASE_SERVICE_ROLE_KEY.`,
+    );
+  }
+
+  const unchanged = previous?.contentHash === hash;
 
   if (unchanged) {
     console.log(`\nUnchanged since ${existing[0].name} — no new file written.`);
