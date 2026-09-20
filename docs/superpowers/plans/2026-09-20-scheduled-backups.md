@@ -42,17 +42,19 @@ own timezone is `Etc/UTC`, as the design assumed.
 - The registered scheduled task ran with `LastTaskResult: 0` and re-fetched a
   deliberately deleted local copy.
 
-**Two things deliberately left as they are:**
+**The console window is gone.** `Register-ScheduledTask` had refused `S4U` with
+`Access is denied`, so the task first went in as `Interactive` and flashed a
+window once a day. Re-applied `S4U` through an elevated prompt and verified the
+task still works from session 0: `LastTaskResult: 0`, and a deliberately deleted
+local copy was re-fetched. It reads `C:\Keys\new-key` and `~/.ssh/config` fine,
+since both are local files rather than anything needing network credentials.
+Note that the `-Hidden` setting does **not** suppress the window — it only hides
+the task from the Task Scheduler library listing.
 
-1. **The scheduled task runs `Interactive`**, so it flashes a console window
-   once a day. `Register-ScheduledTask` refused `S4U` with `Access is denied` —
-   that logon type needs the "log on as a batch job" right, hence elevation.
-   The one elevated command that fixes it is in `SELF_HOSTING.md`. Note that
-   `-Hidden` does **not** do this: it hides the task from the Task Scheduler
-   library listing, not the window.
-2. **The empty-backup guard is typechecked but never tripped at runtime.**
-   Provoking it means feeding the script a key that authenticates and reads
-   zero rows, which is not a state worth manufacturing against a live database.
+**One thing deliberately left:** the empty-backup guard is typechecked but never
+tripped at runtime. Provoking it means feeding the script a key that
+authenticates and reads zero rows, which is not a state worth manufacturing
+against a live database.
 
 **Also still true:** the repo's local `.env.local` points at the old hosted
 `*.supabase.co` project with an empty service-role key, so `npm run backup` run

@@ -169,17 +169,24 @@ journalctl -u tempo-backup.service -n 50
 
 The file deletes itself once backups are arriving again.
 
-**To stop the daily console window** the pull currently flashes, run this in an
-**elevated** PowerShell once:
+**The pull task runs `S4U`**, so it is silent — no console window, ever. That
+is structural rather than a setting: S4U runs the task in session 0, which has
+no desktop to draw a window on. Note that the `-Hidden` task *setting* does not
+do this; it only hides the task from the Task Scheduler library listing.
+
+Setting `S4U` needs elevation, because that logon type depends on the "log on
+as a batch job" right. If the task is ever recreated from scratch it will come
+back as `Interactive` and start flashing a window again — this restores it, from
+an **elevated** PowerShell:
 
 ```powershell
-$t = Get-ScheduledTask -TaskName "Tempo backup pull"
 $p = New-ScheduledTaskPrincipal -UserId "BRUCELSPROUTS\bruce" -LogonType S4U -RunLevel Limited
 Set-ScheduledTask -TaskName "Tempo backup pull" -Principal $p
 ```
 
-S4U needs the "log on as a batch job" right, which is why it cannot be set
-without elevation.
+S4U can still read `C:\Keys\new-key` and `~/.ssh/config`, because both are
+local files rather than anything needing network credentials — which is the
+thing to check first if a silent task ever starts failing to connect.
 
 **To restore**, see the comment at the bottom of `scripts/backup.mts`. It is
 deliberately not automated: a restore overwrites a live calendar and the right
@@ -197,9 +204,6 @@ move depends on what went wrong.
   from the old Vercel project into `.env.local` and rebuild.
 - **`reminders_backup_20260917`** existed in the hosted database and was not
   migrated. It was a one-off backup taken during an earlier migration.
-- **The desktop pull's scheduled task runs `Interactive`**, so it flashes a
-  console window once a day. The fix needs one elevated PowerShell command to
-  re-register it `S4U`; see "Backups" above. Harmless, just visible.
 - **The local `.env.local`** in the repo still points at the old hosted
   `*.supabase.co` project and has an empty `SUPABASE_SERVICE_ROLE_KEY`, so
   `npm run backup` run from Windows backs up nothing useful. The box's own
