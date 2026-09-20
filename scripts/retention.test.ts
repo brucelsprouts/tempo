@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { parseBackups, stamp, survivors, unstamp, type Backup } from './retention.mts';
+import { folder, parseBackups, stamp, survivors, unstamp, type Backup } from './retention.mts';
 
 const NOW = new Date('2026-09-19T12:00:00.000Z');
 
-/** A backup taken `days` before NOW, at `hour` UTC. */
+/** A backup taken `days` before NOW, at `hour` UTC, in the folder it belongs in. */
 function old(days: number, hour = 12): Backup {
   const at = new Date(NOW.getTime() - days * 86_400_000);
   at.setUTCHours(hour, 0, 0, 0);
-  return { name: `tempo-${stamp(at)}.json`, at };
+  return { name: `${folder(at)}/tempo-${stamp(at)}.json`, at };
 }
 
 function kept(files: Backup[]): string[] {
@@ -33,7 +33,31 @@ describe('stamp / unstamp', () => {
     expect(unstamp('tempo-backup.json')).toBeNull();
     expect(unstamp('tempo-2026-09-19.json')).toBeNull();
     expect(unstamp('tempo-2026-13-45T99-99-99Z.json')).toBeNull();
-    expect(parseBackups(['notes.txt', 'tempo-2026-09-19T20-30-00Z.json'])).toHaveLength(1);
+  });
+
+  it('names the monthly folder a backup belongs in', () => {
+    expect(folder(new Date('2026-09-19T20:30:00Z'))).toBe('2026-09');
+    // UTC, like every other bucket here: the folder a file lands in should not
+    // depend on where the machine writing it happened to be.
+    expect(folder(new Date('2026-10-01T03:59:00Z'))).toBe('2026-10');
+  });
+
+  it('reads backups out of their monthly folders', () => {
+    const paths = ['2026-09/tempo-2026-09-19T20-30-00Z.json', 'notes.txt', '2026-09/README.md'];
+    expect(parseBackups(paths).map((f) => f.name)).toEqual([
+      '2026-09/tempo-2026-09-19T20-30-00Z.json',
+    ]);
+  });
+
+  it('refuses a backup filed under the wrong month', () => {
+    // A file a human moved by hand. Refusing to parse it means the prune
+    // cannot see it, so it is never deleted on someone's behalf — the same
+    // protection `notes.txt` gets, extended to a stray that is a real backup.
+    expect(parseBackups(['2026-01/tempo-2026-09-19T20-30-00Z.json'])).toHaveLength(0);
+  });
+
+  it('refuses a backup sitting loose in the root', () => {
+    expect(parseBackups(['tempo-2026-09-19T20-30-00Z.json'])).toHaveLength(0);
   });
 });
 

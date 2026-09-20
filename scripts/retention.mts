@@ -25,10 +25,29 @@ export function unstamp(name: string): Date | null {
   return Number.isNaN(at.getTime()) ? null : at;
 }
 
-/** Newest first. */
-export function parseBackups(names: string[]): Backup[] {
-  return names
-    .map((name) => ({ name, at: unstamp(name) }))
+/** `2026-09` — the monthly folder a backup taken at this moment belongs in. */
+export function folder(at: Date): string {
+  return at.toISOString().slice(0, 7);
+}
+
+/**
+ * Newest first, from paths relative to the backup root — `2026-09/tempo-….json`.
+ *
+ * A path counts as a backup only if its folder is the one its own stamp names.
+ * A file moved into the wrong month by hand therefore does not parse, so the
+ * prune cannot see it and will not delete it. That is the same protection
+ * `notes.txt` already had, extended to the more dangerous case: a stray that
+ * *is* a real backup, which a looser parser would happily delete.
+ */
+export function parseBackups(paths: string[]): Backup[] {
+  return paths
+    .map((name): { name: string; at: Date | null } => {
+      const slash = name.indexOf('/');
+      if (slash === -1) return { name, at: null };
+      const at = unstamp(name.slice(slash + 1));
+      if (at === null || name.slice(0, slash) !== folder(at)) return { name, at: null };
+      return { name, at };
+    })
     .filter((f): f is Backup => f.at !== null)
     .sort((a, b) => b.at.getTime() - a.at.getTime());
 }
