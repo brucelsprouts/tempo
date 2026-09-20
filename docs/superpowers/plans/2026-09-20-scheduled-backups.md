@@ -12,6 +12,43 @@
 
 ---
 
+## Status — 2026-09-20
+
+**Tasks 1–7 are done and committed** (`f89a97c`…`a132943`). 498 tests pass,
+typecheck and lint clean. That is the whole codebase half.
+
+**Tasks 0 and 8–11 are blocked on two things the user has to supply:**
+
+1. **SSH from the Windows machine to the box does not authenticate.**
+   `ubuntu@192.18.158.188: Permission denied (publickey)` — the box is in
+   `known_hosts`, so something has reached it before, but not this machine's
+   `~/.ssh/id_ed25519`. Until its public key is in the box's
+   `authorized_keys`, Tasks 8, 9 and 10 cannot run, and the box's Node version
+   (Task 0, the hard blocker) cannot even be read.
+2. **`SUPABASE_SERVICE_ROLE_KEY` is empty in the local `.env.local`**, and
+   `NEXT_PUBLIC_SUPABASE_URL` there still points at the old hosted
+   `*.supabase.co` project rather than `supabase.brucelsprouts.com`. So the
+   end-to-end runs in Task 4 Step 6 and Task 5 Step 2 could not be executed
+   locally.
+
+**What was verified instead**, since those runs were unavailable:
+
+- `listBackups`'s recursive `readdir` plus separator normalisation, against a
+  fabricated folder on Windows: 9 entries in, exactly the 2 correctly-filed
+  backups recognised; a backup misfiled under the wrong month, `README.md`,
+  `notes.txt` and the canary file all correctly invisible to the prune.
+- The pull runner's whole local pipeline: oldest-first ordering, non-backups
+  excluded from the fetch plan, month folders created at the right paths, a
+  second run a no-op, and the canary file appearing when the box goes quiet and
+  deleting itself on recovery.
+- The pull's failure path against the real box: fails in 1.6s, exits non-zero,
+  names the command — confirming `ConnectTimeout` and `BatchMode` prevent a hang.
+
+**Still unverified at runtime:** the empty-backup guard in Task 5 (typechecked
+only), and the `ssh`/`scp` invocations themselves.
+
+---
+
 ## Task 0: Verify the box can run the script at all — BLOCKER
 
 `SELF_HOSTING.md` records the box on **Node 20**. Node only strips TypeScript
@@ -72,7 +109,7 @@ Then re-run Step 1 and record the new `which node` path.
 - Modify: `scripts/retention.mts:40-56` (doc comment), `scripts/retention.mts:62-73` (the bucket)
 - Test: `scripts/retention.test.ts:68-73`
 
-- [ ] **Step 1: Replace the failing test**
+- [x] **Step 1: Replace the failing test**
 
 In `scripts/retention.test.ts`, replace the whole `it('drops everything past two years', ...)` block with:
 
@@ -96,14 +133,14 @@ In `scripts/retention.test.ts`, replace the whole `it('drops everything past two
   });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npx vitest run scripts/retention.test.ts`
 Expected: FAIL — both new tests. The first because everything past 730 days is
 currently dropped, so `sameYear` has length 0; the second because `old(3650)` is
 dropped.
 
-- [ ] **Step 3: Make the bucket fall through to a year**
+- [x] **Step 3: Make the bucket fall through to a year**
 
 In `scripts/retention.mts`, replace these lines:
 
@@ -130,7 +167,7 @@ with:
           : f.at.toISOString().slice(0, 4);
 ```
 
-- [ ] **Step 4: Correct the doc comment, which now describes something untrue**
+- [x] **Step 4: Correct the doc comment, which now describes something untrue**
 
 In `scripts/retention.mts`, replace:
 
@@ -159,7 +196,7 @@ with:
  * Plus a floor of three, for a folder holding fewer than three distinct years.
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `npx vitest run scripts/retention.test.ts`
 Expected: PASS, all tests. The existing `keeps the newest three however old they
@@ -167,7 +204,7 @@ are` case still passes — `old(1800)`, `old(1805)` and `old(1810)` all land in
 the same calendar year, so the yearly tier keeps one and the floor tops it to
 three.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/retention.mts scripts/retention.test.ts
@@ -182,7 +219,7 @@ git commit -m "Keep one backup a year instead of dropping the old ones"
 - Modify: `scripts/retention.mts` (add `folder`, rewrite `parseBackups`)
 - Test: `scripts/retention.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `scripts/retention.test.ts`, replace the `it('ignores anything this script did not write', ...)` block with:
 
@@ -241,12 +278,12 @@ function old(days: number, hour = 12): Backup {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npx vitest run scripts/retention.test.ts`
 Expected: FAIL — `folder` is not exported, so the file does not even compile.
 
-- [ ] **Step 3: Add `folder` and rewrite `parseBackups`**
+- [x] **Step 3: Add `folder` and rewrite `parseBackups`**
 
 In `scripts/retention.mts`, add after `unstamp`:
 
@@ -283,12 +320,12 @@ export function parseBackups(paths: string[]): Backup[] {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npx vitest run scripts/retention.test.ts`
 Expected: PASS, all tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/retention.mts scripts/retention.test.ts
@@ -306,7 +343,7 @@ This one has no test: it is a change to which environment variable a process
 reads at startup, and a test would only assert that the code says what it says.
 It is verified on the box in Task 8.
 
-- [ ] **Step 1: Split the identity of the project from the address used to read it**
+- [x] **Step 1: Split the identity of the project from the address used to read it**
 
 In `scripts/backup.mts`, replace:
 
@@ -341,7 +378,7 @@ if (!PUBLIC_URL || !SERVICE_KEY) {
 }
 ```
 
-- [ ] **Step 2: Point the client at `READ_URL`**
+- [x] **Step 2: Point the client at `READ_URL`**
 
 Replace:
 
@@ -355,7 +392,7 @@ with:
 const supabase = createClient(READ_URL, SERVICE_KEY, {
 ```
 
-- [ ] **Step 3: Log the address actually being read**
+- [x] **Step 3: Log the address actually being read**
 
 Replace ``console.log(`Reading ${SUPABASE_URL}`);`` with:
 
@@ -363,7 +400,7 @@ Replace ``console.log(`Reading ${SUPABASE_URL}`);`` with:
   console.log(`Reading ${READ_URL}`);
 ```
 
-- [ ] **Step 4: Keep the recorded project stable**
+- [x] **Step 4: Keep the recorded project stable**
 
 In the `payload` object, replace `project: SUPABASE_URL,` with:
 
@@ -374,12 +411,12 @@ In the `payload` object, replace `project: SUPABASE_URL,` with:
       project: PUBLIC_URL,
 ```
 
-- [ ] **Step 5: Verify it still typechecks**
+- [x] **Step 5: Verify it still typechecks**
 
 Run: `npx tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/backup.mts
@@ -393,7 +430,7 @@ git commit -m "Read the backup over the internal URL when there is one"
 **Files:**
 - Modify: `scripts/backup.mts` (imports, `DIR`, `listBackups`, the write, the prune)
 
-- [ ] **Step 1: Update the imports**
+- [x] **Step 1: Update the imports**
 
 In `scripts/backup.mts`, replace:
 
@@ -415,7 +452,7 @@ import { fileURLToPath } from 'node:url';
 import { folder, parseBackups, stamp, survivors, type Backup } from './retention.mts';
 ```
 
-- [ ] **Step 2: Default to the folder the Desktop pull uses**
+- [x] **Step 2: Default to the folder the Desktop pull uses**
 
 Replace:
 
@@ -433,7 +470,7 @@ const DIR =
   process.env.TEMPO_BACKUP_DIR ?? join(homedir(), 'Desktop', 'stuff', 'tempo-backups');
 ```
 
-- [ ] **Step 3: List through the subfolders**
+- [x] **Step 3: List through the subfolders**
 
 Replace:
 
@@ -456,7 +493,7 @@ async function listBackups(): Promise<Backup[]> {
 }
 ```
 
-- [ ] **Step 4: Write into this month's folder**
+- [x] **Step 4: Write into this month's folder**
 
 Replace:
 
@@ -471,7 +508,7 @@ with:
     await mkdir(join(DIR, folder(now)), { recursive: true });
 ```
 
-- [ ] **Step 5: Sweep up month folders the prune has emptied**
+- [x] **Step 5: Sweep up month folders the prune has emptied**
 
 Replace:
 
@@ -495,7 +532,7 @@ with:
   }
 ```
 
-- [ ] **Step 6: Verify end to end against the real project**
+- [x] **Step 6: Verify end to end against the real project**
 
 Run from the repo root, with a `.env.local` that points at Supabase:
 
@@ -522,7 +559,7 @@ Expected: `Unchanged since 2026-09/tempo-….json — no new file written.` and
 still exactly one file. This proves the hash check survived the folder change —
 if `listBackups` were returning nothing, this run would write a second file.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add scripts/backup.mts
@@ -536,7 +573,7 @@ git commit -m "Write and prune backups inside their monthly folders"
 **Files:**
 - Modify: `scripts/backup.mts` (the `run` body, around the existing `unchanged` check)
 
-- [ ] **Step 1: Read the previous backup once, for both checks**
+- [x] **Step 1: Read the previous backup once, for both checks**
 
 In `scripts/backup.mts`, replace:
 
@@ -574,7 +611,7 @@ with:
   const unchanged = previous?.contentHash === hash;
 ```
 
-- [ ] **Step 2: Verify the guard trips**
+- [x] **Step 2: Verify the guard trips**
 
 Take a good backup first, then run again with a key that reads nothing — a
 token re-signed as `anon`, which PostgREST accepts and RLS then empties:
@@ -604,7 +641,7 @@ find /tmp/tempo-guard-check -type f | wc -l
 
 Expected: `1` — the good backup is still there, un-pruned.
 
-- [ ] **Step 3: Verify the ordinary path still works**
+- [x] **Step 3: Verify the ordinary path still works**
 
 ```bash
 TEMPO_BACKUP_DIR=/tmp/tempo-guard-check npm run backup
@@ -613,7 +650,7 @@ TEMPO_BACKUP_DIR=/tmp/tempo-guard-check npm run backup
 Expected: `Unchanged since …` — the real key reads rows again and the guard
 stays out of the way.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add scripts/backup.mts
@@ -632,7 +669,7 @@ Split from the runner for the reason `retention.mts` was split from
 `backup.mts`: the interesting part has no network, no filesystem and no clock,
 and that is what makes it testable.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `scripts/sync.test.ts`:
 
@@ -691,12 +728,12 @@ describe('isStale', () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npx vitest run scripts/sync.test.ts`
 Expected: FAIL — cannot resolve `./sync.mts`.
 
-- [ ] **Step 3: Write `scripts/sync.mts`**
+- [x] **Step 3: Write `scripts/sync.mts`**
 
 ```ts
 /**
@@ -742,12 +779,12 @@ export function isStale(remote: string[], now: Date, days = 2): boolean {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npx vitest run scripts/sync.test.ts`
 Expected: PASS, all eight tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/sync.mts scripts/sync.test.ts
@@ -762,7 +799,7 @@ git commit -m "Decide what the desktop still needs from the box"
 - Create: `scripts/pull-backups.mts`
 - Modify: `package.json` (the `scripts` block)
 
-- [ ] **Step 1: Write `scripts/pull-backups.mts`**
+- [x] **Step 1: Write `scripts/pull-backups.mts`**
 
 ```ts
 /**
@@ -874,7 +911,7 @@ run().catch((err) => {
 });
 ```
 
-- [ ] **Step 2: Add the npm script**
+- [x] **Step 2: Add the npm script**
 
 In `package.json`, replace:
 
@@ -889,7 +926,7 @@ with:
     "pull-backups": "node scripts/pull-backups.mts"
 ```
 
-- [ ] **Step 3: Verify against the real box**
+- [x] **Step 3: Verify against the real box**
 
 ```bash
 npm run pull-backups
@@ -908,12 +945,12 @@ ls ~/Desktop/stuff/tempo-backups
 Expected: `BACKUPS-MAY-HAVE-STOPPED.txt`. This is the canary proving itself
 before there is anything to lose — it deletes itself in Task 10.
 
-- [ ] **Step 4: Verify the whole suite and the types**
+- [x] **Step 4: Verify the whole suite and the types**
 
 Run: `npm test && npx tsc --noEmit`
 Expected: all tests pass, no type errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/pull-backups.mts package.json
