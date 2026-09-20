@@ -31,14 +31,24 @@ import { parseBackups, stamp, survivors, type Backup } from './retention.mts';
 const here = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: resolve(here, '../.env.local') });
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const PUBLIC_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-if (!SUPABASE_URL || !SERVICE_KEY) {
+if (!PUBLIC_URL || !SERVICE_KEY) {
   console.error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local.');
-  console.error('The service role key is in Dashboard -> Project Settings -> API.');
+  console.error('The service role key is in Studio -> Project Settings -> API.');
   process.exit(1);
 }
+
+// Read over the internal URL when there is one, exactly as `server.ts` and
+// `proxy.ts` do. Run on the box without this, the backup leaves the machine,
+// goes out to DNS and Cloudflare, and comes back to localhost:8000 — so a
+// night when Cloudflare is unhappy is a night with no backup, for no reason.
+// A backup should not depend on more of the world than the thing it protects.
+//
+// Below the guard above, so it inherits the narrowing that makes PUBLIC_URL a
+// string rather than a string that might not be there.
+const READ_URL = process.env.SUPABASE_INTERNAL_URL || PUBLIC_URL;
 
 const DIR = process.env.TEMPO_BACKUP_DIR ?? join(homedir(), 'Desktop', 'tempo-backups');
 
@@ -60,7 +70,7 @@ const TABLES = ['categories', 'events', 'occurrence_overrides', 'event_versions'
 /** PostgREST's default ceiling per request. Exceeded by `event_versions` first. */
 const PAGE = 1000;
 
-const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
+const supabase = createClient(READ_URL, SERVICE_KEY, {
   auth: { persistSession: false },
 });
 
@@ -92,7 +102,7 @@ async function run() {
   const now = new Date();
   await mkdir(DIR, { recursive: true });
 
-  console.log(`Reading ${SUPABASE_URL}`);
+  console.log(`Reading ${READ_URL}`);
 
   const tables: Record<string, Record<string, unknown>[]> = {};
   for (const t of TABLES) {
@@ -119,7 +129,10 @@ async function run() {
     const name = `tempo-${stamp(now)}.json`;
     const payload = {
       takenAt: now.toISOString(),
-      project: SUPABASE_URL,
+      // The public URL even when read over localhost: this field's job is to
+      // say which project the data came from, and `http://localhost:8000`
+      // identifies nothing once the file is sitting on another machine.
+      project: PUBLIC_URL,
       contentHash: hash,
       tables,
     };
