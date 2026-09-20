@@ -50,11 +50,19 @@ if (!PUBLIC_URL || !SERVICE_KEY) {
 // string rather than a string that might not be there.
 const READ_URL = process.env.SUPABASE_INTERNAL_URL || PUBLIC_URL;
 
-// The same place `pull-backups.mts` writes, so a backup taken by hand from
-// Windows lands in the archive rather than beside it. The Oracle timer sets
-// this explicitly; the box has no Desktop.
+// Deliberately NOT the folder `pull-backups.mts` writes into.
+//
+// This script prunes after it writes, and the desktop archive's whole promise
+// is that nothing deletes from it — it is a superset of the box, holding copies
+// the box has already thinned away. Pointing this default at that folder would
+// mean one hand-run of `npm run backup` quietly collapsing the archive down to
+// the retention ladder, destroying exactly the history it exists to keep.
+//
+// So a hand-run backup lands beside the archive instead of in it. The Oracle
+// timer sets this explicitly; the box has no Desktop.
 const DIR =
-  process.env.TEMPO_BACKUP_DIR ?? join(homedir(), 'Desktop', 'stuff', 'tempo-backups');
+  process.env.TEMPO_BACKUP_DIR ??
+  join(homedir(), 'Desktop', 'stuff', 'tempo-backups-manual');
 
 /**
  * What a restore actually needs.

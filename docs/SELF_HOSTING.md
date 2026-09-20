@@ -137,7 +137,8 @@ knows about the other; they meet in a directory.
 | Timer | `tempo-backup.timer`, 03:00 `America/Toronto`, `Persistent=true` |
 | Log | `~/tempo-backup.log` |
 | Units | copied into the repo at `deploy/`, if one ever needs rebuilding |
-| On the desktop | `C:\Users\bruce\Desktop\stuff\tempo-backups\YYYY-MM\` |
+| On the desktop | `C:\Users\bruce\Desktop\stuff\tempo-backups\YYYY-MM\` — the archive, never pruned |
+| Hand-run backups | `…\stuff\tempo-backups-manual\` — a *different* folder, and deliberately so |
 | Pull | Task Scheduler, "Tempo backup pull", 03:30 daily, catches up after the PC has been off |
 | Key | the desktop reaches the box via `~/.ssh/config` (`Host 192.18.158.188` → `C:\Keys\new-key`) |
 
@@ -146,6 +147,13 @@ months the newest of each day; under two years the newest of each month; beyond
 that the newest of each year, kept for good. The desktop never deletes a
 backup, so its archive is always a superset of the server's — which is also why
 the box stays bounded while the desktop grows slowly.
+
+**`npm run backup` writes to `tempo-backups-manual`, not the archive,** and that
+separation is load-bearing rather than tidiness. The backup script prunes after
+it writes; the archive's whole promise is that nothing deletes from it. If the
+default pointed at the archive, one hand-run would quietly collapse years of
+kept history down to the retention ladder. Pass `TEMPO_BACKUP_DIR` to override,
+but never point it at the archive.
 
 **The timezone is pinned on the timer, not the box.** The host stays `Etc/UTC`
 because `pg_cron` drives the reminder dispatcher off the system clock. 03:00
@@ -204,7 +212,6 @@ move depends on what went wrong.
   from the old Vercel project into `.env.local` and rebuild.
 - **`reminders_backup_20260917`** existed in the hosted database and was not
   migrated. It was a one-off backup taken during an earlier migration.
-- **The local `.env.local`** in the repo still points at the old hosted
-  `*.supabase.co` project and has an empty `SUPABASE_SERVICE_ROLE_KEY`, so
-  `npm run backup` run from Windows backs up nothing useful. The box's own
-  `.env.local` is correct, and the timer there is what actually takes backups.
+- **`VERCEL_OIDC_TOKEN` and the empty `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`**
+  are left over in the local `.env.local` from the Vercel deployment. Harmless,
+  but nothing reads them here any more.
