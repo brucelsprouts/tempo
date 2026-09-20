@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "backup": "node scripts/backup.mts"
+    "backup": "node scripts/backup.mts",
+    "pull-backups": "node scripts/pull-backups.mts"
   },
   "dependencies": {
     "@date-fns/tz": "^1.5.0",
