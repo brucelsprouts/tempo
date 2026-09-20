@@ -1,0 +1,14 @@
+[Unit]
+Description=Tempo — nightly calendar backup
+# The stack has to be up for localhost:8000 to answer. Not a hard dependency:
+# if Docker is slow after a reboot, Persistent= will have the timer try again.
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/tempo
+Environment=TEMPO_BACKUP_DIR=/home/ubuntu/tempo-backups
+ExecStart=/usr/bin/node scripts/backup.mts
+StandardOutput=append:/home/ubuntu/tempo-backup.log
+StandardError=append:/home/ubuntu/tempo-backup.log

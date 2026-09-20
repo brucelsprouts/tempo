@@ -1,0 +1,18 @@
+[Unit]
+Description=Tempo — nightly calendar backup
+
+[Timer]
+# 03:00 local, and the zone is pinned on the job rather than on the box:
+# pg_cron drives the reminder dispatcher off the system clock every minute, and
+# that is not a thing to perturb for a backup.
+#
+# 03:00 Eastern is 07:00 or 08:00 UTC — the same calendar date, with about
+# seven hours of clearance either side, so the UTC buckets retention groups by
+# always agree with the local day. 23:59 would not: it is 03:59 UTC tomorrow,
+# which files every backup under the following day and puts the last one in
+# September into 2026-10/.
+OnCalendar=*-*-* 03:00:00 America/Toronto
+Persistent=true
+
+[Install]
+WantedBy=timers.target
