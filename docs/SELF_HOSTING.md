@@ -40,6 +40,22 @@ This is the thing most likely to confuse someone later.
 A JWT is verified by signature, not by hostname, so a token minted for the
 public origin is equally valid arriving on localhost.
 
+**The trap that comes with this**, and the one to suspect first if signing in
+ever breaks: `@supabase/ssr` derives the session cookie's *name* from whatever
+URL you hand it (`sb-<first label of the hostname>-auth-token`). Two different
+URLs therefore mean two different cookie names, the server finds nothing, and a
+valid session reads as no session.
+
+It fails misleadingly. The login returns 200 and sets the cookie, then
+middleware bounces the next navigation back to `/login`, and the form sits on
+`VERIFYING…` forever — it only clears that on *failure*, so a login that
+succeeds into a redirect loop looks identical to one that hung. The logs show a
+successful login and nothing else.
+
+`lib/supabase/cookie.ts` pins the name from the public URL and every client
+passes it explicitly. **Any new Supabase client must pass
+`cookieOptions: { name: AUTH_COOKIE_NAME }` too.**
+
 ## How traffic gets in
 
 A Cloudflare Tunnel, **not** open ports. `cloudflared` makes an outbound
