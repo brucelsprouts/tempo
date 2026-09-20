@@ -40,6 +40,25 @@ This is the thing most likely to confuse someone later.
 A JWT is verified by signature, not by hostname, so a token minted for the
 public origin is equally valid arriving on localhost.
 
+## How traffic gets in
+
+A Cloudflare Tunnel, **not** open ports. `cloudflared` makes an outbound
+connection to Cloudflare, so nothing is exposed inbound, no OCI Security List
+rule is needed, and Cloudflare terminates TLS — which matters because service
+workers (and therefore push notifications) only run on HTTPS.
+
+| | |
+|---|---|
+| Tunnel | `tempo`, id `8b1d3876-6c93-4663-adfa-e4dc31f9932b` |
+| Config | `/etc/cloudflared/config.yml` |
+| Service | `systemctl status cloudflared` |
+| `tempo.brucelsprouts.com` | → `localhost:3000` (the app) |
+| `supabase.brucelsprouts.com` | → `localhost:8000` (the API gateway) |
+
+Both are CNAMEs to `<tunnel-id>.cfargotunnel.com`, created by
+`cloudflared tunnel route dns`. To roll back to Vercel, point
+`tempo.brucelsprouts.com` at it again in the Cloudflare dashboard.
+
 ## Reminders
 
 `pg_cron` inside the database container calls the dispatcher every minute:
