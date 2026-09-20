@@ -22,11 +22,11 @@
 import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseBackups, stamp, survivors, type Backup } from './retention.mts';
+import { folder, parseBackups, stamp, survivors, type Backup } from './retention.mts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: resolve(here, '../.env.local') });
@@ -50,7 +50,11 @@ if (!PUBLIC_URL || !SERVICE_KEY) {
 // string rather than a string that might not be there.
 const READ_URL = process.env.SUPABASE_INTERNAL_URL || PUBLIC_URL;
 
-const DIR = process.env.TEMPO_BACKUP_DIR ?? join(homedir(), 'Desktop', 'tempo-backups');
+// The same place `pull-backups.mts` writes, so a backup taken by hand from
+// Windows lands in the archive rather than beside it. The Oracle timer sets
+// this explicitly; the box has no Desktop.
+const DIR =
+  process.env.TEMPO_BACKUP_DIR ?? join(homedir(), 'Desktop', 'stuff', 'tempo-backups');
 
 /**
  * What a restore actually needs.
@@ -95,7 +99,10 @@ async function fetchAll(table: string): Promise<Record<string, unknown>[]> {
 
 /** Newest first. Anything this script did not write is not listed, so not pruned. */
 async function listBackups(): Promise<Backup[]> {
-  return parseBackups(await readdir(DIR));
+  const names = await readdir(DIR, { recursive: true });
+  // `parseBackups` speaks in forward slashes on every platform, because the
+  // same paths are compared against a Linux box's listing by the pull script.
+  return parseBackups(names.map((n) => n.split(sep).join('/')));
 }
 
 async function run() {
@@ -126,7 +133,8 @@ async function run() {
   if (unchanged) {
     console.log(`\nUnchanged since ${existing[0].name} — no new file written.`);
   } else {
-    const name = `tempo-${stamp(now)}.json`;
+    const name = `${folder(now)}/tempo-${stamp(now)}.json`;
+    await mkdir(join(DIR, folder(now)), { recursive: true });
     const payload = {
       takenAt: now.toISOString(),
       // The public URL even when read over localhost: this field's job is to
@@ -147,6 +155,14 @@ async function run() {
   const keep = survivors(all, now);
   const dropped = all.filter((f) => !keep.has(f.name));
   for (const f of dropped) await unlink(join(DIR, f.name));
+
+  // A month whose last backup just aged out leaves an empty folder behind.
+  // `rmdir` refuses a folder with anything in it, so this can only remove the
+  // ones the prune emptied — it will never take a folder holding a file this
+  // script does not recognise.
+  for (const month of new Set(dropped.map((f) => f.name.split('/')[0]))) {
+    await rmdir(join(DIR, month)).catch(() => {});
+  }
 
   const kept = all.length - dropped.length;
   console.log(
