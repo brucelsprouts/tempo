@@ -126,16 +126,81 @@ cd ~/tempo && git pull && npm run build && pm2 restart tempo   # deploy
 cd ~/supabase-tempo && sudo docker compose ps                  # stack health
 ```
 
+## Backups
+
+A systemd timer takes one nightly and the desktop copies it down. Neither half
+knows about the other; they meet in a directory.
+
+| | |
+|---|---|
+| On the box | `~/tempo-backups/YYYY-MM/tempo-<ISO>Z.json` — ~650 KB each |
+| Timer | `tempo-backup.timer`, 03:00 `America/Toronto`, `Persistent=true` |
+| Log | `~/tempo-backup.log` |
+| Units | copied into the repo at `deploy/`, if one ever needs rebuilding |
+| On the desktop | `C:\Users\bruce\Desktop\stuff\tempo-backups\YYYY-MM\` |
+| Pull | Task Scheduler, "Tempo backup pull", 03:30 daily, catches up after the PC has been off |
+| Key | the desktop reaches the box via `~/.ssh/config` (`Host 192.18.158.188` → `C:\Keys\new-key`) |
+
+**Retention runs on the box only.** Under a week keeps every run; under three
+months the newest of each day; under two years the newest of each month; beyond
+that the newest of each year, kept for good. The desktop never deletes a
+backup, so its archive is always a superset of the server's — which is also why
+the box stays bounded while the desktop grows slowly.
+
+**The timezone is pinned on the timer, not the box.** The host stays `Etc/UTC`
+because `pg_cron` drives the reminder dispatcher off the system clock. 03:00
+Eastern resolves to 07:00 UTC — the same calendar day, which matters because
+retention buckets by UTC. A late-evening slot would not: 23:59 local is 03:59
+UTC *tomorrow*, filing every backup under the following day and putting the last
+one in September into `2026-10/`.
+
+**The backup reads `http://localhost:8000`**, not the public URL, so it does not
+depend on DNS or Cloudflare being happy. It records the *public* URL in the
+file's `project` field, since `localhost:8000` identifies nothing once the file
+is on another machine.
+
+**If `BACKUPS-MAY-HAVE-STOPPED.txt` appears** in the desktop folder, the newest
+backup on the box is over two days old:
+
+```bash
+systemctl status tempo-backup.timer
+journalctl -u tempo-backup.service -n 50
+```
+
+The file deletes itself once backups are arriving again.
+
+**To stop the daily console window** the pull currently flashes, run this in an
+**elevated** PowerShell once:
+
+```powershell
+$t = Get-ScheduledTask -TaskName "Tempo backup pull"
+$p = New-ScheduledTaskPrincipal -UserId "BRUCELSPROUTS\bruce" -LogonType S4U -RunLevel Limited
+Set-ScheduledTask -TaskName "Tempo backup pull" -Principal $p
+```
+
+S4U needs the "log on as a batch job" right, which is why it cannot be set
+without elevation.
+
+**To restore**, see the comment at the bottom of `scripts/backup.mts`. It is
+deliberately not automated: a restore overwrites a live calendar and the right
+move depends on what went wrong.
+
 ## Known rough edges
 
-- **Node 20.** `@supabase/supabase-js` warns it will drop support. Upgrade to
-  22 when convenient; the warning is not yet an error.
+- ~~**Node 20.**~~ Upgraded to **22.23.2** on 2026-09-20 (NodeSource), which
+  both silenced the `@supabase/supabase-js` warning and was a hard requirement
+  for the backup timer: Node only strips types from `.mts` natively from 22.6,
+  so on 20 `npm run backup` died with `ERR_UNKNOWN_FILE_EXTENSION`.
 - **VAPID keys were regenerated** for this deployment, so push subscriptions
   made against the old Vercel deployment are dead. Toggle notifications off and
   on once per device. To avoid that instead, copy the three `VAPID_*` values
   from the old Vercel project into `.env.local` and rebuild.
 - **`reminders_backup_20260917`** existed in the hosted database and was not
   migrated. It was a one-off backup taken during an earlier migration.
-- Nothing backs this up yet. That was deferred deliberately; `npm run backup`
-  works against it once `SUPABASE_SERVICE_ROLE_KEY` and
-  `NEXT_PUBLIC_SUPABASE_URL` in a local `.env.local` point here.
+- **The desktop pull's scheduled task runs `Interactive`**, so it flashes a
+  console window once a day. The fix needs one elevated PowerShell command to
+  re-register it `S4U`; see "Backups" above. Harmless, just visible.
+- **The local `.env.local`** in the repo still points at the old hosted
+  `*.supabase.co` project and has an empty `SUPABASE_SERVICE_ROLE_KEY`, so
+  `npm run backup` run from Windows backs up nothing useful. The box's own
+  `.env.local` is correct, and the timer there is what actually takes backups.

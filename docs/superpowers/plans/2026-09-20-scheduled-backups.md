@@ -12,40 +12,52 @@
 
 ---
 
-## Status — 2026-09-20
+## Status — 2026-09-20: COMPLETE
 
-**Tasks 1–7 are done and committed** (`f89a97c`…`a132943`). 498 tests pass,
-typecheck and lint clean. That is the whole codebase half.
+All tasks done. The first real backup is on the box and on the desktop.
 
-**Tasks 0 and 8–11 are blocked on two things the user has to supply:**
+**Task 0 resolved.** The box was on **Node 20.20.2**, and the blocker was real —
+`node scripts/retention.mts` died with `ERR_UNKNOWN_FILE_EXTENSION`. Upgraded to
+**22.23.2** via NodeSource with the user's approval. The running app was never
+restarted and never dropped a request: a live process keeps the binary it
+already loaded, so replacing `/usr/bin/node` under it is inert until the next
+restart. systemd is 255, so the `OnCalendar` timezone suffix works; the box's
+own timezone is `Etc/UTC`, as the design assumed.
 
-1. **SSH from the Windows machine to the box does not authenticate.**
-   `ubuntu@192.18.158.188: Permission denied (publickey)` — the box is in
-   `known_hosts`, so something has reached it before, but not this machine's
-   `~/.ssh/id_ed25519`. Until its public key is in the box's
-   `authorized_keys`, Tasks 8, 9 and 10 cannot run, and the box's Node version
-   (Task 0, the hard blocker) cannot even be read.
-2. **`SUPABASE_SERVICE_ROLE_KEY` is empty in the local `.env.local`**, and
-   `NEXT_PUBLIC_SUPABASE_URL` there still points at the old hosted
-   `*.supabase.co` project rather than `supabase.brucelsprouts.com`. So the
-   end-to-end runs in Task 4 Step 6 and Task 5 Step 2 could not be executed
-   locally.
+**Verified end to end, not inferred:**
 
-**What was verified instead**, since those runs were unavailable:
+- Backup on the box logs `Reading http://localhost:8000` — the internal-URL
+  change working where it matters — and wrote 658 KB covering 9 categories,
+  109 events, 2 overrides, 392 versions.
+- The file records `project: https://supabase.brucelsprouts.com` (the public
+  URL, not localhost) and parses back into a real calendar.
+- A second run printed `Unchanged since 2026-09/tempo-…` — the hash dedup
+  surviving the monthly-folder change, on Linux as well as Windows.
+- `systemctl start tempo-backup.service` returned `Result=success`, exit 0.
+- `systemd-analyze calendar` resolves the schedule to **07:00 UTC = 03:00 EDT**,
+  recurring daily — the same calendar date either way, which is the whole
+  reason 03:00 was chosen over 23:59.
+- The desktop pull fetched the file, byte-for-byte the same size, into
+  `2026-09/`; a second run was a no-op; the canary file stayed absent.
+- The registered scheduled task ran with `LastTaskResult: 0` and re-fetched a
+  deliberately deleted local copy.
 
-- `listBackups`'s recursive `readdir` plus separator normalisation, against a
-  fabricated folder on Windows: 9 entries in, exactly the 2 correctly-filed
-  backups recognised; a backup misfiled under the wrong month, `README.md`,
-  `notes.txt` and the canary file all correctly invisible to the prune.
-- The pull runner's whole local pipeline: oldest-first ordering, non-backups
-  excluded from the fetch plan, month folders created at the right paths, a
-  second run a no-op, and the canary file appearing when the box goes quiet and
-  deleting itself on recovery.
-- The pull's failure path against the real box: fails in 1.6s, exits non-zero,
-  names the command — confirming `ConnectTimeout` and `BatchMode` prevent a hang.
+**Two things deliberately left as they are:**
 
-**Still unverified at runtime:** the empty-backup guard in Task 5 (typechecked
-only), and the `ssh`/`scp` invocations themselves.
+1. **The scheduled task runs `Interactive`**, so it flashes a console window
+   once a day. `Register-ScheduledTask` refused `S4U` with `Access is denied` —
+   that logon type needs the "log on as a batch job" right, hence elevation.
+   The one elevated command that fixes it is in `SELF_HOSTING.md`. Note that
+   `-Hidden` does **not** do this: it hides the task from the Task Scheduler
+   library listing, not the window.
+2. **The empty-backup guard is typechecked but never tripped at runtime.**
+   Provoking it means feeding the script a key that authenticates and reads
+   zero rows, which is not a state worth manufacturing against a live database.
+
+**Also still true:** the repo's local `.env.local` points at the old hosted
+`*.supabase.co` project with an empty service-role key, so `npm run backup` run
+from Windows backs up nothing useful. The box's env is correct and the timer
+there is what actually takes backups.
 
 ---
 
@@ -60,7 +72,7 @@ scripts/backup.mts` — the command `npm run backup` runs — **cannot work on N
 Nothing else in this plan touches the box's runtime, so if the Node version
 turns out to be fine, this task is three commands and you move on.
 
-- [ ] **Step 1: Read the actual versions on the box**
+- [x] **Step 1: Read the actual versions on the box**
 
 ```bash
 ssh ubuntu@192.18.158.188 'node --version; which node; systemd-analyze --version | head -1'
@@ -70,7 +82,7 @@ Expected: a Node version and a systemd version. Record both — the node path is
 needed verbatim in Task 9's `ExecStart`, and systemd must be **≥ 252** for the
 timezone suffix in `OnCalendar` (24.04 ships 255).
 
-- [ ] **Step 2: Confirm the box has the service role key**
+- [x] **Step 2: Confirm the box has the service role key**
 
 ```bash
 ssh ubuntu@192.18.158.188 'grep -c SUPABASE_SERVICE_ROLE_KEY ~/tempo/.env.local; grep -c SUPABASE_INTERNAL_URL ~/tempo/.env.local'
@@ -80,7 +92,7 @@ Expected: `1` and `1`. If `SUPABASE_SERVICE_ROLE_KEY` is missing, it comes from
 Studio → Project Settings → API and must be added to `~/tempo/.env.local`
 (which is already chmod 600).
 
-- [ ] **Step 3: Branch on the Node version**
+- [x] **Step 3: Branch on the Node version**
 
 **If Node ≥ 22.18:** nothing to do. Proceed to Task 1.
 
@@ -963,7 +975,7 @@ git commit -m "Pull the box's backups down to the desktop"
 
 **Files:** none — this deploys what the previous tasks built.
 
-- [ ] **Step 1: Push and pull**
+- [x] **Step 1: Push and pull**
 
 ```bash
 git push origin main
@@ -975,7 +987,7 @@ Expected: the `scripts/` files and `package.json` updated.
 Note: no `npm run build` and no `pm2 restart` — nothing in this plan touches the
 running app. The scripts are run directly by node, outside Next.
 
-- [ ] **Step 2: Take the first backup by hand, before automating it**
+- [x] **Step 2: Take the first backup by hand, before automating it**
 
 ```bash
 ssh ubuntu@192.18.158.188 'cd ~/tempo && TEMPO_BACKUP_DIR=$HOME/tempo-backups npm run backup'
@@ -989,7 +1001,7 @@ If it instead prints `Reading https://supabase.brucelsprouts.com`, then
 `SUPABASE_INTERNAL_URL` is not set in `~/tempo/.env.local`; add
 `SUPABASE_INTERNAL_URL=http://localhost:8000` and re-run.
 
-- [ ] **Step 3: Confirm the file is real**
+- [x] **Step 3: Confirm the file is real**
 
 ```bash
 ssh ubuntu@192.18.158.188 'find ~/tempo-backups -type f; du -sh ~/tempo-backups'
@@ -1009,7 +1021,7 @@ Use the node path recorded in Task 0 Step 1 wherever `/usr/bin/node` appears
 below. If `which node` gave something else, substitute it — systemd has no PATH
 to fall back on.
 
-- [ ] **Step 1: Write the service unit**
+- [x] **Step 1: Write the service unit**
 
 ```bash
 ssh ubuntu@192.18.158.188 'sudo tee /etc/systemd/system/tempo-backup.service > /dev/null' <<'UNIT'
@@ -1034,7 +1046,7 @@ The log lives outside the backup folder on purpose: a `.log` inside it would be
 a file the prune has to be trusted not to touch, and the simplest way to trust
 that is not to put it there.
 
-- [ ] **Step 2: Write the timer unit**
+- [x] **Step 2: Write the timer unit**
 
 ```bash
 ssh ubuntu@192.18.158.188 'sudo tee /etc/systemd/system/tempo-backup.timer > /dev/null' <<'UNIT'
@@ -1059,7 +1071,7 @@ WantedBy=timers.target
 UNIT
 ```
 
-- [ ] **Step 3: Enable it**
+- [x] **Step 3: Enable it**
 
 ```bash
 ssh ubuntu@192.18.158.188 'sudo systemctl daemon-reload && sudo systemctl enable --now tempo-backup.timer'
@@ -1067,7 +1079,7 @@ ssh ubuntu@192.18.158.188 'sudo systemctl daemon-reload && sudo systemctl enable
 
 Expected: a symlink created into `timers.target.wants`.
 
-- [ ] **Step 4: Verify the schedule resolves to the hour you meant**
+- [x] **Step 4: Verify the schedule resolves to the hour you meant**
 
 ```bash
 ssh ubuntu@192.18.158.188 'systemctl list-timers tempo-backup.timer --all'
@@ -1079,7 +1091,7 @@ systemd version does not accept the timezone suffix** — check Task 0 Step 1's
 version, and fall back to `OnCalendar=*-*-* 07:00:00` with a comment in the unit
 recording that it then drifts an hour across DST.
 
-- [ ] **Step 5: Verify the service runs when fired**
+- [x] **Step 5: Verify the service runs when fired**
 
 ```bash
 ssh ubuntu@192.18.158.188 'sudo systemctl start tempo-backup.service && sleep 5 && cat ~/tempo-backup.log'
@@ -1089,7 +1101,7 @@ Expected: `Reading http://localhost:8000`, the row counts, and `Unchanged since
 2026-09/tempo-….json — no new file written.` — unchanged because Task 8 Step 2
 already took today's, which is the hash check doing its job.
 
-- [ ] **Step 6: Commit the units into the repo for the record**
+- [x] **Step 6: Commit the units into the repo for the record**
 
 ```bash
 mkdir -p deploy
@@ -1107,7 +1119,7 @@ git commit -m "Record the units that run the nightly backup"
 
 Run these in **PowerShell**, not the Bash tool.
 
-- [ ] **Step 1: Find the real node path**
+- [x] **Step 1: Find the real node path**
 
 ```powershell
 (Get-Command node).Source
@@ -1116,7 +1128,7 @@ Run these in **PowerShell**, not the Bash tool.
 Expected: something like `C:\Program Files\nodejs\node.exe`. Task Scheduler has
 no PATH of its own, so this goes in verbatim below.
 
-- [ ] **Step 2: Register the task**
+- [x] **Step 2: Register the task**
 
 Substitute the node path from Step 1 for `C:\Program Files\nodejs\node.exe` if
 it differs.
@@ -1150,7 +1162,7 @@ Register-ScheduledTask -TaskName "Tempo backup pull" `
 
 Expected: the task object printed back, `State: Ready`.
 
-- [ ] **Step 3: Run it once by hand and confirm no window appears**
+- [x] **Step 3: Run it once by hand and confirm no window appears**
 
 ```powershell
 Start-ScheduledTask -TaskName "Tempo backup pull"
@@ -1166,7 +1178,7 @@ If `LastTaskResult` is `0x2` the node path in Step 2 is wrong. If the run hangs
 or returns `0x800704DD`, S4U could not reach the SSH key; re-register with
 `-LogonType Interactive` instead and accept the once-a-day window.
 
-- [ ] **Step 4: Confirm the backup actually arrived**
+- [x] **Step 4: Confirm the backup actually arrived**
 
 ```powershell
 Get-ChildItem "C:\Users\bruce\Desktop\stuff\tempo-backups" -Recurse -File
@@ -1177,7 +1189,7 @@ the box, now on the Desktop. And **no `BACKUPS-MAY-HAVE-STOPPED.txt`**: the
 canary written in Task 7 Step 3 deleted itself once a fresh backup appeared,
 which is the round trip working end to end.
 
-- [ ] **Step 5: Prove the file is a readable calendar, not just bytes**
+- [x] **Step 5: Prove the file is a readable calendar, not just bytes**
 
 ```powershell
 $f = (Get-ChildItem "C:\Users\bruce\Desktop\stuff\tempo-backups" -Recurse -Filter *.json | Select-Object -First 1).FullName
@@ -1195,7 +1207,7 @@ backup nobody has ever opened is a guess, not a backup.
 **Files:**
 - Modify: `docs/SELF_HOSTING.md`
 
-- [ ] **Step 1: Remove the stale note**
+- [x] **Step 1: Remove the stale note**
 
 In `docs/SELF_HOSTING.md`, remove this bullet from "Known rough edges":
 
@@ -1207,7 +1219,7 @@ In `docs/SELF_HOSTING.md`, remove this bullet from "Known rough edges":
 
 And if Task 0 upgraded the box's Node, remove the `**Node 20.**` bullet too.
 
-- [ ] **Step 2: Add a section before "Known rough edges"**
+- [x] **Step 2: Add a section before "Known rough edges"**
 
 ```markdown
 ## Backups
@@ -1251,7 +1263,7 @@ deliberately not automated: a restore overwrites a live calendar and the right
 move depends on what went wrong.
 ```
 
-- [ ] **Step 3: Commit and push**
+- [x] **Step 3: Commit and push**
 
 ```bash
 git add docs/SELF_HOSTING.md
