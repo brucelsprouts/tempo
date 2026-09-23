@@ -4,6 +4,12 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { useCalendar, type EditStatus } from '@/lib/store/calendar-store';
 import { getZoomSnapshot, setZoom } from '@/lib/store/day-zoom';
 import {
+  getServerTimetableSnapshot,
+  getTimetableSnapshot,
+  setTimetableVisible,
+  subscribeTimetable,
+} from '@/lib/store/timetable-visibility';
+import {
   getServerViewSnapshot,
   getViewSnapshot,
   setViewPreference,
@@ -20,6 +26,7 @@ import { ListView, type ListHandle } from './ListView';
 import { Settings } from './Settings';
 import { Toast } from './Toast';
 import { zoomIn, zoomOut } from './timeline';
+import { WeekView, type WeekHandle } from './WeekView';
 import { YearView } from './YearView';
 import { Modal } from './ui';
 
@@ -37,6 +44,10 @@ const VIEWS = [
   { value: 'scroll', label: 'SCROLL', key: '1' },
   { value: 'list', label: 'LIST', key: '2' },
   { value: 'year', label: 'YEAR', key: '3' },
+  // Appended rather than slotted in beside LIST, where it belongs by span:
+  // 1/2/3 are already in fingers, and a nav whose labels and numbers disagree
+  // is worse than one ordered by when it was built.
+  { value: 'week', label: 'WEEK', key: '4' },
 ] as const;
 
 /** What a new entry is pre-filled with. A span, because a drag can select one. */
@@ -169,6 +180,11 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   const editStatus = useCalendar((s) => s.editStatus);
 
   const view = useSyncExternalStore(subscribeView, getViewSnapshot, getServerViewSnapshot);
+  const showTimetable = useSyncExternalStore(
+    subscribeTimetable,
+    getTimetableSnapshot,
+    getServerTimetableSnapshot,
+  );
   const today = todayIn(timezone);
 
   const [overlays, setOverlays] = useState<Overlay[]>([]);
@@ -184,6 +200,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
 
   const calendarRef = useRef<CalendarHandle>(null);
   const listRef = useRef<ListHandle>(null);
+  const weekRef = useRef<WeekHandle>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   /** The live entry form, when one is open. See `dismissEntry`. */
   const formRef = useRef<EntryFormHandle>(null);
@@ -262,6 +279,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   function goToday() {
     setFocusedDay(today);
     if (view === 'scroll') calendarRef.current?.jumpToToday();
+    if (view === 'week') weekRef.current?.jumpToToday();
     if (view === 'year') setYear(parts(today).year);
   }
 
@@ -600,6 +618,23 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
       case '3':
         setViewPreference('year');
         break;
+      case '4':
+        setViewPreference('week');
+        break;
+      // Paging the week view. Arrows are already the grid's, for moving a
+      // selection; brackets are free and read as "step".
+      case '[':
+        if (view === 'week') {
+          e.preventDefault();
+          weekRef.current?.step(-1);
+        }
+        break;
+      case ']':
+        if (view === 'week') {
+          e.preventDefault();
+          weekRef.current?.step(1);
+        }
+        break;
       // The filter, from anywhere: the list is where searching happens, so
       // asking for it from another view is asking to go there.
       case '/':
@@ -730,6 +765,29 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
           ))}
         </nav>
 
+        {/* Only where it means something. The week view shows the timetable
+            whatever this says, so there it would be a control that does
+            nothing — worse than one that isn't there. */}
+        {view !== 'week' && (
+          <button
+            onClick={() => setTimetableVisible(!showTimetable)}
+            aria-pressed={showTimetable}
+            title={
+              showTimetable
+                ? 'Timetable entries are shown here. Click to hide them.'
+                : 'Timetable entries are hidden here. They are always in WEEK.'
+            }
+            className={[
+              'tap label hidden shrink-0 border px-2 py-1 transition-colors sm:inline-block',
+              showTimetable
+                ? 'border-hairlit bg-raised text-bright'
+                : 'border-hair text-mute hover:border-hairlit hover:text-dim',
+            ].join(' ')}
+          >
+            TIMETABLE
+          </button>
+        )}
+
         {banner && <span className="label ml-1 hidden lg:inline">{banner}</span>}
 
         {/* The status word, on the phone only and only when it is not the
@@ -777,6 +835,15 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
             searchRef={searchRef}
             onOpen={(occ) => push({ kind: 'entry', mode: 'edit', occurrence: occ })}
             onNew={() => newEntry()}
+          />
+        )}
+
+        {view === 'week' && (
+          <WeekView
+            ref={weekRef}
+            onOpen={(occ) => push({ kind: 'entry', mode: 'edit', occurrence: occ })}
+            onNew={(date, startMinutes) => newEntry({ start: date, startMinutes })}
+            onOpenDay={openDay}
           />
         )}
 
