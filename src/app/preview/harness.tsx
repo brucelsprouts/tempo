@@ -190,10 +190,12 @@ function fixtures(today: CivilDate): TempoEvent[] {
     }),
 
     // A class that repeats, so the form's CHANGE WHICH DATES? question has
-    // something to ask about.
+    // something to ask about — and, being a lecture, so the harness has a
+    // timetable entry to hide.
     timed('l1', 'Lecture', d(0), 10 * 60, 11 * 60 + 30, {
       recurrence: { freq: 'WEEKLY', interval: 1, byWeekday: [2, 4] },
       categoryId: 'c5',
+      timetable: true,
     }),
 
     // Finals, two weeks out, Monday to Friday.

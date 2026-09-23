@@ -192,6 +192,15 @@ lifted out on its own.
 - **Installable, with push reminders.** Add it to your Home Screen and entries
   notify you at their own lead times. Setup is three env vars and one migration —
   see [Reminders](#reminders) below.
+- **A timetable that stays out of the way.** A term of lectures is ten or more
+  entries a week, and in the continuous scroll they bury the assignment due
+  Thursday. Switch **TIMETABLE** on in an entry and it leaves the scroll, list
+  and year views; the **WEEK** view — seven days with hours down the side, dated
+  and pageable with `[` and `]` — shows it along with everything else that week.
+  **TIMETABLE** in the top bar reveals the hidden entries in the other views
+  when the full picture is wanted. It is a flag on the entry, not on the
+  category, so the weekly gym session stays where it is. Run
+  `supabase/migrations/20260922_timetable.sql` alongside deploying this.
 - **Google Calendar sync** is designed but not built. See
   [`docs/GOOGLE_SETUP.md`](docs/GOOGLE_SETUP.md).
 - **[`docs/DESIGN.md`](docs/DESIGN.md)** is the design record: why the system is
