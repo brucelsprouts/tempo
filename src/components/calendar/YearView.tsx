@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useRef } from 'react';
 import { groupOverrides, useCalendar } from '@/lib/store/calendar-store';
+import { useVisibleEvents } from '@/lib/store/use-visible-events';
 import {
   addDays,
   civil,
@@ -39,7 +40,7 @@ interface Props {
 }
 
 export function YearView({ year, onYear, onOpenDay, selectedDay }: Props) {
-  const events = useCalendar((s) => s.events);
+  const events = useVisibleEvents();
   const overrides = useCalendar((s) => s.overrides);
   const categories = useCalendar((s) => s.categories);
   const timezone = useCalendar((s) => s.timezone);

@@ -9,6 +9,7 @@ import {
   type Ref,
 } from 'react';
 import { groupOverrides, useCalendar } from '@/lib/store/calendar-store';
+import { useVisibleEvents } from '@/lib/store/use-visible-events';
 import { getClipboard, setClipboard } from '@/lib/store/clipboard';
 import { addDays, parts, todayIn, type CivilDate } from '@/lib/tempo/civil';
 import { expandAll, expandEvent, eventSpan } from '@/lib/tempo/recurrence';
@@ -123,7 +124,7 @@ interface Props {
 }
 
 export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
-  const events = useCalendar((s) => s.events);
+  const events = useVisibleEvents();
   const overrides = useCalendar((s) => s.overrides);
   const categories = useCalendar((s) => s.categories);
   const timezone = useCalendar((s) => s.timezone);

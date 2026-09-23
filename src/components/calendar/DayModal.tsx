@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { groupOverrides, useCalendar } from '@/lib/store/calendar-store';
+import { useVisibleEvents } from '@/lib/store/use-visible-events';
 import {
   getServerZoomSnapshot,
   getZoomSnapshot,
@@ -56,7 +57,7 @@ interface Props {
 }
 
 export function DayModal({ date, onDate, onOpen, onNew, onClose }: Props) {
-  const events = useCalendar((s) => s.events);
+  const events = useVisibleEvents();
   const overrides = useCalendar((s) => s.overrides);
   const timezone = useCalendar((s) => s.timezone);
 
