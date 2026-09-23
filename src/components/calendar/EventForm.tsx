@@ -28,7 +28,7 @@ import { LAST_MINUTE, normalizeWhen, ontoSeries, type WhenValue } from './when';
 import { clampInterval, MAX_INTERVAL, periodWord, repeatRule, type RepeatFreq } from './repeat';
 import { canSplitAt, oneDatePatch } from './scope';
 import { ScopePrompt } from './ScopePrompt';
-import { Button, Field, inputClass, numberClass, SegmentedControl } from './ui';
+import { Button, Field, inputClass, numberClass, SegmentedControl, Toggle } from './ui';
 
 /**
  * The one form in the app.
@@ -227,6 +227,7 @@ export function EventForm({
   const [anchorDate, setAnchorDate] = useState<CivilDate>(
     existing?.anchorDate ?? occurrence?.date ?? from,
   );
+  const [timetable, setTimetable] = useState(existing?.timetable ?? false);
   const [notes, setNotes] = useState(existing?.notes ?? '');
 
   // A birthday is the general machinery with the dials pre-set, not a special
@@ -444,6 +445,7 @@ export function EventForm({
       reminders,
       anchorDate: effectiveTemplate ? effectiveAnchor : null,
       displayTemplate: effectiveTemplate,
+      timetable,
       // `notify` is deliberately absent. It is the Google mirror flag, and the
       // mirror does not exist — no route reads it. Leaving it out of the draft
       // means an edit preserves whatever a row already holds.
@@ -648,8 +650,20 @@ export function EventForm({
           </select>
         </Field>
 
+        <Field label="[06] TIMETABLE">
+          <div className="flex items-center gap-2.5 py-1">
+            <Toggle checked={timetable} onChange={setTimetable} label="Part of the timetable" />
+            {/* The consequence rather than the category: "school" is already the
+                category field above, and what this control actually does is
+                move the entry off the calendar. */}
+            <span className="text-[10px] leading-tight tracking-[0.06em] text-mute">
+              {timetable ? 'HIDDEN FROM THE CALENDAR · SHOWN IN WEEK' : 'SHOWN EVERYWHERE'}
+            </span>
+          </div>
+        </Field>
+
         <div className="col-span-full">
-          <Field label="[06] REMIND ME" group>
+          <Field label="[07] REMIND ME" group>
             <ReminderField
               ctx={ctx}
               rows={rows}
@@ -672,7 +686,7 @@ export function EventForm({
         </div>
 
         <div className="col-span-full">
-          <Field label="[07] NOTES">
+          <Field label="[08] NOTES">
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
