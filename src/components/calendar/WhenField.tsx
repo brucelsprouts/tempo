@@ -39,8 +39,13 @@ export function WhenField({ value, onChange, timezone }: Props): React.JSX.Eleme
   const [open, setOpen] = useState(false);
 
   /**
-   * Whether the entry has a distinct end, and the one piece of state here that is
-   * not derived.
+   * Whether the entry ends on a *date* of its own, and the one piece of state here
+   * that is not derived.
+   *
+   * It says nothing about the end *time*. A timed entry always has one, so the end
+   * time picker is not behind this switch — an entry saved 09:00–10:00 reopened with
+   * the toggle derived off, because its two dates agree, and hid the 10:00 it was
+   * still storing.
    *
    * `endDate !== startDate` would seem to be the same fact, and it is — right up
    * until you switch the toggle on, at which point the end still equals the start and
@@ -192,12 +197,12 @@ export function WhenField({ value, onChange, timezone }: Props): React.JSX.Eleme
         aria-expanded={open}
         // A button's accessible name replaces its text rather than adding to it, and
         // the text here is the value.
-        aria-label={`When, ${formatWhen(value, hasEnd)}`}
+        aria-label={`When, ${formatWhen(value)}`}
         className={`${inputClass} flex items-center justify-between gap-2 text-left tabular-nums ${
           open ? 'shadow-[inset_0_0_0_1px_var(--color-hairlit)]' : ''
         }`}
       >
-        <span className="truncate">{formatWhen(value, hasEnd)}</span>
+        <span className="truncate">{formatWhen(value)}</span>
         <span className="label shrink-0">{WEEKDAYS[dayOfWeek(value.startDate)]}</span>
       </button>
 
@@ -244,14 +249,18 @@ export function WhenField({ value, onChange, timezone }: Props): React.JSX.Eleme
                 </div>
               ) : (
                 /*
-                  One date and one time. The end time appears only when END DATE
-                  is switched on — an event without an explicit end is a point in
-                  time, not a span, so showing a second time picker here would
-                  imply a duration nobody asked for.
+                  One date, both times. A timed entry that does not span days is
+                  still a span of hours, and the overwhelmingly common one — an
+                  hour on a Tuesday — so the date takes the full width and the two
+                  ends sit side by side beneath it, reading the way the closed
+                  field prints them.
                 */
-                <div className="grid grid-cols-2 gap-1.5">
+                <div className="space-y-1.5">
                   {dateField('start')}
-                  {startTime}
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {startTime}
+                    {endTime}
+                  </div>
                 </div>
               )}
             </div>

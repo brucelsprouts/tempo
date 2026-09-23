@@ -87,8 +87,12 @@ describe('formatWhen', () => {
     );
   });
 
-  it('omits the end time when hasEnd is false', () => {
-    expect(formatWhen({ ...base, allDay: false }, false)).toBe('2026-08-04 09:00');
+  it('prints both ends of a timed entry that does not span days', () => {
+    // The END DATE toggle is off for this value — its two dates agree — and that has
+    // no bearing on the end *time*, which the entry has and is storing.
+    expect(formatWhen({ ...base, allDay: false, endMinutes: 11 * 60 })).toBe(
+      '2026-08-04 09:00 – 11:00',
+    );
   });
 });
 

@@ -34,7 +34,7 @@ import {
   zoomOut,
   type DaySegment,
 } from './timeline';
-import { shiftWeek, weekDays } from './week';
+import { allDayBands, shiftWeek, weekDays } from './week';
 
 /**
  * Seven days at once, with hours down the side.
@@ -75,6 +75,18 @@ interface Props {
 
 /** The gutter the hour labels sit in. Matches `DayView`'s. */
 const GUTTER = 44;
+
+/**
+ * The all-day strip's rows: bar height, the gap between rows, and the padding
+ * the strip keeps off its own hairlines.
+ *
+ * Deliberately short — the strip is borrowing height from the timetable below
+ * it, which is the part of this view worth the room — so a bar is one line of
+ * title and nothing else.
+ */
+const BAND_H = 16;
+const BAND_GAP = 2;
+const BAND_PAD = 4;
 
 export function WeekView({ ref, onOpen, onNew, onOpenDay }: Props) {
   // Unfiltered on purpose. See the note above.
@@ -127,9 +139,6 @@ export function WeekView({ ref, onOpen, onNew, onOpenDay }: Props) {
         const byKey = new Map(segments.map((s) => [s.occ.key, s.occ]));
         return {
           date,
-          // A multi-day all-day entry marks every day it covers, the way it
-          // marks every square in the year view.
-          bars: occurrences.filter((o) => o.allDay && date >= o.date && date <= o.endDate),
           placed: placeSegments(
             segments.map((s) => ({ key: s.occ.key, segment: s.segment })),
           ).map((p) => ({ ...p, occ: byKey.get(p.key)! })),
@@ -138,7 +147,22 @@ export function WeekView({ ref, onOpen, onNew, onOpenDay }: Props) {
     [days, occurrences],
   );
 
-  const anyBars = columns.some((c) => c.bars.length > 0);
+  /**
+   * The all-day strip, banded across the whole week rather than filled in per
+   * column. Each day used to draw whatever covered it, so a trip from Monday to
+   * Wednesday came out as three chips in three lists — at whatever row each
+   * day's list happened to put it — and read as three separate entries. See
+   * `allDayBands`.
+   */
+  const bands = useMemo(
+    () =>
+      allDayBands(
+        occurrences.filter((o) => o.allDay),
+        days,
+      ),
+    [occurrences, days],
+  );
+  const laneCount = bands.reduce((n, b) => Math.max(n, b.lane + 1), 0);
 
   /** FIT has to know how tall the grid is, and flexbox is what decides that. */
   useEffect(() => {
@@ -268,7 +292,7 @@ export function WeekView({ ref, onOpen, onNew, onOpenDay }: Props) {
           })}
         </div>
 
-        {anyBars && (
+        {laneCount > 0 && (
           <div
             className={[
               'flex border-t border-hair',
@@ -278,36 +302,66 @@ export function WeekView({ ref, onOpen, onNew, onOpenDay }: Props) {
             <div className="label shrink-0 px-2 py-1.5 leading-none" style={{ width: GUTTER }}>
               ALL
             </div>
-            {columns.map(({ date, bars }) => (
-              <div key={date} className="min-w-0 flex-1 space-y-0.5 border-l border-hair p-1">
-                {bars.map((occ) => {
-                  const category = categoryFor(occ.categoryId);
-                  const colors = barColors(category?.color ?? null);
-                  const due = dayDue(occ, date);
-                  return (
-                    <button
-                      key={occ.key}
-                      onClick={() => onOpen(occ)}
-                      // The column is a seventh of the screen wide, so the due
-                      // time that `DayView` prints beside the title lives in the
-                      // tooltip here rather than being truncated into nothing.
-                      title={due ? `${occ.title} · ${due}` : occ.title}
-                      style={
-                        {
-                          background: colors.fill,
-                          color: colors.ink,
-                          borderLeft: `3px solid ${colors.edge}`,
-                          '--cat': colors.edge,
-                        } as CSSProperties
-                      }
-                      className="tint-hover block w-full truncate px-1 py-0.5 text-left text-[10px] leading-tight"
-                    >
-                      {occ.title}
-                    </button>
-                  );
-                })}
+            {/* One area spanning all seven columns rather than seven boxes. The
+                day dividers are drawn underneath it, so a band crosses them the
+                way a week row's bar crosses the grid's. */}
+            <div
+              className="relative min-w-0 flex-1"
+              style={{ height: laneCount * (BAND_H + BAND_GAP) - BAND_GAP + 2 * BAND_PAD }}
+            >
+              <div className="absolute inset-0 flex" aria-hidden>
+                {days.map((date) => (
+                  <div key={date} className="min-w-0 flex-1 border-l border-hair" />
+                ))}
               </div>
-            ))}
+
+              {bands.map(({ occ, startCol, endCol, lane, continuesBefore, continuesAfter }) => {
+                const category = categoryFor(occ.categoryId);
+                const colors = barColors(category?.color ?? null);
+                // Read from the band's first visible day, which is the one the
+                // strip is showing it from.
+                const due = dayDue(occ, days[startCol]);
+                return (
+                  <button
+                    key={occ.key}
+                    onClick={() => onOpen(occ)}
+                    // The column is a seventh of the screen wide, so the due
+                    // time that `DayView` prints beside the title lives in the
+                    // tooltip here rather than being truncated into nothing.
+                    title={due ? `${occ.title} · ${due}` : occ.title}
+                    style={
+                      {
+                        position: 'absolute',
+                        top: BAND_PAD + lane * (BAND_H + BAND_GAP),
+                        height: BAND_H,
+                        left: `calc(${(startCol / 7) * 100}% + 3px)`,
+                        width: `calc(${((endCol - startCol + 1) / 7) * 100}% - 6px)`,
+                        background: colors.fill,
+                        color: colors.ink,
+                        // A cut edge gets no accent, for the reason a cut block
+                        // in the grid below gets no border: the edge has to look
+                        // like a continuation, not like a beginning.
+                        borderLeft: continuesBefore ? undefined : `3px solid ${colors.edge}`,
+                        '--cat': colors.edge,
+                      } as CSSProperties
+                    }
+                    className="tint-hover flex items-center gap-0.5 px-1 text-left text-[10px] leading-tight"
+                  >
+                    {continuesBefore && (
+                      <span className="shrink-0" style={{ color: colors.soft }}>
+                        ‹
+                      </span>
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{occ.title}</span>
+                    {continuesAfter && (
+                      <span className="shrink-0" style={{ color: colors.soft }}>
+                        ›
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
