@@ -103,6 +103,7 @@ export type Database = {
           starts_at: string | null
           status: Database["public"]["Enums"]["event_status"] | null
           timezone: string
+          timetable: boolean
           title: string
           updated_at: string
         }
@@ -132,6 +133,7 @@ export type Database = {
           starts_at?: string | null
           status?: Database["public"]["Enums"]["event_status"] | null
           timezone?: string
+          timetable?: boolean
           title: string
           updated_at?: string
         }
@@ -161,6 +163,7 @@ export type Database = {
           starts_at?: string | null
           status?: Database["public"]["Enums"]["event_status"] | null
           timezone?: string
+          timetable?: boolean
           title?: string
           updated_at?: string
         }

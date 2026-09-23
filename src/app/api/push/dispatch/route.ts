@@ -75,6 +75,9 @@ const UNFETCHED = {
   google_synced_at: null,
   // Retired: nothing sets it and nothing reads it. See 20260919_retire_tasks.sql.
   status: null,
+  // Not selected: whether an entry is on the timetable is a view concern, and a
+  // lecture with a reminder on it is owed that reminder like anything else.
+  timetable: false,
   // Filtered on in the query, so a row that comes back is always live.
   deleted_at: null,
   created_at: '1970-01-01T00:00:00.000Z',

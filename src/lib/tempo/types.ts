@@ -129,6 +129,23 @@ export interface TempoEvent {
   displayTemplate: string | null;
 
   notify: boolean;
+
+  /**
+   * Part of the timetable: a lecture, a lab, a seminar.
+   *
+   * A view concern, and it stops at the view. Marked entries are dropped from
+   * the scroll, list and year views unless they are revealed, and the week view
+   * shows them along with everything else. Reminders, export, exceptions,
+   * history and the `.ics` feed all treat a marked entry as an ordinary one.
+   *
+   * A flag rather than a `kind`, because kinds here are presets that no logic
+   * branches on and this is logic. Not inferred from a weekly recurrence
+   * either: that would sweep up the weekly things meant to stay visible, and
+   * shut out a biweekly lab or a one-off makeup lecture, both of which belong
+   * beside their classmates.
+   */
+  timetable: boolean;
+
   source: EventSource;
   googleEventId: string | null;
 

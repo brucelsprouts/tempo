@@ -22,6 +22,7 @@ function series(id: string, start: string, recurrence: Recurrence | null): Tempo
     anchorDate: null,
     displayTemplate: null,
     notify: false,
+    timetable: false,
     source: 'tempo',
     googleEventId: null,
     deletedAt: null,

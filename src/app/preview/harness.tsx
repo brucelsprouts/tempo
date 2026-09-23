@@ -49,6 +49,7 @@ function base(id: string, title: string, over: Partial<TempoEvent>): TempoEvent 
     anchorDate: null,
     displayTemplate: null,
     notify: false,
+    timetable: false,
     source: 'tempo',
     googleEventId: null,
     deletedAt: null,

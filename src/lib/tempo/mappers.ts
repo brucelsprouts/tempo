@@ -142,6 +142,10 @@ const eventSchema = z.object({
   reminders: remindersSchema.default([]),
   anchorDate: civilDate.nullable(),
   displayTemplate: z.string().nullable(),
+  // Defaulted for the same reason `reminders` is: snapshots written before the
+  // timetable flag existed have no such key, and `versionFromRow` drops a
+  // snapshot that fails to parse.
+  timetable: z.boolean().default(false),
   // No `status`: a snapshot of a task still carries one, and the parse drops it.
   notify: z.boolean(),
   source: z.enum(['tempo', 'google']),
@@ -206,6 +210,9 @@ export function eventFromRow(row: EventRow): TempoEvent {
       ? '{title} > {yearsSince}'
       : row.display_template,
     notify: row.notify,
+    // A client can be newer than the database it is pointed at, so an absent
+    // column is not-timetable rather than a crash.
+    timetable: row.timetable ?? false,
     source: row.source,
     googleEventId: row.google_event_id,
     deletedAt: row.deleted_at,
@@ -256,6 +263,7 @@ export function eventToRow(e: Partial<TempoEvent>): Partial<EventRow> {
   if (e.anchorDate !== undefined) row.anchor_date = e.anchorDate;
   if (e.displayTemplate !== undefined) row.display_template = e.displayTemplate;
   if (e.notify !== undefined) row.notify = e.notify;
+  if (e.timetable !== undefined) row.timetable = e.timetable;
   return row;
 }
 
@@ -301,6 +309,8 @@ export interface PortableEvent {
   display_template?: string;
   category?: string;
   notify: boolean;
+  /** Only ever present when true. See `toPortable`. */
+  timetable?: boolean;
   notes?: string;
 }
 
@@ -332,6 +342,9 @@ export function toPortable(e: TempoEvent, categoryName?: string): PortableEvent 
   }
   if (e.anchorDate) out.anchor_date = e.anchorDate;
   if (e.displayTemplate) out.display_template = e.displayTemplate;
+  // Emitted only when true: the export is read inside a frontmatter block, and
+  // `timetable: false` on every ordinary entry is noise in every ordinary entry.
+  if (e.timetable) out.timetable = true;
   if (categoryName) out.category = categoryName;
   if (e.notes) out.notes = e.notes;
   return out;

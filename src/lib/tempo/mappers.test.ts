@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EventRow, EventVersionRow } from '@/lib/db/database.types';
-import { eventFromRow, parsePatch, versionFromRow } from './mappers';
+import { eventFromRow, eventToRow, parsePatch, toPortable, versionFromRow } from './mappers';
 
 function row(over: Partial<EventRow> = {}): EventRow {
   return {
@@ -23,6 +23,7 @@ function row(over: Partial<EventRow> = {}): EventRow {
     display_template: null,
     status: null,
     notify: false,
+    timetable: false,
     source: 'tempo',
     google_calendar_id: null,
     google_event_id: null,
@@ -71,5 +72,38 @@ describe('a version of a task', () => {
     expect(parsed?.snapshot.event.kind).toBe('event');
     expect(parsed?.snapshot.event).not.toHaveProperty('status');
     expect(parsed?.reason).toBe('status');
+  });
+});
+
+describe('the timetable flag', () => {
+  it('reads as false on a row written before the column existed', () => {
+    // `add column ... default false` backfills, but a client can be newer than
+    // the database it is pointed at, and then the key is simply absent.
+    const bare = row();
+    delete (bare as Partial<EventRow>).timetable;
+    expect(eventFromRow(bare).timetable).toBe(false);
+  });
+
+  it('reads as true when the row says so', () => {
+    expect(eventFromRow(row({ timetable: true })).timetable).toBe(true);
+  });
+
+  it('is carried back to the row', () => {
+    expect(eventToRow({ timetable: true }).timetable).toBe(true);
+    expect(eventToRow({ timetable: false }).timetable).toBe(false);
+  });
+
+  it('is left alone by a patch that does not mention it', () => {
+    expect('timetable' in eventToRow({ title: 'Renamed' })).toBe(false);
+  });
+
+  it('is exported only when it is true', () => {
+    // The export is read inside a frontmatter block, so a key that is false on
+    // every ordinary entry is noise in every ordinary entry.
+    const plain = eventFromRow(row());
+    expect('timetable' in toPortable(plain)).toBe(false);
+
+    const lecture = eventFromRow(row({ timetable: true }));
+    expect(toPortable(lecture).timetable).toBe(true);
   });
 });

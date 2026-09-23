@@ -111,6 +111,7 @@ export interface EventDraft {
   anchorDate?: CivilDate | null;
   displayTemplate?: string | null;
   notify?: boolean;
+  timetable?: boolean;
   notes?: string | null;
 }
 
@@ -1974,6 +1975,9 @@ function draftFields(draft: EventDraft, tz: string) {
     reminders: draft.reminders ?? [],
     anchorDate: draft.anchorDate ?? null,
     displayTemplate: draft.displayTemplate ?? null,
+    // Here rather than in `newEvent`, and unlike `notify`, because the control
+    // is in the entry form: an omitted value means the user turned it off.
+    timetable: draft.timetable ?? false,
     ...draftTiming(draft, tz),
   };
 }

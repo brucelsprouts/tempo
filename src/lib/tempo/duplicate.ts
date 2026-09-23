@@ -108,6 +108,7 @@ export function copyableFields(
     notes: ev.notes,
     kind: ev.kind,
     categoryId: ev.categoryId,
+    timetable: ev.timetable,
     allDay: ev.allDay,
     dueMinutes: ev.dueMinutes,
     timezone: ev.timezone,
