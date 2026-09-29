@@ -219,6 +219,66 @@ describe('variable bar heights', () => {
 });
 
 /**
+ * No two bars that share a column may share a pixel.
+ *
+ * Lanes stack per column, and a bar crossing several columns sits at the lowest
+ * of their stacks so it stays flat. Pushing it down there has to push down
+ * whatever sits under it in the other columns too — a short birthday in one
+ * column and a tall entry in the next is all it takes for the stacks to
+ * disagree.
+ */
+describe('bars never overlap', () => {
+  const bar = (key: string, kind: EventKind, date: string, endDate = date): Occurrence => ({
+    ...occ(key, date, endDate),
+    kind,
+  });
+
+  function expectNoOverlap(segments: ReturnType<typeof layoutWeek>['segments']) {
+    for (let i = 0; i < segments.length; i++) {
+      for (let j = i + 1; j < segments.length; j++) {
+        const a = segments[i];
+        const b = segments[j];
+        if (a.endCol < b.startCol || b.endCol < a.startCol) continue;
+        const clear = a.top + a.height + LANE_GAP <= b.top || b.top + b.height + LANE_GAP <= a.top;
+        expect(clear, `${a.occurrence.key} and ${b.occurrence.key} overlap`).toBe(true);
+      }
+    }
+  }
+
+  it('pushes down what sits under a bar that a taller column lowered', () => {
+    const { segments } = layoutWeek(WEEK_START, [
+      bar('span', 'event', '2026-07-26', '2026-07-28'), // cols 0-2, lane 0
+      bar('bday', 'birthday', '2026-07-29'), // col 3, lane 0 — short
+      bar('pair', 'event', '2026-07-28', '2026-07-29'), // cols 2-3, lane 1, lowered by col 2
+      bar('single', 'event', '2026-07-29'), // col 3, lane 2 — under `pair`
+    ]);
+    expectNoOverlap(segments);
+  });
+
+  it('holds for busy weeks of every kind', () => {
+    // A small seeded generator, so a failure names a case that can be replayed.
+    let seed = 1;
+    const rand = (n: number) => {
+      // mulberry32
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return (((t ^ (t >>> 14)) >>> 0) / 4294967296) * n | 0;
+    };
+    const kinds: EventKind[] = ['event', 'birthday', 'milestone'];
+    for (let trial = 0; trial < 500; trial++) {
+      const occs = Array.from({ length: 3 + rand(10) }, (_, i) => {
+        const start = rand(7);
+        const kind = kinds[rand(3)];
+        const end = kind === 'event' ? Math.min(6, start + rand(4)) : start;
+        return bar(`t${trial}-${i}`, kind, addDays(WEEK_START, start), addDays(WEEK_START, end));
+      });
+      expectNoOverlap(layoutWeek(WEEK_START, occs).segments);
+    }
+  });
+});
+
+/**
  * The lasso, without a DOM.
  *
  * These are the cases the arithmetic exists for. A marquee dragged past the

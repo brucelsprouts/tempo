@@ -149,75 +149,42 @@ export function layoutWeek(
     assigned.push({ ...c, lane });
   }
 
-  // 1. Calculate column heights for each (col, lane) cell.
-  const colHeights = Array.from({ length: DAYS_PER_WEEK }, () => [] as number[]);
-  for (const a of assigned) {
-    const h = KIND_HEIGHT[a.occurrence.kind];
-    for (let col = a.startCol; col <= a.endCol; col++) {
-      colHeights[col][a.lane] = h;
-    }
-  }
+  // Tops, lane by lane from the top down. Each column keeps the bottom of what
+  // has been stacked in it so far, so a lane a column doesn't use costs it no
+  // room. A bar sits at the lowest of those bottoms across the columns it
+  // covers, which keeps a multi-day bar flat, and then becomes the bottom of
+  // every one of them.
+  //
+  // Finishing each lane before starting the next is what makes that safe. When
+  // one column pushes a bar down, the bar's other columns have to move down with
+  // it, or the next lane there is placed where the bar would have been. Stacking
+  // each column on its own and flattening afterwards did exactly that: a short
+  // birthday in one column and a tall entry in the next was enough to draw one
+  // bar over another.
+  const laneCount = Math.max(0, ...assigned.map((a) => a.lane + 1));
+  const byLane = Array.from({ length: laneCount }, () => [] as typeof assigned);
+  for (const a of assigned) byLane[a.lane].push(a);
 
-  // 2. Compute column-level top offsets for each (col, lane) cell.
-  const colTops = Array.from({ length: DAYS_PER_WEEK }, () => [] as number[]);
-  for (let col = 0; col < DAYS_PER_WEEK; col++) {
-    let currentTop = 0;
-    const maxLane = colHeights[col].length;
-    for (let l = 0; l < maxLane; l++) {
-      colTops[col][l] = currentTop;
-      const h = colHeights[col][l] ?? 0;
-      if (h > 0) {
-        currentTop += h + LANE_GAP;
-      }
-    }
-  }
-
-  // 3. Populate global laneHeights and laneTops (as max of each lane across all columns).
-  // This satisfies the WeekLayout interface and maintains correct total height of the row.
-  const maxLanes = Math.max(0, ...assigned.map((a) => a.lane + 1));
-  const laneHeights: number[] = new Array(maxLanes).fill(0);
-  const laneTops: number[] = new Array(maxLanes).fill(0);
-
-  for (let l = 0; l < maxLanes; l++) {
-    let maxHeight = 0;
-    for (let col = 0; col < DAYS_PER_WEEK; col++) {
-      maxHeight = Math.max(maxHeight, colHeights[col][l] ?? 0);
-    }
-    laneHeights[l] = maxHeight;
-
-    let maxTop = 0;
-    for (let col = 0; col < DAYS_PER_WEEK; col++) {
-      if ((colHeights[col][l] ?? 0) > 0) {
-        maxTop = Math.max(maxTop, colTops[col][l] ?? 0);
-      }
-    }
-    laneTops[l] = maxTop;
-  }
-
+  const colBottom = new Array<number>(DAYS_PER_WEEK).fill(0);
+  const laneHeights: number[] = new Array(laneCount).fill(0);
+  const laneTops: number[] = new Array(laneCount).fill(0);
   const segments: WeekSegment[] = [];
   const overflow = new Array<number>(DAYS_PER_WEEK).fill(0);
-  let laneCount = 0;
   let contentHeight = 0;
 
-  for (const a of assigned) {
-    const h = KIND_HEIGHT[a.occurrence.kind];
-    // A segment's top is the maximum of the top offsets needed in the columns it covers,
-    // ensuring the multi-day bar remains flat across columns.
-    let segmentTop = 0;
-    for (let col = a.startCol; col <= a.endCol; col++) {
-      segmentTop = Math.max(segmentTop, colTops[col][a.lane] ?? 0);
+  for (let l = 0; l < laneCount; l++) {
+    // Bars in one lane never share a column, so none of them can move another.
+    for (const a of byLane[l]) {
+      const h = KIND_HEIGHT[a.occurrence.kind];
+      let top = 0;
+      for (let col = a.startCol; col <= a.endCol; col++) top = Math.max(top, colBottom[col]);
+      for (let col = a.startCol; col <= a.endCol; col++) colBottom[col] = top + h + LANE_GAP;
+
+      laneHeights[l] = Math.max(laneHeights[l], h);
+      laneTops[l] = Math.max(laneTops[l], top);
+      contentHeight = Math.max(contentHeight, top + h);
+      segments.push({ ...a, hidden: false, top, height: h });
     }
-
-    const hidden = false;
-    laneCount = Math.max(laneCount, a.lane + 1);
-    contentHeight = Math.max(contentHeight, segmentTop + h);
-
-    segments.push({
-      ...a,
-      hidden,
-      top: segmentTop,
-      height: h,
-    });
   }
 
   return { weekStart, weekEnd, days, segments, laneCount, laneHeights, laneTops, overflow, contentHeight };
