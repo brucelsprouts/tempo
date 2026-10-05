@@ -17,7 +17,8 @@ import {
   setZoom,
   subscribeZoom,
 } from '@/lib/store/day-zoom';
-import { dayOfWeek, minutesInZone, parts, todayIn, type CivilDate } from '@/lib/tempo/civil';
+import { dayOfWeek, minutesInZone, parts, type CivilDate } from '@/lib/tempo/civil';
+import { useToday } from '@/lib/tempo/use-today';
 import { expandAll } from '@/lib/tempo/recurrence';
 import type { Category, Occurrence } from '@/lib/tempo/types';
 import { CategoryChip } from './CategoryChip';
@@ -95,7 +96,7 @@ export function WeekView({ ref, onOpen, onNew, onOpenDay }: Props) {
   const categories = useCalendar((s) => s.categories);
   const timezone = useCalendar((s) => s.timezone);
 
-  const today = todayIn(timezone);
+  const today = useToday(timezone);
   const [anchor, setAnchor] = useState<CivilDate>(() => shiftWeek(today, 0));
   const days = useMemo(() => weekDays(anchor), [anchor]);
 

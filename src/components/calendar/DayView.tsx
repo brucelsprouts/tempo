@@ -9,7 +9,8 @@ import {
   subscribeZoom,
 } from '@/lib/store/day-zoom';
 import type { CivilDate } from '@/lib/tempo/civil';
-import { minutesInZone, parts, todayIn } from '@/lib/tempo/civil';
+import { useToday } from '@/lib/tempo/use-today';
+import { minutesInZone, parts } from '@/lib/tempo/civil';
 import type { Category, Occurrence } from '@/lib/tempo/types';
 import { MONTHS } from './constants';
 import { CategoryChip } from './CategoryChip';
@@ -56,7 +57,7 @@ export function DayView({ date, occurrences, onOpen, onNew }: Props) {
   const timezone = useCalendar((s) => s.timezone);
   const isOffline = useCalendar((s) => s.isOffline);
   const nowMinutes = useNowMinutes(timezone);
-  const isToday = date === todayIn(timezone);
+  const isToday = date === useToday(timezone);
 
   const gridRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ key: string; start: number; end: number } | null>(null);

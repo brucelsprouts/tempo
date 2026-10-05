@@ -11,9 +11,9 @@ import {
   diffDays,
   minDate,
   parts,
-  todayIn,
   type CivilDate,
 } from '@/lib/tempo/civil';
+import { useToday } from '@/lib/tempo/use-today';
 import { expandAll } from '@/lib/tempo/recurrence';
 import type { Occurrence } from '@/lib/tempo/types';
 import { DEFAULT_CATEGORY_COLOR, epochYears, MONTHS } from './constants';
@@ -45,7 +45,7 @@ export function YearView({ year, onYear, onOpenDay, selectedDay }: Props) {
   const categories = useCalendar((s) => s.categories);
   const timezone = useCalendar((s) => s.timezone);
 
-  const today = useMemo(() => todayIn(timezone), [timezone]);
+  const today = useToday(timezone);
   const thisYear = parts(today).year;
 
   const yearStart = civil(year, 1, 1);

@@ -34,6 +34,7 @@ import {
   todayIn,
   type CivilDate,
 } from '@/lib/tempo/civil';
+import { useToday } from '@/lib/tempo/use-today';
 import {
   DAYS_PER_WEEK,
   layoutWeek,
@@ -243,10 +244,12 @@ export function ContinuousCalendar({
   const deleteEvents = useCalendar((s) => s.deleteEvents);
   const duplicateOccurrences = useCalendar((s) => s.duplicateOccurrences);
 
-  const today = useMemo(() => todayIn(timezone), [timezone]);
+  const today = useToday(timezone);
+  // The grid's origin is fixed at mount: moving it at midnight would shift every
+  // row under the reader's scroll position.
   const epochStart = useMemo(
-    () => addDays(startOfWeek(today), -WEEKS_BEFORE * 7),
-    [today],
+    () => addDays(startOfWeek(todayIn(timezone)), -WEEKS_BEFORE * 7),
+    [timezone],
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);

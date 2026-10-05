@@ -11,7 +11,8 @@ import {
 import { groupOverrides, useCalendar } from '@/lib/store/calendar-store';
 import { useVisibleEvents } from '@/lib/store/use-visible-events';
 import { getClipboard, setClipboard } from '@/lib/store/clipboard';
-import { addDays, parts, todayIn, type CivilDate } from '@/lib/tempo/civil';
+import { addDays, parts, type CivilDate } from '@/lib/tempo/civil';
+import { useToday } from '@/lib/tempo/use-today';
 import { expandAll, expandEvent, eventSpan } from '@/lib/tempo/recurrence';
 import type { Occurrence, Recurrence, TempoEvent } from '@/lib/tempo/types';
 import { DEFAULT_CATEGORY_COLOR, MONTHS, WEEKDAYS } from './constants';
@@ -133,7 +134,7 @@ export function ListView({ onOpen, onNew, searchRef, ref }: Props) {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'due', dir: 1 });
   const [group, setGroup] = useState<GroupKey>('none');
 
-  const today = useMemo(() => todayIn(timezone), [timezone]);
+  const today = useToday(timezone);
 
   const rows = useMemo<Row[]>(() => {
     const byEvent = groupOverrides(overrides);

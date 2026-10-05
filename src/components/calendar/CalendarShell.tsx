@@ -15,7 +15,8 @@ import {
   setViewPreference,
   subscribeView,
 } from '@/lib/store/view-preference';
-import { parts, todayIn, type CivilDate } from '@/lib/tempo/civil';
+import { parts, type CivilDate } from '@/lib/tempo/civil';
+import { useToday } from '@/lib/tempo/use-today';
 import type { Occurrence } from '@/lib/tempo/types';
 import { MONTHS } from './constants';
 import { ContinuousCalendar, type CalendarHandle } from './ContinuousCalendar';
@@ -185,7 +186,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
     getTimetableSnapshot,
     getServerTimetableSnapshot,
   );
-  const today = todayIn(timezone);
+  const today = useToday(timezone);
 
   const [overlays, setOverlays] = useState<Overlay[]>([]);
   const [focusedDay, setFocusedDay] = useState<CivilDate>(today);
