@@ -146,6 +146,16 @@ interface CalendarState {
   versionsFor: string | null;
 
   load: () => Promise<void>;
+  /**
+   * Read everything again, without showing it.
+   *
+   * Realtime reports changes made while the socket is open and never replays the
+   * ones it missed, which on a phone is most of them: a backgrounded PWA's socket
+   * is frozen. This is the catch-up — run when the app comes back, when the
+   * network does, and when the channel reconnects. Quiet on every failure: a
+   * missed refresh leaves the calendar as it was, not broken.
+   */
+  refresh: () => Promise<void>;
   createEvent: (draft: EventDraft) => Promise<void>;
   updateEvent: (id: string, patch: Partial<TempoEvent>) => Promise<void>;
   /** Editing counterpart to `createEvent`. See `draftTiming`. */
@@ -323,6 +333,21 @@ export const useCalendar = create<CalendarState>((set, get) => {
    */
   let channel: ReturnType<typeof supabase.channel> | null = null;
 
+  /**
+   * Whether the channel has reported itself subscribed before. The first time is
+   * just the connection `load()` arranged; every later one is a reconnect, and a
+   * reconnect means events were missed.
+   */
+  let subscribedBefore = false;
+  let refreshing = false;
+  let lastRefreshAt = 0;
+  /** Writes that have left `optimistic()` and not come back. See `refresh`. */
+  let writesInFlight = 0;
+  /** Writes begun, ever — a refresh that sees this move was overtaken by one. */
+  let writesStarted = 0;
+  /** A refresh that arrived mid-write and is owed once the writes settle. */
+  let refreshOwed = false;
+
   /** Open popup sessions, by id. See `beginEdit`. */
   const sessions = new Map<number, Session>();
   let nextSession = 1;
@@ -363,7 +388,21 @@ export const useCalendar = create<CalendarState>((set, get) => {
      */
     const moot = record ? movedNothing(snapshot, get(), record.touched) : false;
 
-    const { error } = await persist();
+    writesInFlight++;
+    writesStarted++;
+    let error: { message: string } | null;
+    try {
+      ({ error } = await persist());
+    } finally {
+      writesInFlight--;
+      // The refresh was held back so it could not read a row the server has not
+      // finished writing and put the old value over the new one.
+      if (writesInFlight === 0 && refreshOwed) {
+        refreshOwed = false;
+        lastRefreshAt = 0;
+        void get().refresh();
+      }
+    }
     if (error) {
       set({ ...snapshot, error: error.message });
       return false;
@@ -1006,17 +1045,12 @@ export const useCalendar = create<CalendarState>((set, get) => {
       const loadedOverrides = (overrides.data ?? []).map(overrideFromRow);
       const loadedCategories = categoryRows.map(categoryFromRow);
 
-      if (isBrowser) {
-        try {
-          window.localStorage.setItem(`tempo-cache-${user.id}`, JSON.stringify({
-            cachedAt: new Date().toISOString(),
-            events: loadedEvents,
-            deleted: loadedDeleted,
-            overrides: loadedOverrides,
-            categories: loadedCategories,
-          }));
-        } catch (err) {}
-      }
+      writeCache(user.id, {
+        events: loadedEvents,
+        deleted: loadedDeleted,
+        overrides: loadedOverrides,
+        categories: loadedCategories,
+      });
 
       set({
         ownerId: user.id,
@@ -1252,6 +1286,61 @@ export const useCalendar = create<CalendarState>((set, get) => {
       );
     },
 
+    refresh: async () => {
+      const { ownerId, status } = get();
+      // Before the first load there is nothing to catch up on, and a load in
+      // progress is already reading the same tables.
+      if (!ownerId || status !== 'ready') return;
+      if (refreshing) return;
+      // Resuming fires `visibilitychange`, `focus` and often `online` together.
+      if (Date.now() - lastRefreshAt < REFRESH_MIN_GAP_MS) return;
+      if (writesInFlight > 0) {
+        refreshOwed = true;
+        return;
+      }
+
+      refreshing = true;
+      lastRefreshAt = Date.now();
+      const startedAt = writesStarted;
+      try {
+        const [evRes, ovRes, catRes] = await Promise.all([
+          supabase.from('events').select('*'),
+          supabase.from('occurrence_overrides').select('*'),
+          supabase.from('categories').select('*').order('sort_order'),
+        ]);
+        if (evRes.error || ovRes.error || catRes.error) return;
+
+        // A write began while this was in the air, so what came back may predate
+        // it. Throw it away and go again once that write has landed.
+        if (writesInFlight > 0) {
+          refreshOwed = true;
+          return;
+        }
+        if (writesStarted !== startedAt) {
+          lastRefreshAt = 0;
+          queueMicrotask(() => void get().refresh());
+          return;
+        }
+
+        const merged = mergeFetched(
+          get(),
+          {
+            events: (evRes.data ?? []).map(eventFromRow),
+            overrides: (ovRes.data ?? []).map(overrideFromRow),
+            categories: (catRes.data ?? []).map(categoryFromRow),
+          },
+          editing,
+          Date.now(),
+        );
+        set({ ...merged, isOffline: false, cachedAt: null, error: null });
+        writeCache(ownerId, merged);
+      } catch {
+        // Offline or mid-flight failure: the calendar stays as it was.
+      } finally {
+        refreshing = false;
+      }
+    },
+
     /**
      * Listen for what the other tabs and devices are doing.
      *
@@ -1293,13 +1382,20 @@ export const useCalendar = create<CalendarState>((set, get) => {
         .on('postgres_changes', { ...on, table: 'categories', filter }, (payload) =>
           applyRemoteCategory(payload as unknown as RemotePayload<CategoryRow>),
         )
-        .subscribe();
+        .subscribe((state) => {
+          if (state !== 'SUBSCRIBED') return;
+          // The socket dropped and came back: whatever happened in between was
+          // never delivered, so read it.
+          if (subscribedBefore) void get().refresh();
+          subscribedBefore = true;
+        });
     },
 
     disconnect: () => {
       if (!channel) return;
       supabase.removeChannel(channel);
       channel = null;
+      subscribedBefore = false;
     },
 
     loadVersions: async (eventId) => {
@@ -1921,6 +2017,57 @@ interface RemotePayload<Row> {
   eventType: 'INSERT' | 'UPDATE' | 'DELETE';
   new?: Row;
   old?: { id?: string };
+}
+
+/** Closest two refreshes may be; a resume fires several triggers at once. */
+const REFRESH_MIN_GAP_MS = 2_000;
+
+interface Calendar {
+  events: TempoEvent[];
+  deleted: TempoEvent[];
+  overrides: OccurrenceOverride[];
+  categories: Category[];
+}
+
+/** What the offline fallback reads back. Best effort: storage may be off or full. */
+function writeCache(userId: string, data: Calendar) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      `tempo-cache-${userId}`,
+      JSON.stringify({ cachedAt: new Date().toISOString(), ...data }),
+    );
+  } catch {}
+}
+
+/**
+ * What a fresh read makes of the calendar already on screen.
+ *
+ * The server is the truth, with one exception: a row a popup is writing right
+ * now keeps its local shape, as `applyRemoteEvent` does for the same reason. The
+ * trash window matches `load()` — soft-deleted rows past it are not shown.
+ */
+function mergeFetched(
+  local: Calendar,
+  fetched: { events: TempoEvent[]; overrides: OccurrenceOverride[]; categories: Category[] },
+  editing: (id: string) => boolean,
+  now: number,
+): Calendar {
+  const cutoff = new Date(now - TRASH_DAYS * 86_400_000).toISOString();
+  const localById = new Map([...local.events, ...local.deleted].map((e) => [e.id, e]));
+  const rows = fetched.events.map((e) => (editing(e.id) ? (localById.get(e.id) ?? e) : e));
+  const sound = (e: TempoEvent) => e.deletedAt === null;
+  return {
+    events: rows.filter(sound),
+    deleted: rows
+      .filter((e) => !sound(e) && e.deletedAt! >= cutoff)
+      .sort((a, b) => (a.deletedAt! < b.deletedAt! ? 1 : -1)),
+    overrides: [
+      ...fetched.overrides.filter((o) => !editing(o.eventId)),
+      ...local.overrides.filter((o) => editing(o.eventId)),
+    ],
+    categories: fetched.categories,
+  };
 }
 
 /**

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Occurrence, TempoEvent } from '@/lib/tempo/types';
 import type { EventDraft } from './calendar-store';
 
@@ -75,6 +75,8 @@ function query(table: string) {
  */
 let handlers: Record<string, (payload: unknown) => void> = {};
 let subscribed = false;
+/** The channel telling the store how the connection is doing. */
+let reportStatus: (status: string) => void = () => {};
 
 vi.mock('@/lib/supabase/client', () => ({
   createClient: () => ({
@@ -86,7 +88,11 @@ vi.mock('@/lib/supabase/client', () => ({
           handlers[config.table] = cb;
           return ch;
         },
-        subscribe: () => ((subscribed = true), ch),
+        subscribe: (cb?: (status: string) => void) => {
+          subscribed = true;
+          reportStatus = cb ?? (() => {});
+          return ch;
+        },
       };
       return ch;
     },
@@ -1749,6 +1755,156 @@ describe('live sync', () => {
     push('events', { eventType: 'INSERT', new: row({ id: 'remote-1' }) });
 
     expect(useCalendar.getState().events).toHaveLength(0);
+  });
+});
+
+/**
+ * Catching up. Realtime never replays what a frozen socket missed, so the store
+ * reads the tables again — quietly, and without trampling what this device is
+ * in the middle of writing.
+ */
+describe('refreshing', () => {
+  let clock = Date.parse('2026-09-01T00:00:00Z');
+
+  beforeEach(() => {
+    // Refreshes closer than a couple of seconds are collapsed, and that state
+    // outlives a test, so each one starts well after the last.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    clock += 60_000;
+    vi.setSystemTime(clock);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const selectsOn = (table: string) => callsOn(table, 'select').length;
+
+  it('picks up what another device changed while this one was away', async () => {
+    seed([event({ id: 'e1', title: 'Old' })]);
+    stored.events = [row({ id: 'e1', title: 'New' }), row({ id: 'e2', title: 'Added' })];
+
+    await useCalendar.getState().refresh();
+
+    expect(useCalendar.getState().events.map((e) => e.title)).toEqual(['New', 'Added']);
+  });
+
+  it('drops an entry that was deleted for good while away', async () => {
+    seed([event({ id: 'e1' }), event({ id: 'e2' })]);
+    stored.events = [row({ id: 'e2' })];
+
+    await useCalendar.getState().refresh();
+
+    expect(useCalendar.getState().events.map((e) => e.id)).toEqual(['e2']);
+  });
+
+  it('does not flash the loading state', async () => {
+    seed([event({ id: 'e1' })]);
+    stored.events = [row({ id: 'e1' })];
+    const seen: string[] = [];
+    const stop = useCalendar.subscribe((s) => seen.push(s.status));
+
+    await useCalendar.getState().refresh();
+    stop();
+
+    expect(seen).not.toContain('loading');
+  });
+
+  it('leaves the calendar as it was when the read fails', async () => {
+    seed([event({ id: 'e1', title: 'Mine' })]);
+    stored.events = [row({ id: 'e1', title: 'Theirs' })];
+    failing.add('events');
+
+    await useCalendar.getState().refresh();
+
+    expect(useCalendar.getState().events[0].title).toBe('Mine');
+    expect(useCalendar.getState().status).toBe('ready');
+    expect(useCalendar.getState().error).toBeNull();
+  });
+
+  it('does nothing before the first load', async () => {
+    seed([]);
+    useCalendar.setState({ status: 'loading', ownerId: null });
+
+    await useCalendar.getState().refresh();
+
+    expect(selectsOn('events')).toBe(0);
+  });
+
+  it('reads once when a resume fires several triggers together', async () => {
+    seed([]);
+    stored.events = [];
+
+    await Promise.all([
+      useCalendar.getState().refresh(),
+      useCalendar.getState().refresh(),
+      useCalendar.getState().refresh(),
+    ]);
+    await useCalendar.getState().refresh();
+
+    expect(selectsOn('events')).toBe(1);
+  });
+
+  it('keeps a row a popup is writing, whatever the server says', async () => {
+    seed([event({ id: 'e1', title: 'Before' })]);
+    stored.events = [row({ id: 'e1', title: 'Stale' })];
+    const store = useCalendar.getState();
+    const session = store.beginEdit();
+    store.saveDraft(session, 'e1', {
+      title: 'Typing…',
+      kind: 'event',
+      allDay: true,
+      startDate: '2026-08-10',
+      endDate: '2026-08-10',
+      reminders: [],
+    });
+
+    await useCalendar.getState().refresh();
+
+    expect(useCalendar.getState().events[0].title).toBe('Typing…');
+    await store.endEdit(session);
+  });
+
+  it('applies the trash window the way a load does', async () => {
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86400_000).toISOString();
+    seed([]);
+    stored.events = [
+      row({ id: 'e1', deleted_at: daysAgo(2) }),
+      row({ id: 'e2', deleted_at: daysAgo(40) }),
+    ];
+
+    await useCalendar.getState().refresh();
+
+    expect(useCalendar.getState().deleted.map((e) => e.id)).toEqual(['e1']);
+  });
+
+  it('reads again when the channel reconnects, but not on the first connection', async () => {
+    seed([]);
+    stored.events = [row({ id: 'e1', title: 'While you were away' })];
+    useCalendar.getState().connect();
+
+    reportStatus('SUBSCRIBED');
+    await Promise.resolve();
+    expect(selectsOn('events')).toBe(0);
+
+    reportStatus('CLOSED');
+    reportStatus('SUBSCRIBED');
+    await vi.waitFor(() => expect(useCalendar.getState().events).toHaveLength(1));
+  });
+
+  it('waits out a write in flight rather than reading under it', async () => {
+    seed([event({ id: 'e1', title: 'Old' })]);
+    stored.events = [row({ id: 'e1', title: 'Old' })];
+
+    const write = useCalendar.getState().updateEvent('e1', { title: 'Mine' });
+    await useCalendar.getState().refresh();
+    // Held back while the write was out: no read has gone to the server yet.
+    expect(selectsOn('events')).toBe(0);
+
+    stored.events = [row({ id: 'e1', title: 'Mine' })];
+    await write;
+    await vi.waitFor(() => expect(selectsOn('events')).toBe(1));
+    expect(useCalendar.getState().events[0].title).toBe('Mine');
   });
 });
 
