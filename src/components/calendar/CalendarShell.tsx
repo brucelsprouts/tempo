@@ -43,16 +43,16 @@ import { Modal } from './ui';
  */
 
 const VIEWS = [
-  { value: 'scroll', label: 'SCROLL', key: '1' },
-  { value: 'list', label: 'LIST', key: '2' },
-  { value: 'year', label: 'YEAR', key: '3' },
+  { value: 'scroll', label: 'Scroll', key: '1' },
+  { value: 'list', label: 'List', key: '2' },
+  { value: 'year', label: 'Year', key: '3' },
   // Appended rather than slotted in beside LIST, where it belongs by span:
   // 1/2/3 are already in fingers, and a nav whose labels and numbers disagree
   // is worse than one ordered by when it was built.
-  { value: 'week', label: 'WEEK', key: '4' },
+  { value: 'week', label: 'Week', key: '4' },
   // Not a view of the calendar, but beside it: a course's deadlines and its
   // marks are one train of thought. Appended for the same reason WEEK was.
-  { value: 'grades', label: 'GRADES', key: '5' },
+  { value: 'grades', label: 'Grades', key: '5' },
 ] as const;
 
 /** What a new entry is pre-filled with. A span, because a drag can select one. */
@@ -155,6 +155,50 @@ function Actions({
 }
 
 /**
+ * The top bar's actions, from `sm` up: one solid button for the thing done most,
+ * and two icons for the things done rarely. Their words and keys are in the
+ * tooltips, since a mouse is what reaches them here.
+ */
+function TopActions({
+  isOffline,
+  onNew,
+  onHistory,
+  onSettings,
+}: {
+  isOffline: boolean;
+  onNew: () => void;
+  onHistory: () => void;
+  onSettings: () => void;
+}) {
+  const icon =
+    'tap flex h-9 w-9 items-center justify-center text-dim transition-colors hover:bg-raised hover:text-bright';
+  return (
+    <>
+      <button
+        onClick={onNew}
+        disabled={isOffline}
+        title="New entry (A)"
+        className="tap h-9 bg-ink px-3.5 text-[13px] whitespace-nowrap text-void transition-colors hover:bg-bright disabled:cursor-default disabled:opacity-50"
+      >
+        + New
+      </button>
+      <button onClick={onHistory} title="History (W)" aria-label="History" className={icon}>
+        <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M12 8v4l2 2" />
+          <path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5" />
+        </svg>
+      </button>
+      <button onClick={onSettings} title="Settings (S)" aria-label="Settings" className={icon}>
+        <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+      </button>
+    </>
+  );
+}
+
+/**
  * The entry popup's second line: how its saves stand, or what closing will ask.
  *
  * A repeating entry other than a birthday saves on close, once it knows which
@@ -177,7 +221,6 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
   const error = useCalendar((s) => s.error);
   const dismissError = useCalendar((s) => s.dismissError);
   const timezone = useCalendar((s) => s.timezone);
-  const eventCount = useCalendar((s) => s.events.length);
   const undoStack = useCalendar((s) => s.undoStack);
   const undo = useCalendar((s) => s.undo);
   const isOffline = useCalendar((s) => s.isOffline);
@@ -726,7 +769,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
         brand · views and fits in one row at 375px; the footer gets the three
         buttons at thumb height, sitting on padding it was reserving anyway.
       */}
-      <header className="flex shrink-0 items-center gap-3 border-b border-hair px-3 py-2 sm:px-4">
+      <header className="flex h-11 shrink-0 items-stretch gap-3 border-b border-hair px-3 sm:h-[52px] sm:gap-5 sm:px-4 [@media(max-height:500px)]:h-9">
         <div className="flex shrink-0 items-center gap-2">
           <svg viewBox="0 0 64 64" className="h-4 w-4 shrink-0" aria-hidden="true">
             <defs>
@@ -747,75 +790,73 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
               already says whose app this is. */}
           <span className="hidden text-[12px] tracking-[0.3em] text-bright sm:inline">TEMPO</span>
         </div>
-        <span className="hidden text-hair sm:inline">│</span>
 
         {/* Takes the row's slack on a phone so the three views split it evenly
             and the nav ends where the padding does — it used to be intrinsically
             sized, which left it stranded mid-row with ~98px of nothing after it.
             At `sm` it goes back to hugging its labels, because there the actions
             are in this row and want the rest. */}
-        <nav className="flex min-w-0 flex-1 border border-hair sm:flex-none" aria-label="View">
+        <nav className="flex min-w-0 flex-1 sm:flex-none sm:gap-5" aria-label="View">
           {VIEWS.map((v) => (
             <button
               key={v.value}
               onClick={() => setViewPreference(v.value)}
               aria-current={view === v.value}
+              title={`${v.label} (${v.key})`}
+              // The active view is underlined on the bar's own rule, so it reads
+              // as a place you are rather than one more button to press.
               className={[
-                'tap flex min-w-0 flex-1 items-center justify-center gap-1.5 px-1 py-1 text-[10px] tracking-[0.12em] transition-colors sm:flex-none sm:justify-start sm:px-2.5',
+                'tap -mb-px flex min-w-0 flex-1 items-center justify-center border-b-2 px-0.5 text-[12px] transition-colors sm:flex-none sm:text-[13px]',
                 view === v.value
-                  ? 'bg-raised text-bright'
-                  : 'text-mute hover:bg-sunken hover:text-dim',
+                  ? 'border-bright text-bright'
+                  : 'border-transparent text-dim hover:text-ink',
               ].join(' ')}
             >
               {v.label}
-              {/* The keyboard's half of the label, and only where there is one.
-                  On a phone it is a number beside a word that does nothing. */}
-              <span className="hidden text-[9px] text-mute sm:inline">{v.key}</span>
             </button>
           ))}
         </nav>
 
-        {/* Only where it means something. The week view shows the timetable
-            whatever this says, so there it would be a control that does
-            nothing — worse than one that isn't there. */}
-        {view !== 'week' && view !== 'grades' && (
-          <button
-            onClick={() => setTimetableVisible(!showTimetable)}
-            aria-pressed={showTimetable}
-            title={
-              showTimetable
-                ? 'Timetable entries are shown here. Click to hide them.'
-                : 'Timetable entries are hidden here. They are always in WEEK.'
-            }
-            className={[
-              'tap label hidden shrink-0 border px-2 py-1 transition-colors sm:inline-block',
-              showTimetable
-                ? 'border-hairlit bg-raised text-bright'
-                : 'border-hair text-mute hover:border-hairlit hover:text-dim',
-            ].join(' ')}
-          >
-            TIMETABLE
-          </button>
-        )}
+        {banner && <span className="label hidden self-center xl:inline">{banner}</span>}
 
-        {banner && <span className="label ml-1 hidden lg:inline">{banner}</span>}
-
-        {/* The status word, on the phone only and only when it is not the
-            expected one. It lives in the footer at `sm` and up, which is where
-            the count stays; here there is one row to spend and a steady ONLINE
-            is not worth a slot in it, whereas SYNCING and ERROR are the two
-            states you would want to know about without going looking. OFFLINE has
-            the banner above and is left out rather than said twice. */}
+        {/* The status word, only when it is not the expected one. A steady ONLINE
+            is not worth a slot, whereas SYNCING and ERROR are the two states you
+            would want to know about without going looking. OFFLINE has the
+            banner above and is left out rather than said twice. */}
         {(status === 'loading' || status === 'error') && !isOffline && (
-          <span className="label shrink-0 sm:hidden">
+          <span className="label shrink-0 self-center">
             {status === 'loading' ? 'SYNCING' : 'ERROR'}
           </span>
         )}
 
         {/* Desktop keeps the actions in the top bar; the phone's copy is in the
             footer, within reach of a thumb. */}
-        <div className="ml-auto hidden shrink-0 items-center gap-2 sm:flex">
-          <Actions
+        <div className="ml-auto hidden shrink-0 items-center gap-1.5 sm:flex">
+          {/* Only where it means something. The week view shows the timetable
+              whatever this says, and grades are not on a calendar, so there it
+              would be a control that does nothing. */}
+          {view !== 'week' && view !== 'grades' && (
+            <button
+              onClick={() => setTimetableVisible(!showTimetable)}
+              aria-pressed={showTimetable}
+              title={
+                showTimetable
+                  ? 'Timetable entries are shown here. Click to hide them.'
+                  : 'Timetable entries are hidden here. They are always in Week.'
+              }
+              className={[
+                'tap mr-2 flex h-9 items-center gap-2 text-[13px] transition-colors',
+                showTimetable ? 'text-bright' : 'text-dim hover:text-ink',
+              ].join(' ')}
+            >
+              <span
+                className={`h-2 w-2 border ${showTimetable ? 'border-bright bg-bright' : 'border-mute'}`}
+                aria-hidden="true"
+              />
+              Timetable
+            </button>
+          )}
+          <TopActions
             isOffline={isOffline}
             onNew={() => newEntry()}
             onHistory={() => push({ kind: 'history' })}
@@ -885,17 +926,16 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
         )}
 
         {/*
-          The bar that was empty.
+          A phone's thumb row, and nothing on a desktop.
 
-          It held two 10px labels and, in the installed PWA, the home-indicator
-          inset underneath them — so the strip a thumb reaches without moving the
-          hand was the one carrying the least. It now carries the three actions on
-          a phone, and goes back to being a status line at `sm`, where the actions
-          are in the header and a mouse does not care how far it travels.
+          The strip a thumb reaches without moving the hand carries the three
+          actions on a phone. At `sm` the actions are in the header, and what was
+          left here, ONLINE and a count of entries, was a full-width bar saying
+          nothing you act on, so it goes. It comes back only to carry an error,
+          which is the one thing here that has to be seen wherever you are.
 
-          `flex-wrap` is for the error, which is the one thing here that can be
-          long: it takes a line of its own below the buttons rather than
-          competing with them for a row that is already spoken for.
+          `flex-wrap` is for that error, which can be long: on a phone it takes a
+          line of its own below the buttons.
         */}
         {/* `safe-foot` carries the home-indicator inset, which the shell used to
             hold — see globals.css. Held there it stopped this bar short of the
@@ -908,7 +948,11 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
             to disappear as a distinct block sitting under the buttons. Left
             transparent it is the same near-black as the grid above it, and the
             bottom of the screen reads as one continuous surface. */}
-        <footer className="chrome-tight safe-foot flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-hair px-3 pt-2 sm:px-4">
+        <footer
+          className={`chrome-tight safe-foot flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-hair px-3 pt-2 sm:px-4 ${
+            error ? '' : 'sm:hidden'
+          }`}
+        >
           <div className="flex w-full items-stretch gap-2 sm:hidden">
             <Actions
               isOffline={isOffline}
@@ -918,14 +962,6 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
               onSettings={() => push({ kind: 'settings' })}
             />
           </div>
-
-          {/* Both hidden on a phone: the header says the status when it is worth
-              saying, and a live count of entries is something to glance at on a
-              desk rather than to spend a row of a 375px screen on. */}
-          <span className="label hidden sm:inline">
-            {isOffline ? 'OFFLINE' : (status === 'loading' ? 'SYNCING' : status === 'error' ? 'ERROR' : 'ONLINE')}
-          </span>
-          <span className="label hidden sm:inline">{eventCount} ENTRIES</span>
 
           {error && (
             <button

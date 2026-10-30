@@ -494,7 +494,11 @@ export function Modal({
           className="pointer-events-auto flex max-h-full w-full flex-col border border-hairlit bg-panel shadow-[0_24px_80px_rgba(0,0,0,0.75)] outline-none"
         >
           <PanelHeader title={title} meta={meta} onClose={onClose} />
-          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+          {/* A column for the entry form, which scrolls its own fields so DONE
+              stays on screen however long the notes get. */}
+          <div className={`min-h-0 flex-1 overflow-y-auto ${size === 'entry' ? 'flex flex-col' : ''}`}>
+            {children}
+          </div>
         </div>
       </div>
     </div>

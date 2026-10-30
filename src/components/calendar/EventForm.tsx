@@ -494,7 +494,7 @@ export function EventForm({
         e.preventDefault();
         commit();
       }}
-      className="flex h-full flex-col"
+      className="flex min-h-0 flex-1 flex-col"
     >
       {/* Two columns, and fields that want the width say so. Enter submits from
           anywhere by virtue of being a real form with a real submit button —
@@ -506,7 +506,10 @@ export function EventForm({
           MONTH and YEAR came to be written over the field next to them. The
           spans say `full` rather than `2` so they mean the same thing in both.
       */}
-      <fieldset disabled={readOnly || asking} className="grid flex-1 grid-cols-1 gap-x-4 gap-y-4 overflow-y-auto px-4 py-4 sm:grid-cols-2 disabled:opacity-90">
+      {/* The scroll is on a wrapper because a `fieldset` reports overflow without
+          clipping it: a long note painted straight over the buttons below. */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+      <fieldset disabled={readOnly || asking} className="grid grid-cols-1 gap-x-4 gap-y-4 px-4 py-4 sm:grid-cols-2 disabled:opacity-90">
         <div className="col-span-full">
           <Field label="[00] TITLE">
             <input
@@ -700,13 +703,18 @@ export function EventForm({
                   e.currentTarget.form?.requestSubmit();
                 }
               }}
-              rows={3}
-              className={`${inputClass} resize-none`}
+              // Grows with what is in it, up to a point, and starts with room to
+              // write. Three fixed lines made anything longer than a sentence a
+              // scroll inside a scroll. Where `field-sizing` is unsupported it
+              // is a fixed box with a drag handle, which still works.
+              rows={6}
+              className={`${inputClass} field-sizing-content min-h-[8.5rem] max-h-[45vh] resize-y leading-relaxed`}
               placeholder="…"
             />
           </Field>
         </div>
       </fieldset>
+      </div>
 
       <div className="shrink-0 space-y-2 border-t border-hair px-4 py-3">
         {asking && occurrence && existing ? (

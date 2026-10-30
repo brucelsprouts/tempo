@@ -480,6 +480,28 @@ hidden.
 item to the entry it is due on, so a passed deadline can ask for the mark — here
 so that feature does not need a migration of its own.
 
+## 21. The chrome stops looking like the grid's small print
+
+The top bar was a boxed row of 10px capitals: four views in one outline, three
+actions each in another. Every control looked equally small and equally like a
+button, so nothing said where you were or what was worth pressing. It is taller
+now and set at 13px in plain words. The current view is underlined on the bar's
+own rule, which keeps the square, ruled look of the calendar under it. `+ New`
+is the one solid control on the screen, and History and Settings, opened rarely,
+are icons with their words and keys in the tooltip.
+
+**The desktop footer is gone, and shows up only to carry an error.** With the
+actions in the header it held ONLINE and a count of entries: a full-width bar
+saying nothing you act on. SYNCING and ERROR moved to the header, shown only when
+they are true. A phone keeps its footer, because that row is `+ New`, History and
+Settings at thumb height, which is the reason §14 gave for putting them there.
+
+The entry popup's notes box was three fixed lines; it now starts at about six and
+grows to just under half the screen. Growing is what exposed the popup's other
+problem, since a long note pushed DONE below the frame, so the fields scroll and
+the buttons stay. The scroll sits on a wrapper because a `fieldset` reports
+overflow without clipping it, and a long note painted straight over the buttons.
+
 ---
 
 ## Not built

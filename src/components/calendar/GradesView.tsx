@@ -64,6 +64,7 @@ export function GradesView() {
   const categories = useCalendar((s) => s.categories);
 
   const [chosen, setChosen] = useState<string | null>(rememberedCourse);
+  const [adding, setAdding] = useState(false);
 
   const selected = courses.find((c) => c.id === chosen) ?? courses[0] ?? null;
 
@@ -108,6 +109,8 @@ export function GradesView() {
         categories={categories}
         selectedId={selected?.id ?? null}
         onChoose={choose}
+        adding={adding}
+        onAdding={setAdding}
       />
       {error && (
         <button
@@ -129,8 +132,14 @@ export function GradesView() {
           <Centered>
             NO COURSES YET
             <span className="mt-3 block normal-case tracking-normal text-dim">
-              Add one with + COURSE — pick a category you already use, or type a name.
+              Pick a category you already use, or type a name.
             </span>
+            <button
+              onClick={() => setAdding(true)}
+              className="mt-5 min-h-[44px] w-full border border-hairlit bg-raised px-5 text-[12px] tracking-[0.1em] text-ink transition-colors hover:border-dim hover:text-bright"
+            >
+              + ADD A COURSE
+            </button>
           </Centered>
         )}
       </div>
@@ -154,15 +163,17 @@ function CourseTabs({
   categories,
   selectedId,
   onChoose,
+  adding,
+  onAdding,
 }: {
   courses: GradeCourse[];
   items: GradeItem[];
   categories: Category[];
   selectedId: string | null;
   onChoose: (id: string) => void;
+  adding: boolean;
+  onAdding: (open: boolean) => void;
 }) {
-  const [adding, setAdding] = useState(false);
-
   return (
     <div className="relative flex shrink-0 items-stretch border-b border-hair">
       {/* Scrolls sideways on its own, so a term of seven courses on a phone
@@ -178,7 +189,7 @@ function CourseTabs({
               onClick={() => onChoose(c.id)}
               aria-current={on}
               className={[
-                'tap flex shrink-0 items-center gap-2 border-r border-hair px-3 py-2 text-[11px] transition-colors',
+                'flex min-h-[44px] shrink-0 items-center gap-2 border-r border-hair px-4 text-[12px] transition-colors',
                 on ? 'bg-raised text-bright' : 'text-dim hover:bg-sunken hover:text-ink',
               ].join(' ')}
             >
@@ -192,9 +203,9 @@ function CourseTabs({
         })}
       </nav>
       <button
-        onClick={() => setAdding((v) => !v)}
+        onClick={() => onAdding(!adding)}
         aria-expanded={adding}
-        className="tap label shrink-0 border-l border-hair px-3 transition-colors hover:bg-sunken hover:text-ink"
+        className="min-h-[44px] shrink-0 border-l border-hairlit bg-raised px-4 text-[12px] tracking-[0.08em] whitespace-nowrap text-ink transition-colors hover:bg-hair hover:text-bright"
       >
         + COURSE
       </button>
@@ -203,7 +214,7 @@ function CourseTabs({
           courses={courses}
           categories={categories}
           onDone={(id) => {
-            setAdding(false);
+            onAdding(false);
             if (id) onChoose(id);
           }}
         />
