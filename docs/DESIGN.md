@@ -449,15 +449,23 @@ its courses from the categories already on the calendar — CS4442 is a colour o
 the grid and a tab here, picked from a list rather than typed twice.
 
 **A course is its own row, not a property of a category.** It has things of its
-own — notes, a target — and not every course has a category. While linked, it
+own — notes, its drop rules — and not every course has a category. While linked, it
 takes the category's name and colour; deleting the category sets the link null
 and leaves the course and its marks standing under the name it was created
 with. A tidy-up of the colour list should not be able to take a term of marks.
 
-**Weight is per item, section is a label.** Syllabi weight things both ways
+**Weight is per item, type is a chip.** Syllabi weight things both ways
 ("assignments 20%" against "A1 5%, A2 5%…"), and per item is the one that
-expresses both: a section is the sum of its items. Grouping is by name, ignoring
-case, so "Assignments" and "assignments " are one section.
+expresses both: a type is the sum of its items. Types are picked from a list
+rather than typed, stored by name in `grade_items.section`, and grouped ignoring
+case. A name that is not on the list still groups and still shows.
+
+**A drop belongs to a type, and keeps the type's weight.** "Lowest quiz dropped"
+is a rule about a group, so it lives on the course as `{ quiz: 1 }`. Five quizzes
+at 3% with one gone are four at 3.75%, so the weights still add up to what the
+syllabus says. A mark is only struck once it cannot count: with a quiz still to
+come, that quiz might be the lowest instead. Until then the group is weighed as
+though the drop had happened and every mark in stays on screen.
 
 **A mark is points out of a total.** `85`, `85%` and `17/20` are all typed into
 the same cell; a percentage is stored as out of 100 and said back as one. A
@@ -465,14 +473,14 @@ bonus above full marks is allowed, because refusing it would mean typing a wrong
 number to get a right grade.
 
 **What is shown depends on what can honestly be said.** CURRENT is the grade on
-what has been marked, and is always true. The range, FINAL and the target all
-depend on "what is left", which only means something when the weights total
-100 — so until they do, those are withheld with the reason, rather than
-computed against a guess. "What do I need" answers in a sentence, because each
-of its five outcomes (on track, already secured, out of reach, finished,
-weights don't add up) needs a different sentence, and a bare number needs a
-legend. Planning caps the rest at full marks; a plan that needs a bonus is not a
-plan.
+what has been marked, and is always true. FINAL waits until every mark is in and
+the weights total 100, and says which of those it is waiting on.
+
+The first version also showed the range you could still finish in, a target and
+the average needed to reach it. They were taken out in use: the top of the range
+assumes full marks on everything left, which is never the plan, and the weight
+total was already in the table's last row. Two numbers get read; six got skimmed.
+`grade_courses.target` stays in the table so a value someone typed is not lost.
 
 **Its own store, the calendar's rules.** Grades share none of the calendar's
 questions — no series, no occurrences, no versions — so they live in

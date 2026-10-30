@@ -246,8 +246,8 @@ useCalendar.setState({
 });
 
 /**
- * Three courses, one per state the arithmetic can be in: part-way with a
- * target to plan against, weights that do not add up yet, and finished.
+ * Three courses, one per state the arithmetic can be in: part-way with a drop
+ * still held, weights that do not add up yet, and finished.
  */
 function gradeItem(
   id: string,
@@ -276,25 +276,26 @@ useGrades.setState({
   status: 'ready',
   error: null,
   courses: [
-    { id: 'g1', categoryId: 'c5', name: 'CS4442', notes: 'Lowest quiz is dropped.', target: 80, sortOrder: 0 },
-    { id: 'g2', categoryId: 'c6', name: 'STATS 2244', notes: '', target: null, sortOrder: 1 },
-    { id: 'g3', categoryId: null, name: 'BIO 1001', notes: '', target: 75, sortOrder: 2 },
+    { id: 'g1', categoryId: 'c5', name: 'CS4442', notes: '', target: null, drops: { quiz: 1 }, sortOrder: 0 },
+    { id: 'g2', categoryId: 'c6', name: 'STATS 2244', notes: '', target: null, drops: {}, sortOrder: 1 },
+    { id: 'g3', categoryId: null, name: 'BIO 1001', notes: '', target: null, drops: {}, sortOrder: 2 },
   ],
   items: [
-    gradeItem('i1', 'g1', 'Assignments', 'A1 — linear models', 5, [18, 20]),
-    gradeItem('i2', 'g1', 'Assignments', 'A2 — trees', 5, [85, 100], 'handed in a day late'),
-    gradeItem('i3', 'g1', 'Assignments', 'A3 — kernels', 5, null),
-    gradeItem('i4', 'g1', 'Quizzes', 'Quiz 1', 2.5, [7, 10]),
-    gradeItem('i5', 'g1', 'Quizzes', 'Quiz 2', 2.5, [9, 10]),
-    gradeItem('i6', 'g1', 'Exams', 'Midterm', 30, [71, 100]),
-    gradeItem('i7', 'g1', 'Exams', 'Final exam', 30, null, 'cumulative'),
-    gradeItem('i8', 'g1', 'Project', 'Final project', 20, null),
-    gradeItem('i9', 'g2', '', 'Problem sets', 20, [92, 100]),
-    gradeItem('i10', 'g2', '', 'Midterm', 30, null),
-    gradeItem('i11', 'g2', '', 'Final', 40, null),
-    gradeItem('i12', 'g3', 'Labs', 'Labs', 40, [34, 40]),
-    gradeItem('i13', 'g3', 'Exams', 'Midterm', 25, [68, 100]),
-    gradeItem('i14', 'g3', 'Exams', 'Final', 35, [74, 100]),
+    gradeItem('i1', 'g1', 'Assignment', 'A1 — linear models', 5, [18, 20]),
+    gradeItem('i2', 'g1', 'Assignment', 'A2 — trees', 5, [85, 100], 'handed in a day late'),
+    gradeItem('i3', 'g1', 'Assignment', 'A3 — kernels', 5, null),
+    gradeItem('i4', 'g1', 'Quiz', 'Quiz 1', 2.5, [7, 10]),
+    gradeItem('i5', 'g1', 'Quiz', 'Quiz 2', 2.5, [9, 10]),
+    gradeItem('i6', 'g1', 'Quiz', 'Quiz 3', 2.5, [4, 10]),
+    gradeItem('i7', 'g1', 'Test', 'Midterm', 27.5, [71, 100]),
+    gradeItem('i8', 'g1', 'Exam', 'Final exam', 30, null, 'cumulative'),
+    gradeItem('i9', 'g1', 'Project', 'Final project', 20, null),
+    gradeItem('i10', 'g2', '', 'Problem sets', 20, [92, 100]),
+    gradeItem('i11', 'g2', '', 'Midterm', 30, null),
+    gradeItem('i12', 'g2', '', 'Final', 40, null),
+    gradeItem('i13', 'g3', 'Lab', 'Labs', 40, [34, 40]),
+    gradeItem('i14', 'g3', 'Test', 'Midterm', 25, [68, 100]),
+    gradeItem('i15', 'g3', 'Exam', 'Final', 35, [74, 100]),
   ],
 });
 

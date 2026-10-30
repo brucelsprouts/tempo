@@ -229,6 +229,7 @@ export type Database = {
         Row: {
           category_id: string | null
           created_at: string
+          drops: Json
           id: string
           name: string
           notes: string
@@ -240,6 +241,7 @@ export type Database = {
         Insert: {
           category_id?: string | null
           created_at?: string
+          drops?: Json
           id?: string
           name?: string
           notes?: string
@@ -251,6 +253,7 @@ export type Database = {
         Update: {
           category_id?: string | null
           created_at?: string
+          drops?: Json
           id?: string
           name?: string
           notes?: string

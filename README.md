@@ -166,7 +166,7 @@ src/lib/tempo/      pure domain logic — no React, no network, fully tested
   recurrence.ts     occurrence expansion (arithmetic seek, not iteration)
   derive.ts         per-occurrence computed titles ("Mom · 52")
   reminders.ts      which reminders came due in a window — no queue, recomputed
-  grades.ts         course grades: current, range, what you need on the rest
+  grades.ts         course grades: current, final, dropping the lowest
   layout.ts         week-row lane packing
   mappers.ts        row <-> domain, JSON validation, portable export shape
 
@@ -203,12 +203,13 @@ lifted out on its own.
   category, so the weekly gym session stays where it is. Run
   `supabase/migrations/20260922_timetable.sql` alongside deploying this.
 - **Grades.** **GRADES** (key `5`) keeps a tab per course — pick one of your
-  categories or type a name — with each assignment's section, weight, mark and
+  categories or type a name — with each item's type, name, weight, mark and
   notes. Marks go in as `85`, `85%` or `17/20`, and blank means not back yet. It
-  shows your current grade on what's marked, the range you can still finish in,
-  and the average you need on the rest to hit a target, or says plainly that
-  it's out of reach. Run `supabase/migrations/20261029_grades.sql` alongside
-  deploying this; until then the tab says so and nothing else is affected.
+  shows your current grade on what's marked and your final once everything is
+  in, and any type can drop its lowest marks. Run
+  `supabase/migrations/20261029_grades.sql` and then
+  `supabase/migrations/20261030_grade_drops.sql` before deploying this; until
+  the first has run the tab says so and nothing else is affected.
 - **Google Calendar sync** is designed but not built. See
   [`docs/GOOGLE_SETUP.md`](docs/GOOGLE_SETUP.md).
 - **[`docs/DESIGN.md`](docs/DESIGN.md)** is the design record: why the system is

@@ -8,22 +8,22 @@ import {
   formatPercent,
   formatWeight,
   markPercent,
-  need,
   parseMark,
-  parseTarget,
   parseWeight,
+  sectionKey,
   sections,
   summarize,
   type CourseSummary,
   type GradeCourse,
   type GradeItem,
+  type SectionSummary,
 } from '@/lib/tempo/grades';
 import type { Category } from '@/lib/tempo/types';
 import { inputClass } from './ui';
 
 /**
- * GRADES: one tab per course, each course a ruled table of what it is marked
- * on, and the arithmetic said in sentences rather than left to the reader.
+ * GRADES: one tab per course, each course a table of what it is marked on, with
+ * the two numbers that matter above it.
  *
  * Not a calendar view — it reads categories from the calendar store and keeps
  * its own rows in `grade-store` — but it sits in the same nav because it is the
@@ -46,6 +46,38 @@ function rememberCourse(id: string) {
   } catch {
     // storage disabled: the tab just isn't remembered across reloads
   }
+}
+
+/**
+ * The types an item can be, picked rather than typed. What is stored is the
+ * name, so a type from before this list, or one nobody has added yet, still
+ * groups and still shows, just without a colour of its own.
+ */
+const TYPES = [
+  { name: 'Assignment', color: '#6d8bb0' },
+  { name: 'Quiz', color: '#5aa39a' },
+  { name: 'Test', color: '#c0953f' },
+  { name: 'Exam', color: '#c9705a' },
+  { name: 'Paper', color: '#b06d8b' },
+  { name: 'Project', color: '#9a7cc0' },
+  { name: 'Lab', color: '#7d9a6d' },
+  { name: 'Participation', color: '#a8936d' },
+  { name: 'Other', color: '#8a9096' },
+];
+
+function typeColor(type: string): string | null {
+  const key = sectionKey(type);
+  return TYPES.find((t) => t.name.toLowerCase() === key)?.color ?? (key ? '#8a9096' : null);
+}
+
+/** Tinted rather than filled: a table of seventeen rows should not shout. */
+function chipStyle(color: string | null): React.CSSProperties {
+  if (!color) return {};
+  return {
+    color: `color-mix(in oklab, ${color} 62%, var(--color-bright))`,
+    background: `color-mix(in oklab, ${color} 20%, transparent)`,
+    borderColor: `color-mix(in oklab, ${color} 55%, transparent)`,
+  };
 }
 
 /** A course's name and colour come from its category while it has one. */
@@ -181,7 +213,7 @@ function CourseTabs({
       <nav aria-label="Courses" className="flex min-w-0 flex-1 overflow-x-auto">
         {courses.map((c) => {
           const face = courseFace(c, categories);
-          const summary = summarize(items.filter((i) => i.courseId === c.id));
+          const summary = summarize(items.filter((i) => i.courseId === c.id), c.drops);
           const on = c.id === selectedId;
           return (
             <button
@@ -336,13 +368,13 @@ function CoursePane({
   const [confirming, setConfirming] = useState(false);
 
   const face = courseFace(course, categories);
-  const summary = useMemo(() => summarize(items), [items]);
-  const groups = useMemo(() => sections(items), [items]);
-  const named = groups.some((g) => g.name !== '');
+  const summary = useMemo(() => summarize(items, course.drops), [items, course.drops]);
+  const groups = useMemo(() => sections(items, course.drops), [items, course.drops]);
+  const typed = groups.some((g) => g.name !== '');
 
   async function add() {
-    // A new row joins the section of the one above it: assignments are usually
-    // entered in runs, and retyping "Assignments" five times is the chore here.
+    // A new row takes the type of the one above it: items are usually entered
+    // in runs, and choosing Quiz five times is the chore here.
     const last = items[items.length - 1];
     const id = await addItem(course.id, { section: last?.section ?? '' });
     if (id) setFresh(id);
@@ -377,11 +409,9 @@ function CoursePane({
         onAdd={() => void add()}
       />
 
-      {named && <Sections groups={groups} />}
+      {typed && <TypeCards course={course} groups={groups} />}
 
-      <Target course={course} summary={summary} />
-
-      <section className="border-t border-hair px-4 py-4">
+      <section className="mt-8 border-t border-hair px-4 py-4">
         <label className="label mb-2 block" htmlFor={`notes-${course.id}`}>
           NOTES
         </label>
@@ -389,7 +419,7 @@ function CoursePane({
           id={`notes-${course.id}`}
           value={course.notes}
           onChange={(e) => updateCourse(course.id, { notes: e.target.value })}
-          placeholder="Drop-lowest rules, office hours, what the syllabus says about late work…"
+          placeholder="Office hours, what the syllabus says about late work…"
           rows={4}
           className={`${inputClass} resize-y leading-relaxed`}
         />
@@ -428,25 +458,12 @@ function CoursePane({
 }
 
 function Stats({ summary }: { summary: CourseSummary }) {
-  const range =
-    summary.best === null || summary.worst === null
-      ? '—'
-      : summary.complete
-        ? formatPercent(summary.final)
-        : `${summary.worst.toFixed(1)}–${summary.best.toFixed(1)}%`;
-
-  const off = summary.weightTotal - 100;
-  const weightNote =
-    summary.weightTotal === 0
-      ? 'none set yet'
-      : summary.balanced
-        ? 'adds up'
-        : off < 0
-          ? `${formatWeight(-off)} unassigned`
-          : `${formatWeight(off)} over`;
+  let finalNote = 'when every mark is in';
+  if (summary.final !== null) finalNote = 'everything is in';
+  else if (summary.complete) finalNote = 'needs weights to total 100%';
 
   return (
-    <dl className="grid grid-cols-2 border-y border-hair sm:grid-cols-4">
+    <dl className="grid grid-cols-2 divide-x divide-hair border-y border-hair">
       <Stat
         label="CURRENT"
         value={formatPercent(summary.current)}
@@ -456,51 +473,17 @@ function Stats({ summary }: { summary: CourseSummary }) {
             : `on ${formatWeight(summary.gradedWeight)} marked so far`
         }
       />
-      <Stat
-        label="FINAL"
-        value={formatPercent(summary.final)}
-        note={summary.final === null ? 'when every mark is in' : 'everything is in'}
-      />
-      <Stat
-        label="CAN STILL FINISH"
-        value={range}
-        note={
-          summary.best === null
-            ? 'needs weights to total 100%'
-            : summary.complete
-              ? 'settled'
-              : 'zeros on the rest – full marks'
-        }
-      />
-      <Stat
-        label="WEIGHTS"
-        value={formatWeight(summary.weightTotal)}
-        note={weightNote}
-        warn={summary.weightTotal > 0 && !summary.balanced}
-      />
+      <Stat label="FINAL" value={formatPercent(summary.final)} note={finalNote} />
     </dl>
   );
 }
 
-function Stat({
-  label,
-  value,
-  note,
-  warn = false,
-}: {
-  label: string;
-  value: string;
-  note: string;
-  warn?: boolean;
-}) {
+function Stat({ label, value, note }: { label: string; value: string; note: string }) {
   return (
-    <div className="border-hair px-4 py-3 odd:border-r sm:border-r sm:last:border-r-0 [&:nth-child(-n+2)]:border-b sm:[&:nth-child(-n+2)]:border-b-0">
+    <div className="px-4 py-4">
       <dt className="label">{label}</dt>
-      <dd className="mt-1.5 text-[20px] leading-none tabular-nums text-bright">{value}</dd>
-      <dd className={`mt-1.5 text-[10px] leading-snug ${warn ? 'text-ink' : 'text-mute'}`}>
-        {warn ? '! ' : ''}
-        {note}
-      </dd>
+      <dd className="mt-2 text-[28px] leading-none tabular-nums text-bright">{value}</dd>
+      <dd className="mt-2 text-[10px] leading-snug text-mute">{note}</dd>
     </div>
   );
 }
@@ -508,12 +491,15 @@ function Stat({
 // ---------------------------------------------------------------- the table
 
 /**
- * One grid for both widths. On a phone a row is three lines — name, then
- * section / weight / grade / %, then notes — and from `sm` it is one line in
- * column order, which `order-*` rearranges without a second copy of the row.
+ * One grid for both widths. On a phone a row is three lines: name, then
+ * type / weight / grade / %, then notes. From `sm` it is one line in column
+ * order, which `order-*` rearranges without a second copy of the row.
  */
 const ROW =
-  'grid grid-cols-[minmax(0,1fr)_64px_84px_60px] gap-x-1 sm:grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)_72px_92px_64px_minmax(0,2fr)_36px]';
+  'grid grid-cols-[minmax(0,1fr)_64px_84px_60px] sm:grid-cols-[136px_minmax(0,2fr)_76px_92px_72px_minmax(0,2fr)_36px]';
+
+/** A column's rule. Between columns only, so the table's edge stays open. */
+const RULE = 'border-l border-hair';
 
 function ItemTable({
   items,
@@ -526,120 +512,196 @@ function ItemTable({
   fresh: string | null;
   onAdd: () => void;
 }) {
+  const off = summary.weightTotal - 100;
+
   return (
-    <section className="mt-6">
-      <div className={`${ROW} hidden border-b border-hairlit px-3 pb-2 sm:grid`}>
-        <span className="label px-2">SECTION</span>
-        <span className="label px-2">ASSIGNMENT</span>
-        <span className="label px-2 text-right">WEIGHT</span>
-        <span className="label px-2 text-right">GRADE</span>
-        <span className="label px-2 text-right">%</span>
-        <span className="label px-2">NOTES</span>
-        <span />
+    <section className="mt-6 border-t border-hairlit">
+      <div className={`${ROW} hidden border-b border-hairlit bg-raised sm:grid`}>
+        <span className="label px-3 py-2.5">TYPE</span>
+        <span className={`label px-3 py-2.5 ${RULE}`}>NAME</span>
+        <span className={`label px-3 py-2.5 text-right ${RULE}`}>WEIGHT</span>
+        <span className={`label px-3 py-2.5 text-right ${RULE}`}>GRADE</span>
+        <span className={`label px-3 py-2.5 text-right ${RULE}`}>%</span>
+        <span className={`label px-3 py-2.5 ${RULE}`}>NOTES</span>
+        <span className={RULE} />
       </div>
 
       <ul>
-        {items.map((it) => (
-          <ItemRow key={it.id} item={it} focus={it.id === fresh} />
+        {items.map((it, i) => (
+          <ItemRow
+            key={it.id}
+            item={it}
+            focus={it.id === fresh}
+            dropped={summary.dropped.has(it.id)}
+            startsGroup={i > 0 && sectionKey(items[i - 1].section) !== sectionKey(it.section)}
+          />
         ))}
       </ul>
 
       <button
         onClick={onAdd}
-        className="tap label w-full border-b border-hair px-5 py-3 text-left transition-colors hover:bg-sunken hover:text-ink"
+        className="tap label w-full border-b border-hair px-4 py-3 text-left transition-colors hover:bg-sunken hover:text-ink"
       >
-        + ASSIGNMENT
+        + ITEM
       </button>
 
       {items.length > 0 && (
-        <div className={`${ROW} border-b border-hairlit px-3 py-2.5`}>
-          <span className="label col-span-1 self-center px-2 sm:order-1 sm:col-span-2">TOTAL</span>
-          <span className="self-center px-2 text-right text-[12px] tabular-nums text-ink sm:order-3">
+        <div className={`${ROW} border-b border-hairlit bg-raised`}>
+          <span className="label self-center px-3 py-2.5 sm:order-1 sm:col-span-2">TOTAL</span>
+          <span
+            className={`self-center px-3 py-2.5 text-right text-[12px] tabular-nums sm:order-3 ${
+              summary.balanced ? 'text-ink' : 'text-bright'
+            }`}
+          >
             {formatWeight(summary.weightTotal)}
           </span>
-          <span className="col-span-2 self-center px-2 text-right text-[11px] tabular-nums text-dim sm:order-4 sm:col-span-2">
+          <span className="col-span-2 self-center px-3 py-2.5 text-right text-[11px] tabular-nums text-dim sm:order-4">
             {summary.gradedWeight > 0
               ? `${summary.banked.toFixed(1)} / ${formatWeight(summary.gradedWeight).replace('%', '')} pts`
               : '—'}
           </span>
+          {!summary.balanced && summary.weightTotal > 0 && (
+            <span className="col-span-4 self-center px-3 pb-2.5 text-[11px] text-ink sm:order-5 sm:col-span-2 sm:pt-2.5">
+              ! {off < 0 ? `${formatWeight(-off)} unassigned` : `${formatWeight(off)} over`}
+            </span>
+          )}
         </div>
       )}
     </section>
   );
 }
 
-function ItemRow({ item, focus }: { item: GradeItem; focus: boolean }) {
+function ItemRow({
+  item,
+  focus,
+  dropped,
+  startsGroup,
+}: {
+  item: GradeItem;
+  focus: boolean;
+  dropped: boolean;
+  startsGroup: boolean;
+}) {
   const updateItem = useGrades((s) => s.updateItem);
   const deleteItem = useGrades((s) => s.deleteItem);
   const pct = markPercent(item);
-  const contribution = pct === null ? null : (item.weight * pct) / 100;
+  const color = typeColor(item.section);
 
   return (
-    <li className={`${ROW} gap-y-0.5 border-b border-hair px-3 py-1.5`}>
-      <Cell
-        label="Assignment"
-        value={item.name}
-        commit={(t) => updateItem(item.id, { name: t })}
-        placeholder="Assignment"
-        autoFocus={focus}
-        className="col-span-3 text-ink sm:order-2 sm:col-span-1"
-      />
+    <li
+      className={`${ROW} border-b border-l-2 transition-colors hover:bg-sunken ${
+        startsGroup ? 'border-t border-t-hairlit' : ''
+      } border-b-hair`}
+      style={{ borderLeftColor: color ?? 'transparent' }}
+    >
+      <div className="order-1 col-span-3 sm:order-2 sm:col-span-1 sm:border-l sm:border-hair">
+        <Cell
+          label="Name"
+          value={item.name}
+          commit={(t) => updateItem(item.id, { name: t })}
+          placeholder="Name"
+          autoFocus={focus}
+          className={dropped ? 'text-dim' : 'text-bright'}
+        />
+      </div>
+      <div className="order-3 flex items-center px-2 py-1 sm:order-1">
+        <TypeChip value={item.section} onChange={(t) => updateItem(item.id, { section: t })} />
+      </div>
+      <div className={`${RULE} order-4 sm:order-3`}>
+        <Cell
+          label="Weight"
+          value={item.weight === 0 ? '' : formatWeight(item.weight)}
+          valid={(t) => parseWeight(t) !== null}
+          commit={(t) => updateItem(item.id, { weight: parseWeight(t)! })}
+          placeholder="0%"
+          inputMode="decimal"
+          hint="A percentage of the final grade, 0–100"
+          className="text-right tabular-nums text-ink"
+        />
+      </div>
+      <div className={`${RULE} order-5 sm:order-4`}>
+        <Cell
+          label="Grade"
+          value={formatMark(item)}
+          valid={(t) => parseMark(t).kind !== 'invalid'}
+          commit={(t) => {
+            const m = parseMark(t);
+            if (m.kind === 'mark') updateItem(item.id, { earned: m.earned, outOf: m.outOf });
+            else updateItem(item.id, { earned: null, outOf: null });
+          }}
+          placeholder="—"
+          hint="85, 85% or 17/20 — blank if it isn't back yet"
+          className={`text-right tabular-nums ${dropped ? 'text-mute line-through' : 'text-ink'}`}
+        />
+      </div>
+      <span
+        className={`${RULE} order-6 flex items-center justify-end px-3 text-[11px] tabular-nums sm:order-5 ${
+          dropped ? 'text-mute' : 'text-dim'
+        }`}
+        title={dropped && pct !== null ? `${formatPercent(pct)}, the lowest, so it does not count` : undefined}
+      >
+        {dropped ? 'dropped' : pct === null ? '' : formatPercent(pct)}
+      </span>
+      <div className="order-7 col-span-4 border-t border-hair sm:order-6 sm:col-span-1 sm:border-t-0 sm:border-l">
+        <Cell
+          label="Notes"
+          value={item.notes}
+          commit={(t) => updateItem(item.id, { notes: t })}
+          placeholder="Notes"
+          className="text-[11px] text-dim"
+        />
+      </div>
       <button
         onClick={() => void deleteItem(item.id)}
-        aria-label={`Remove ${item.name || 'assignment'}`}
+        aria-label={`Remove ${item.name || 'item'}`}
         title="Remove"
-        className="tap justify-self-end px-2 text-[13px] text-mute transition-colors hover:text-ink sm:order-7"
+        className={`tap ${RULE} order-2 px-2 text-[13px] text-mute transition-colors hover:text-ink sm:order-7`}
       >
         ×
       </button>
-      <Cell
-        label="Section"
-        value={item.section}
-        commit={(t) => updateItem(item.id, { section: t })}
-        placeholder="Section"
-        className="text-dim sm:order-1"
-      />
-      <Cell
-        label="Weight"
-        value={item.weight === 0 ? '' : formatWeight(item.weight)}
-        valid={(t) => parseWeight(t) !== null}
-        commit={(t) => updateItem(item.id, { weight: parseWeight(t)! })}
-        placeholder="0%"
-        inputMode="decimal"
-        hint="A percentage of the final grade, 0–100"
-        className="text-right tabular-nums text-ink sm:order-3"
-      />
-      <Cell
-        label="Grade"
-        value={formatMark(item)}
-        valid={(t) => parseMark(t).kind !== 'invalid'}
-        commit={(t) => {
-          const m = parseMark(t);
-          if (m.kind === 'mark') updateItem(item.id, { earned: m.earned, outOf: m.outOf });
-          else updateItem(item.id, { earned: null, outOf: null });
-        }}
-        placeholder="—"
-        hint="85, 85% or 17/20 — blank if it isn't back yet"
-        className="text-right tabular-nums text-ink sm:order-4"
-      />
-      <span
-        className="self-center px-2 text-right text-[11px] tabular-nums text-dim sm:order-5"
-        title={
-          contribution === null
-            ? undefined
-            : `${contribution.toFixed(2)} of ${formatWeight(item.weight)} towards the final grade`
-        }
-      >
-        {pct === null ? '' : formatPercent(pct)}
-      </span>
-      <Cell
-        label="Notes"
-        value={item.notes}
-        commit={(t) => updateItem(item.id, { notes: t })}
-        placeholder="Notes"
-        className="col-span-4 text-[11px] text-dim sm:order-6 sm:col-span-1"
-      />
     </li>
+  );
+}
+
+/**
+ * The item's type, as a chip that is really a select: the phone's own picker,
+ * the keyboard, and no menu to clip against the bottom of the scrolling table.
+ */
+function TypeChip({ value, onChange }: { value: string; onChange: (type: string) => void }) {
+  const known = TYPES.some((t) => t.name.toLowerCase() === sectionKey(value));
+  return (
+    <div className="relative inline-flex max-w-full">
+      <select
+        aria-label="Type"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={chipStyle(typeColor(value))}
+        className={`field-sizing-content max-w-full cursor-pointer appearance-none truncate rounded-full border py-1 pr-5 pl-2.5 text-[10px] tracking-[0.06em] uppercase outline-none transition-colors focus-visible:outline-1 focus-visible:outline-dim ${
+          value ? '' : 'border-dashed border-hairlit text-mute hover:text-dim'
+        }`}
+      >
+        <option value="" className="bg-panel text-ink">
+          Type
+        </option>
+        {!known && value && (
+          <option value={value} className="bg-panel text-ink">
+            {value}
+          </option>
+        )}
+        {TYPES.map((t) => (
+          <option key={t.name} value={t.name} className="bg-panel text-ink">
+            {t.name}
+          </option>
+        ))}
+      </select>
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-[8px] opacity-70"
+        style={value ? { color: chipStyle(typeColor(value)).color } : undefined}
+      >
+        ▾
+      </span>
+    </div>
   );
 }
 
@@ -697,7 +759,7 @@ function Cell({
         if (e.key === 'Enter') e.currentTarget.blur();
       }}
       className={[
-        'min-w-0 w-full border bg-transparent px-2 py-1.5 text-[12px] outline-none transition-colors placeholder:text-mute',
+        'min-w-0 w-full border bg-transparent px-3 py-2 text-[12px] outline-none transition-colors placeholder:text-mute',
         bad
           ? 'border-dashed border-dim'
           : 'border-transparent hover:border-hair focus:border-hairlit focus:bg-panel',
@@ -707,84 +769,97 @@ function Cell({
   );
 }
 
-// -------------------------------------------------------------- the rest
+// -------------------------------------------------------------- the types
 
-function Sections({ groups }: { groups: ReturnType<typeof sections> }) {
-  return (
-    <section className="mt-8 px-4">
-      <div className="label mb-2">BY SECTION</div>
-      <ul className="border-t border-hair">
-        {groups.map((g) => (
-          <li
-            key={g.name.toLowerCase() || '(none)'}
-            className="flex items-baseline gap-3 border-b border-hair py-2 text-[12px]"
-          >
-            <span className="min-w-0 flex-1 truncate text-ink">{g.name || 'No section'}</span>
-            <span className="label">{g.count}</span>
-            <span className="w-16 text-right tabular-nums text-dim">{formatWeight(g.weight)}</span>
-            <span className="w-16 text-right tabular-nums text-ink">{formatPercent(g.current)}</span>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function Target({ course, summary }: { course: GradeCourse; summary: CourseSummary }) {
+/**
+ * A card per type: what it comes to so far, and the one rule that belongs to a
+ * group rather than a row.
+ */
+function TypeCards({ course, groups }: { course: GradeCourse; groups: SectionSummary[] }) {
   const updateCourse = useGrades((s) => s.updateCourse);
-  const target = course.target;
+
+  function setDrops(key: string, count: number) {
+    const drops = { ...course.drops };
+    if (count > 0) drops[key] = count;
+    else delete drops[key];
+    updateCourse(course.id, { drops });
+  }
 
   return (
-    <section className="mt-8 border-t border-hair px-4 py-4">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-        <span className="label">WHAT DO I NEED?</span>
-        <div className="flex items-center gap-2">
-          <span className="label">TARGET</span>
-          <div className="w-20 border border-hair">
-            <Cell
-              label="Target final grade"
-              value={target === null ? '' : formatWeight(target)}
-              valid={(t) => parseTarget(t) !== 'invalid'}
-              commit={(t) => {
-                const v = parseTarget(t);
-                if (v !== 'invalid') updateCourse(course.id, { target: v });
-              }}
-              placeholder="80%"
-              inputMode="decimal"
-              hint="A final grade between 0 and 100"
-              className="text-right tabular-nums text-ink"
-            />
-          </div>
-        </div>
-      </div>
-      <p className="mt-3 text-[12px] leading-relaxed text-ink">{needSentence(summary, target)}</p>
+    <section className="mt-8 grid grid-cols-1 gap-2 px-4 sm:grid-cols-2 lg:grid-cols-3">
+      {groups
+        .filter((g) => g.name !== '')
+        .map((g) => {
+          const key = sectionKey(g.name);
+          return (
+            <div
+              key={key}
+              className="border border-l-2 border-hair bg-panel px-3 py-3"
+              style={{ borderLeftColor: typeColor(g.name) ?? undefined }}
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <span
+                  className="truncate text-[11px] tracking-[0.06em] uppercase"
+                  style={{ color: chipStyle(typeColor(g.name)).color }}
+                >
+                  {g.name}
+                </span>
+                <span className="shrink-0 text-[14px] tabular-nums text-bright">
+                  {formatPercent(g.current)}
+                </span>
+              </div>
+              <div className="mt-1 text-[10px] text-mute">
+                {g.count} {g.count === 1 ? 'item' : 'items'} · {formatWeight(g.weight)} of the course
+              </div>
+              {g.count > 1 && (
+                <DropStepper
+                  name={g.name}
+                  value={Math.min(course.drops[key] ?? 0, g.count - 1)}
+                  max={g.count - 1}
+                  onChange={(n) => setDrops(key, n)}
+                />
+              )}
+            </div>
+          );
+        })}
     </section>
   );
 }
 
-/** The answer, as a sentence. A number on its own would need a legend. */
-function needSentence(summary: CourseSummary, target: number | null): string {
-  if (summary.weightTotal === 0) return 'Add assignments and their weights to plan against a target.';
-  // Before the target: a target cannot be planned against until this is fixed,
-  // so it is the more useful thing to say even when no target is set.
-  if (!summary.balanced) {
-    return `The weights add up to ${formatWeight(summary.weightTotal)}. Make them total 100% to plan against a target.`;
-  }
-  if (target === null) return 'Set a target final grade to see what you need on what is left.';
-  const result = need(summary, target);
-  const t = formatPercent(target);
-  switch (result.kind) {
-    case 'unbalanced':
-      return `The weights add up to ${formatWeight(result.weightTotal)}. Make them total 100% to plan against a target.`;
-    case 'complete':
-      return result.met
-        ? `Every mark is in: ${formatPercent(result.final)}, which meets your ${t} target.`
-        : `Every mark is in: ${formatPercent(result.final)}, short of your ${t} target.`;
-    case 'secured':
-      return `Already secured — even zero on the remaining ${formatWeight(summary.remainingWeight)} keeps you at ${t} or above.`;
-    case 'impossible':
-      return `Not reachable — full marks on everything left gets you to ${formatPercent(result.best)}.`;
-    case 'need':
-      return `You need an average of ${formatPercent(result.average)} on the remaining ${formatWeight(result.remainingWeight)} to finish at ${t}.`;
-  }
+function DropStepper({
+  name,
+  value,
+  max,
+  onChange,
+}: {
+  name: string;
+  value: number;
+  max: number;
+  onChange: (count: number) => void;
+}) {
+  const step = 'tap w-7 text-[13px] text-dim transition-colors hover:text-bright disabled:opacity-30';
+  return (
+    <div className="mt-2 flex items-center justify-between gap-2 border-t border-hair pt-2">
+      <span className="text-[11px] text-dim">Drop lowest</span>
+      <div className="flex items-center border border-hair">
+        <button
+          onClick={() => onChange(value - 1)}
+          disabled={value <= 0}
+          aria-label={`Drop one fewer ${name}`}
+          className={step}
+        >
+          −
+        </button>
+        <span className="w-6 text-center text-[12px] tabular-nums text-ink">{value}</span>
+        <button
+          onClick={() => onChange(value + 1)}
+          disabled={value >= max}
+          aria-label={`Drop one more ${name}`}
+          className={step}
+        >
+          +
+        </button>
+      </div>
+    </div>
+  );
 }

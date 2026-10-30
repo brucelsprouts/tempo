@@ -161,6 +161,22 @@ describe('grades', () => {
     expect(gradeCourseToRow({ target: 80 })).toEqual({ target: 80 });
   });
 
+  it('reads malformed drops as none', () => {
+    const row = {
+      id: 'c1',
+      owner_id: 'u1',
+      category_id: null,
+      name: '',
+      notes: '',
+      target: null,
+      sort_order: 0,
+      created_at: '',
+      updated_at: '',
+    };
+    expect(gradeCourseFromRow({ ...row, drops: 'lots' }).drops).toEqual({});
+    expect(gradeCourseFromRow({ ...row, drops: { quiz: -1 } }).drops).toEqual({});
+  });
+
   it('reads a course', () => {
     const course = gradeCourseFromRow({
       id: 'c1',
@@ -169,6 +185,7 @@ describe('grades', () => {
       name: 'CS4442',
       notes: 'drop lowest quiz',
       target: '80.00' as never,
+      drops: { quiz: 1 },
       sort_order: 2,
       created_at: '',
       updated_at: '',
@@ -179,6 +196,7 @@ describe('grades', () => {
       name: 'CS4442',
       notes: 'drop lowest quiz',
       target: 80,
+      drops: { quiz: 1 },
       sortOrder: 2,
     });
   });

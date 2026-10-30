@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   formatMark,
   formatPercent,
-  need,
   parseMark,
   parseWeight,
   sections,
@@ -90,9 +89,6 @@ describe('summarize', () => {
     const s = summarize([item(20), item(30), item(50)]);
     expect(s.current).toBeNull();
     expect(s.banked).toBe(0);
-    expect(s.remainingWeight).toBe(100);
-    expect(s.best).toBe(100);
-    expect(s.worst).toBe(0);
     expect(s.final).toBeNull();
   });
 
@@ -102,27 +98,20 @@ describe('summarize', () => {
     expect(s.current).toBeCloseTo(76);
     expect(s.banked).toBeCloseTo(38);
     expect(s.gradedWeight).toBe(50);
-    expect(s.remainingWeight).toBe(50);
-    expect(s.worst).toBeCloseTo(38);
-    expect(s.best).toBeCloseTo(88);
   });
 
   it('gives a final grade once everything is in', () => {
     const s = summarize([item(40, [80, 100]), item(60, [90, 100])]);
     expect(s.complete).toBe(true);
     expect(s.final).toBeCloseTo(86);
-    expect(s.best).toBeCloseTo(86);
-    expect(s.worst).toBeCloseTo(86);
   });
 
-  it('withholds the range when weights do not total 100', () => {
+  it('withholds the final grade when weights do not total 100', () => {
     const s = summarize([item(20, [80, 100]), item(30)]);
     expect(s.weightTotal).toBe(50);
     expect(s.balanced).toBe(false);
     // Still a fact about the marks that are in.
     expect(s.current).toBeCloseTo(80);
-    expect(s.best).toBeNull();
-    expect(s.worst).toBeNull();
     expect(s.final).toBeNull();
   });
 
@@ -148,55 +137,79 @@ describe('summarize', () => {
   });
 });
 
-describe('need', () => {
-  const half = [item(50, [80, 100]), item(50)];
+describe('dropping the lowest', () => {
+  const quiz = (mark: number | null) =>
+    item(3, mark === null ? null : [mark, 100], { section: 'Quiz' });
 
-  it('says what average the rest needs', () => {
-    // 40 banked; 80 needs 40 more from 50% of the course = 80%.
-    expect(need(summarize(half), 80)).toEqual({ kind: 'need', average: 80, remainingWeight: 50 });
+  it('leaves the group worth what it was worth', () => {
+    // Quizzes 90, 80, 70, 60, 50 at 3% each, the 50 gone: four at 3.75% bank
+    // 3.375 + 3 + 2.625 + 2.25 = 11.25. With 85% on the 85% rest: 72.25 + 11.25.
+    const quizzes = [quiz(90), quiz(80), quiz(70), quiz(60), quiz(50)];
+    const s = summarize([...quizzes, item(85, [85, 100])], { quiz: 1 });
+    expect(s.dropped).toEqual(new Set([quizzes[4].id]));
+    expect(s.gradedWeight).toBeCloseTo(100);
+    expect(s.final).toBeCloseTo(83.5);
   });
 
-  it('says plainly when the target is out of reach', () => {
-    const result = need(summarize(half), 95);
-    expect(result.kind).toBe('impossible');
-    if (result.kind === 'impossible') expect(result.best).toBeCloseTo(90);
+  it('does not strike a mark while the lowest could still be one to come', () => {
+    const s = summarize([quiz(90), quiz(50), quiz(null)], { quiz: 1 });
+    expect(s.dropped.size).toBe(0);
+    expect(s.current).toBeCloseTo(70);
   });
 
-  it('says when the target is already secured', () => {
-    expect(need(summarize(half), 40).kind).toBe('secured');
-    expect(need(summarize(half), 30).kind).toBe('secured');
+  it('strikes as soon as the drops outnumber what is left', () => {
+    const quizzes = [quiz(90), quiz(50), quiz(70), quiz(null)];
+    const s = summarize(quizzes, { quiz: 2 });
+    expect(s.dropped).toEqual(new Set([quizzes[1].id]));
+    expect(s.current).toBeCloseTo(80);
   });
 
-  it('treats a target exactly at the best case as reachable', () => {
-    const result = need(summarize(half), 90);
-    expect(result).toEqual({ kind: 'need', average: 100, remainingWeight: 50 });
+  it('weighs the group as though its pending drop had happened', () => {
+    // Three 10% quizzes with one to drop are two at 15%, against an exam at
+    // 70%: (15 * 100 + 70 * 50) / 85.
+    const s = summarize(
+      [
+        item(10, [100, 100], { section: 'Quiz' }),
+        item(10, null, { section: 'Quiz' }),
+        item(10, null, { section: 'Quiz' }),
+        item(70, [50, 100]),
+      ],
+      { quiz: 1 },
+    );
+    expect(s.current).toBeCloseTo(5000 / 85);
   });
 
-  it('reports met or missed once everything is in', () => {
-    const done = summarize([item(100, [78, 100])]);
-    expect(need(done, 75)).toEqual({ kind: 'complete', final: 78, met: true });
-    expect(need(done, 80)).toEqual({ kind: 'complete', final: 78, met: false });
+  it('only touches the group it names, in any spelling', () => {
+    const s = summarize(
+      [
+        item(50, [40, 100], { section: ' QUIZ ' }),
+        item(25, [80, 100], { section: 'quiz' }),
+        item(25, [10, 100], { section: 'Exam' }),
+      ],
+      { quiz: 1 },
+    );
+    expect(s.dropped.size).toBe(1);
+    // The 25% quiz now carries the group's 75%; the exam is untouched.
+    expect(s.final).toBeCloseTo(75 * 0.8 + 25 * 0.1);
   });
 
-  it('cannot answer until the weights total 100', () => {
-    expect(need(summarize([item(20, [80, 100]), item(30)]), 80)).toEqual({
-      kind: 'unbalanced',
-      weightTotal: 50,
-    });
+  it('always leaves one mark standing', () => {
+    const s = summarize([item(100, [40, 100], { section: 'Quiz' })], { quiz: 3 });
+    expect(s.dropped.size).toBe(0);
+    expect(s.final).toBeCloseTo(40);
   });
 
-  it('works before any mark is in', () => {
-    expect(need(summarize([item(30), item(70)]), 65)).toEqual({
-      kind: 'need',
-      average: 65,
-      remainingWeight: 100,
-    });
+  it('ignores a weightless item when choosing what to drop', () => {
+    const practice = item(0, [0, 100], { section: 'Quiz' });
+    const s = summarize([practice, quiz(90), quiz(80)], { quiz: 1 });
+    expect(s.dropped.has(practice.id)).toBe(false);
+    expect(s.current).toBeCloseTo(90);
   });
 
-  it('counts a bonus mark towards the target', () => {
-    // 110% on half the course banks 55; 80 needs 25 from the other 50 = 50%.
-    const bonus = summarize([item(50, [22, 20]), item(50)]);
-    expect(need(bonus, 80)).toEqual({ kind: 'need', average: 50, remainingWeight: 50 });
+  it('reaches the per-type average too', () => {
+    const rows = sections([quiz(90), quiz(50)], { quiz: 1 });
+    expect(rows[0].current).toBeCloseTo(90);
+    expect(rows[0].weight).toBe(6);
   });
 });
 

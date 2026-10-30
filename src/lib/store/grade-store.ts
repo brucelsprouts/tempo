@@ -37,7 +37,7 @@ const WRITE_DELAY = 400;
  */
 export type GradeStatus = 'idle' | 'loading' | 'ready' | 'missing' | 'error';
 
-export type CoursePatch = Partial<Pick<GradeCourse, 'name' | 'notes' | 'target' | 'categoryId'>>;
+export type CoursePatch = Partial<Pick<GradeCourse, 'name' | 'notes' | 'drops' | 'categoryId'>>;
 export type ItemPatch = Partial<
   Pick<GradeItem, 'name' | 'section' | 'weight' | 'earned' | 'outOf' | 'notes'>
 >;
@@ -230,6 +230,7 @@ export const useGrades = create<GradeState>((set, get) => {
         name: name.trim(),
         notes: '',
         target: null,
+        drops: {},
         sortOrder: nextSort(get().courses),
       };
       const insert = optimistic(
@@ -245,7 +246,7 @@ export const useGrades = create<GradeState>((set, get) => {
 
     updateCourse: (id, patch) =>
       editRow('courses', 'grade_courses', id, patch, (c) =>
-        gradeCourseToRow({ name: c.name, notes: c.notes, target: c.target, categoryId: c.categoryId }),
+        gradeCourseToRow({ name: c.name, notes: c.notes, drops: c.drops, categoryId: c.categoryId }),
       ),
 
     deleteCourse: async (id) => {

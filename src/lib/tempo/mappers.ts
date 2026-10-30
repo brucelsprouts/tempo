@@ -313,6 +313,8 @@ function parseMarkColumns(earned: unknown, outOf: unknown): { earned: number | n
   return { earned: e.data, outOf: o.data };
 }
 
+const dropsSchema = z.record(z.string(), z.coerce.number().int().min(0));
+
 export function gradeCourseFromRow(row: GradeCourseRow): GradeCourse {
   return {
     id: row.id,
@@ -320,6 +322,8 @@ export function gradeCourseFromRow(row: GradeCourseRow): GradeCourse {
     name: row.name,
     notes: row.notes ?? '',
     target: parsePercent(row.target),
+    // Malformed drops count every mark, the safe way to be wrong about a grade.
+    drops: dropsSchema.safeParse(row.drops).data ?? {},
     sortOrder: row.sort_order,
   };
 }
@@ -347,6 +351,7 @@ export function gradeCourseToRow(c: Partial<GradeCourse>): Partial<GradeCourseRo
   if (c.name !== undefined) row.name = c.name;
   if (c.notes !== undefined) row.notes = c.notes;
   if (c.target !== undefined) row.target = c.target;
+  if (c.drops !== undefined) row.drops = c.drops;
   if (c.sortOrder !== undefined) row.sort_order = c.sortOrder;
   return row;
 }

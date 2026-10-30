@@ -1,5 +1,5 @@
 /**
- * Course grades: what you have, what you can still get, and what you need.
+ * Course grades: what you have so far, and what it came to.
  *
  * Pure arithmetic over a course's weighted items. No React, no network — the
  * GRADES view and the store both read these, so a number on screen is the
@@ -23,17 +23,22 @@ export interface GradeCourse {
   /** The name it was created with, shown once there is no category to ask. */
   name: string;
   notes: string;
-  /** The final grade being aimed for, in percent. */
+  /** Retired from the view. The column stays so nobody's old value is lost to a tidy-up. */
   target: number | null;
+  /** How many of each type's lowest marks do not count, by `sectionKey`. */
+  drops: Drops;
   sortOrder: number;
 }
+
+/** "Drop the lowest quiz" is `{ quiz: 1 }`. A type that drops nothing has no key. */
+export type Drops = Record<string, number>;
 
 /** One weighted thing in a course: an assignment, a quiz, the final. */
 export interface GradeItem {
   id: string;
   courseId: string;
   name: string;
-  /** A free label — "Assignments", "Exams" — for grouping. Weight stays per item. */
+  /** The item's type, "Quiz" or "Exam", which groups it. Weight stays per item. */
   section: string;
   /** Percentage points of the final grade, 0–100. */
   weight: number;
@@ -106,12 +111,6 @@ export function parseWeight(input: string): number | null {
   return weight > 100 ? null : weight;
 }
 
-/** A percentage as a target, the same rules as a weight but blank means none. */
-export function parseTarget(input: string): number | null | 'invalid' {
-  if (input.trim() === '') return null;
-  return parseWeight(input) ?? 'invalid';
-}
-
 /** Up to two decimals, and no trailing zeros: 17.5, not 17.50. */
 function trim(n: number): string {
   return String(Math.round(n * 100) / 100);
@@ -135,124 +134,144 @@ export function markPercent(item: Pick<GradeItem, 'earned' | 'outOf'>): number |
   return (item.earned / item.outOf) * 100;
 }
 
+/** Two spellings of one type are one group: "Quiz" and "quiz " were always meant to be. */
+export function sectionKey(section: string): string {
+  return section.trim().toLowerCase();
+}
+
+/**
+ * What dropping does to a course: which marks stopped counting, and what each
+ * of the others is now worth.
+ *
+ * A group's weight survives its drops. Five quizzes at 3% with the lowest gone
+ * are four quizzes at 3.75%, still 15% of the course, so the weights go on
+ * adding up to what the syllabus says.
+ *
+ * A mark is only struck once it cannot count: with a quiz still to come, that
+ * quiz might be the lowest instead. Until then the drop is held for the items
+ * not yet marked, and the group is reweighted as though it had already happened.
+ */
+export function applyDrops(
+  items: readonly GradeItem[],
+  drops: Drops,
+): { dropped: Set<string>; scale: Map<string, number> } {
+  const dropped = new Set<string>();
+  const scale = new Map<string, number>();
+
+  const groups = new Map<string, GradeItem[]>();
+  for (const it of items) {
+    if (it.weight <= 0) continue;
+    const key = sectionKey(it.section);
+    groups.set(key, [...(groups.get(key) ?? []), it]);
+  }
+
+  for (const [key, members] of groups) {
+    // At least one item always counts: dropping all of them is not a grade.
+    const count = Math.min(drops[key] ?? 0, members.length - 1);
+    if (count <= 0) continue;
+
+    const marked = members.filter((m) => markPercent(m) !== null);
+    const waiting = members.filter((m) => markPercent(m) === null);
+    const struck = Math.max(0, count - waiting.length);
+    const lowest = [...marked]
+      .sort((a, b) => markPercent(a)! - markPercent(b)!)
+      .slice(0, struck);
+    for (const it of lowest) dropped.add(it.id);
+
+    const total = members.reduce((sum, m) => sum + m.weight, 0);
+    const waitingAverage = waiting.reduce((sum, m) => sum + m.weight, 0) / (waiting.length || 1);
+    const goneWeight =
+      lowest.reduce((sum, m) => sum + m.weight, 0) + (count - struck) * waitingAverage;
+    for (const it of members) scale.set(it.id, total / (total - goneWeight));
+  }
+
+  return { dropped, scale };
+}
+
 export interface CourseSummary {
-  /** Sum of every item's weight. */
+  /** Sum of every item's weight, as entered. */
   weightTotal: number;
-  /** Whether the weights total 100. The range and the target need them to. */
+  /** Whether the weights total 100. FINAL needs them to. */
   balanced: boolean;
-  /** Weight of the items with a mark in. */
+  /** What the marks that count are worth, after drops. */
   gradedWeight: number;
-  /** Weight of the items still waiting on one. */
-  remainingWeight: number;
   /** Percentage points of the final grade already earned. */
   banked: number;
-  /** The grade on what has been marked so far — `banked` over `gradedWeight`. */
+  /** The grade on what has been marked so far: `banked` over `gradedWeight`. */
   current: number | null;
-  /** Full marks on everything left. Only when balanced. */
-  best: number | null;
-  /** Zero on everything left. Only when balanced. */
-  worst: number | null;
   /** Every weighted item has a mark. */
   complete: boolean;
   /** The grade, once it is settled: complete and balanced. */
   final: number | null;
+  /** The marks that do not count. */
+  dropped: Set<string>;
 }
 
-export function summarize(items: readonly GradeItem[]): CourseSummary {
+export function summarize(items: readonly GradeItem[], drops: Drops = {}): CourseSummary {
+  const { dropped, scale } = applyDrops(items, drops);
   let weightTotal = 0;
   let gradedWeight = 0;
   let banked = 0;
   let weighted = 0;
+  let waiting = 0;
 
   for (const it of items) {
     weightTotal += it.weight;
-    // A weightless item is a note to self — practice quiz, ungraded lab. Its
-    // mark is shown but moves nothing, and it is never "remaining".
+    // A weightless item is a note to self: practice quiz, ungraded lab. Its
+    // mark is shown but moves nothing, and it is never waited on.
     if (it.weight <= 0) continue;
     weighted++;
     const pct = markPercent(it);
-    if (pct === null) continue;
-    gradedWeight += it.weight;
-    banked += (it.weight * pct) / 100;
+    if (pct === null) {
+      waiting++;
+      continue;
+    }
+    if (dropped.has(it.id)) continue;
+    const weight = it.weight * (scale.get(it.id) ?? 1);
+    gradedWeight += weight;
+    banked += (weight * pct) / 100;
   }
 
-  const remainingWeight = weightTotal - gradedWeight;
   const balanced = Math.abs(weightTotal - 100) < EPSILON;
-  const complete = weighted > 0 && remainingWeight < EPSILON;
+  const complete = weighted > 0 && waiting === 0;
   const current = gradedWeight > EPSILON ? (banked / gradedWeight) * 100 : null;
 
   return {
     weightTotal,
     balanced,
     gradedWeight,
-    remainingWeight: Math.max(0, remainingWeight),
     banked,
     current,
-    best: balanced ? banked + Math.max(0, remainingWeight) : null,
-    worst: balanced ? banked : null,
     complete,
     final: balanced && complete ? banked : null,
+    dropped,
   };
 }
 
-export type Need =
-  /** The weights have to total 100 before "what's left" means anything. */
-  | { kind: 'unbalanced'; weightTotal: number }
-  /** Nothing left to mark: the target was met or it wasn't. */
-  | { kind: 'complete'; final: number; met: boolean }
-  /** Zero on everything left still reaches it. */
-  | { kind: 'secured' }
-  /** Full marks on everything left still falls short. */
-  | { kind: 'impossible'; best: number }
-  /** The average needed across what's left. */
-  | { kind: 'need'; average: number; remainingWeight: number };
-
-/** What it takes to finish the course at `target` percent. */
-export function need(summary: CourseSummary, target: number): Need {
-  if (!summary.balanced) return { kind: 'unbalanced', weightTotal: summary.weightTotal };
-  if (summary.complete) {
-    return { kind: 'complete', final: summary.banked, met: summary.banked >= target - EPSILON };
-  }
-  const missing = target - summary.banked;
-  if (missing <= EPSILON) return { kind: 'secured' };
-  const average = (missing / summary.remainingWeight) * 100;
-  // Full marks is the ceiling for planning, though a bonus can beat it: a plan
-  // that relies on one is not a plan.
-  if (average > 100 + EPSILON) return { kind: 'impossible', best: summary.best ?? summary.banked };
-  return { kind: 'need', average: round(average), remainingWeight: summary.remainingWeight };
-}
-
-/** Floating point's last-digit noise, off a number about to be compared or shown. */
-function round(n: number): number {
-  return Math.round(n * 1e9) / 1e9;
-}
-
 export interface SectionSummary {
-  /** As first typed. Blank is the items with no section. */
+  /** As first typed. Blank is the items with no type. */
   name: string;
   weight: number;
-  /** The grade on what is marked in this section. */
+  /** The grade on what is marked in this group, after its drops. */
   current: number | null;
   count: number;
 }
 
 /**
- * Items grouped by section, in the order each section first appears.
+ * Items grouped by type, in the order each type first appears.
  *
- * Matched ignoring case and surrounding space, so "Assignments" and
- * "assignments " are one group — they were always meant to be.
+ * Matched by `sectionKey`, ignoring case and surrounding space.
  */
-export function sections(items: readonly GradeItem[]): SectionSummary[] {
+export function sections(items: readonly GradeItem[], drops: Drops = {}): SectionSummary[] {
   const groups = new Map<string, { name: string; members: GradeItem[] }>();
   for (const it of items) {
-    const name = it.section.trim();
-    const key = name.toLowerCase();
-    const group = groups.get(key) ?? { name, members: [] };
+    const key = sectionKey(it.section);
+    const group = groups.get(key) ?? { name: it.section.trim(), members: [] };
     group.members.push(it);
     groups.set(key, group);
   }
   return [...groups.values()].map(({ name, members }) => {
-    const s = summarize(members);
+    const s = summarize(members, drops);
     return { name, weight: s.weightTotal, current: s.current, count: members.length };
   });
 }
