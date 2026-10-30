@@ -434,6 +434,52 @@ A repeating entry with a time keeps its zone rather than UTC, or a 09:00 lecture
 would import at 10:00 for half the year. Reminders stay behind: they count from
 anchors ICS has no words for, and whatever imports the file sets its own.
 
+## 20. Grades are arithmetic said in sentences
+
+GRADES is the one tab that is not a view of the calendar. It sits in the same nav
+because a course's deadlines and its marks are one train of thought, and it takes
+its courses from the categories already on the calendar — CS4442 is a colour on
+the grid and a tab here, picked from a list rather than typed twice.
+
+**A course is its own row, not a property of a category.** It has things of its
+own — notes, a target — and not every course has a category. While linked, it
+takes the category's name and colour; deleting the category sets the link null
+and leaves the course and its marks standing under the name it was created
+with. A tidy-up of the colour list should not be able to take a term of marks.
+
+**Weight is per item, section is a label.** Syllabi weight things both ways
+("assignments 20%" against "A1 5%, A2 5%…"), and per item is the one that
+expresses both: a section is the sum of its items. Grouping is by name, ignoring
+case, so "Assignments" and "assignments " are one section.
+
+**A mark is points out of a total.** `85`, `85%` and `17/20` are all typed into
+the same cell; a percentage is stored as out of 100 and said back as one. A
+bonus above full marks is allowed, because refusing it would mean typing a wrong
+number to get a right grade.
+
+**What is shown depends on what can honestly be said.** CURRENT is the grade on
+what has been marked, and is always true. The range, FINAL and the target all
+depend on "what is left", which only means something when the weights total
+100 — so until they do, those are withheld with the reason, rather than
+computed against a guess. "What do I need" answers in a sentence, because each
+of its five outcomes (on track, already secured, out of reach, finished,
+weights don't add up) needs a different sentence, and a bare number needs a
+legend. Planning caps the rest at full marks; a plan that needs a bonus is not a
+plan.
+
+**Its own store, the calendar's rules.** Grades share none of the calendar's
+questions — no series, no occurrences, no versions — so they live in
+`grade-store.ts` rather than in three more collections threaded through the
+calendar's snapshot and undo. What carries over is the contract: a change shows
+at once, the database follows after the popup's 400ms pause, and a refused write
+restores the row as the server last had it. There is no realtime channel; the
+tab reads again when the app comes back, and sends what is waiting when it is
+hidden.
+
+`grade_items.event_id` exists and nothing reads it yet. It is for linking an
+item to the entry it is due on, so a passed deadline can ask for the mark — here
+so that feature does not need a migration of its own.
+
 ---
 
 ## Not built

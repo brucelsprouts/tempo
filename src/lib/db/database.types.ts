@@ -225,6 +225,113 @@ export type Database = {
         }
         Relationships: []
       }
+      grade_courses: {
+        Row: {
+          category_id: string | null
+          created_at: string
+          id: string
+          name: string
+          notes: string
+          owner_id: string
+          sort_order: number
+          target: number | null
+          updated_at: string
+        }
+        Insert: {
+          category_id?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          notes?: string
+          owner_id: string
+          sort_order?: number
+          target?: number | null
+          updated_at?: string
+        }
+        Update: {
+          category_id?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          notes?: string
+          owner_id?: string
+          sort_order?: number
+          target?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "grade_courses_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "categories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      grade_items: {
+        Row: {
+          course_id: string
+          created_at: string
+          earned: number | null
+          event_id: string | null
+          id: string
+          name: string
+          notes: string
+          out_of: number | null
+          owner_id: string
+          section: string
+          sort_order: number
+          updated_at: string
+          weight: number
+        }
+        Insert: {
+          course_id: string
+          created_at?: string
+          earned?: number | null
+          event_id?: string | null
+          id?: string
+          name?: string
+          notes?: string
+          out_of?: number | null
+          owner_id: string
+          section?: string
+          sort_order?: number
+          updated_at?: string
+          weight?: number
+        }
+        Update: {
+          course_id?: string
+          created_at?: string
+          earned?: number | null
+          event_id?: string | null
+          id?: string
+          name?: string
+          notes?: string
+          out_of?: number | null
+          owner_id?: string
+          section?: string
+          sort_order?: number
+          updated_at?: string
+          weight?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "grade_items_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "grade_courses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "grade_items_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       integrations: {
         Row: {
           access_token: string | null
@@ -409,6 +516,8 @@ export type EventVersionInsert = PublicSchema['Tables']['event_versions']['Inser
 export type GoogleEventCacheRow = PublicSchema['Tables']['google_events_cache']['Row']
 export type IntegrationRow = PublicSchema['Tables']['integrations']['Row']
 export type PushSubscriptionRow = PublicSchema['Tables']['push_subscriptions']['Row']
+export type GradeCourseRow = PublicSchema['Tables']['grade_courses']['Row']
+export type GradeItemRow = PublicSchema['Tables']['grade_items']['Row']
 
 export type EventKindDb = PublicSchema['Enums']['event_kind']
 export type EventStatusDb = PublicSchema['Enums']['event_status']

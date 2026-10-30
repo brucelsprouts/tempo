@@ -77,7 +77,27 @@ const DIR =
  * Order matters on the way back in: categories before the events that point at
  * them, events before the overrides and versions that point at those.
  */
-const TABLES = ['categories', 'events', 'occurrence_overrides', 'event_versions'] as const;
+const TABLES = [
+  'categories',
+  'events',
+  'occurrence_overrides',
+  'event_versions',
+  'grade_courses',
+  'grade_items',
+] as const;
+
+/**
+ * Tables a database may not have yet, because their migration is run by hand
+ * after the code that reads them ships. Missing, they are left out of the file
+ * rather than failing the run — a backup that stops working the day a feature
+ * is deployed is the backup you find out about when you need it.
+ */
+const OPTIONAL = new Set<string>(['grade_courses', 'grade_items']);
+
+/** PostgREST's "no such table", in both the spellings it has used. */
+function isMissingTable(error: { code?: string }): boolean {
+  return error.code === 'PGRST205' || error.code === '42P01';
+}
 
 /** PostgREST's default ceiling per request. Exceeded by `event_versions` first. */
 const PAGE = 1000;
@@ -86,7 +106,7 @@ const supabase = createClient(READ_URL, SERVICE_KEY, {
   auth: { persistSession: false },
 });
 
-async function fetchAll(table: string): Promise<Record<string, unknown>[]> {
+async function fetchAll(table: string): Promise<Record<string, unknown>[] | null> {
   const rows: Record<string, unknown>[] = [];
   for (let from = 0; ; from += PAGE) {
     // Ordered so the page boundary is stable. Without it PostgREST is free to
@@ -99,7 +119,10 @@ async function fetchAll(table: string): Promise<Record<string, unknown>[]> {
       .order('id')
       .range(from, from + PAGE - 1);
 
-    if (error) throw new Error(`${table}: ${error.message}`);
+    if (error) {
+      if (OPTIONAL.has(table) && isMissingTable(error)) return null;
+      throw new Error(`${table}: ${error.message}`);
+    }
     rows.push(...((data ?? []) as Record<string, unknown>[]));
     if (!data || data.length < PAGE) return rows;
   }
@@ -121,8 +144,13 @@ async function run() {
 
   const tables: Record<string, Record<string, unknown>[]> = {};
   for (const t of TABLES) {
-    tables[t] = await fetchAll(t);
-    console.log(`  ${t.padEnd(22)} ${String(tables[t].length).padStart(6)} rows`);
+    const rows = await fetchAll(t);
+    if (rows === null) {
+      console.log(`  ${t.padEnd(22)}  (not migrated yet)`);
+      continue;
+    }
+    tables[t] = rows;
+    console.log(`  ${t.padEnd(22)} ${String(rows.length).padStart(6)} rows`);
   }
 
   // Hashed over the data alone, so two runs with nothing changed in between

@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import type { EventRow, EventVersionRow } from '@/lib/db/database.types';
-import { eventFromRow, eventToRow, parsePatch, toPortable, versionFromRow } from './mappers';
+import type { EventRow, EventVersionRow, GradeItemRow } from '@/lib/db/database.types';
+import {
+  eventFromRow,
+  eventToRow,
+  gradeCourseFromRow,
+  gradeCourseToRow,
+  gradeItemFromRow,
+  gradeItemToRow,
+  parsePatch,
+  toPortable,
+  versionFromRow,
+} from './mappers';
 
 function row(over: Partial<EventRow> = {}): EventRow {
   return {
@@ -105,5 +115,71 @@ describe('the timetable flag', () => {
 
     const lecture = eventFromRow(row({ timetable: true }));
     expect(toPortable(lecture).timetable).toBe(true);
+  });
+});
+
+describe('grades', () => {
+  function itemRow(over: Partial<GradeItemRow> = {}): GradeItemRow {
+    return {
+      id: 'g1',
+      owner_id: 'u1',
+      course_id: 'c1',
+      name: 'Midterm',
+      section: 'Exams',
+      weight: 30,
+      earned: 42,
+      out_of: 50,
+      notes: '',
+      event_id: null,
+      sort_order: 0,
+      created_at: '',
+      updated_at: '',
+      ...over,
+    };
+  }
+
+  it('reads an item, numeric strings included', () => {
+    const item = gradeItemFromRow(itemRow({ weight: '30.00' as never, earned: '42' as never }));
+    expect(item.weight).toBe(30);
+    expect(item.earned).toBe(42);
+    expect(item.outOf).toBe(50);
+  });
+
+  it('reads half a mark as no mark', () => {
+    const item = gradeItemFromRow(itemRow({ out_of: null }));
+    expect(item.earned).toBeNull();
+    expect(item.outOf).toBeNull();
+  });
+
+  it('reads an out-of-range weight as weightless rather than throwing', () => {
+    expect(gradeItemFromRow(itemRow({ weight: 250 })).weight).toBe(0);
+  });
+
+  it('writes only what the patch mentions', () => {
+    expect(gradeItemToRow({ earned: 17, outOf: 20 })).toEqual({ earned: 17, out_of: 20 });
+    expect(gradeItemToRow({ earned: null, outOf: null })).toEqual({ earned: null, out_of: null });
+    expect(gradeCourseToRow({ target: 80 })).toEqual({ target: 80 });
+  });
+
+  it('reads a course', () => {
+    const course = gradeCourseFromRow({
+      id: 'c1',
+      owner_id: 'u1',
+      category_id: 'cat',
+      name: 'CS4442',
+      notes: 'drop lowest quiz',
+      target: '80.00' as never,
+      sort_order: 2,
+      created_at: '',
+      updated_at: '',
+    });
+    expect(course).toEqual({
+      id: 'c1',
+      categoryId: 'cat',
+      name: 'CS4442',
+      notes: 'drop lowest quiz',
+      target: 80,
+      sortOrder: 2,
+    });
   });
 });

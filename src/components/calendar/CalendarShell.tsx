@@ -21,6 +21,7 @@ import type { Occurrence } from '@/lib/tempo/types';
 import { MONTHS } from './constants';
 import { ContinuousCalendar, type CalendarHandle } from './ContinuousCalendar';
 import { DayModal } from './DayModal';
+import { GradesView } from './GradesView';
 import { EventForm, type DraftPreview, type EntryFormHandle } from './EventForm';
 import { History } from './History';
 import { ListView, type ListHandle } from './ListView';
@@ -49,6 +50,9 @@ const VIEWS = [
   // 1/2/3 are already in fingers, and a nav whose labels and numbers disagree
   // is worse than one ordered by when it was built.
   { value: 'week', label: 'WEEK', key: '4' },
+  // Not a view of the calendar, but beside it: a course's deadlines and its
+  // marks are one train of thought. Appended for the same reason WEEK was.
+  { value: 'grades', label: 'GRADES', key: '5' },
 ] as const;
 
 /** What a new entry is pre-filled with. A span, because a drag can select one. */
@@ -622,6 +626,9 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
       case '4':
         setViewPreference('week');
         break;
+      case '5':
+        setViewPreference('grades');
+        break;
       // Paging the week view. Arrows are already the grid's, for moving a
       // selection; brackets are free and read as "step".
       case '[':
@@ -736,7 +743,9 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
               </g>
             </g>
           </svg>
-          <span className="text-[12px] tracking-[0.3em] text-bright">TEMPO</span>
+          {/* The mark alone on a phone: five views want the row, and the logo
+              already says whose app this is. */}
+          <span className="hidden text-[12px] tracking-[0.3em] text-bright sm:inline">TEMPO</span>
         </div>
         <span className="hidden text-hair sm:inline">│</span>
 
@@ -752,7 +761,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
               onClick={() => setViewPreference(v.value)}
               aria-current={view === v.value}
               className={[
-                'tap flex flex-1 items-center justify-center gap-1.5 px-2.5 py-1 text-[10px] tracking-[0.12em] transition-colors sm:flex-none sm:justify-start',
+                'tap flex min-w-0 flex-1 items-center justify-center gap-1.5 px-1 py-1 text-[10px] tracking-[0.12em] transition-colors sm:flex-none sm:justify-start sm:px-2.5',
                 view === v.value
                   ? 'bg-raised text-bright'
                   : 'text-mute hover:bg-sunken hover:text-dim',
@@ -769,7 +778,7 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
         {/* Only where it means something. The week view shows the timetable
             whatever this says, so there it would be a control that does
             nothing — worse than one that isn't there. */}
-        {view !== 'week' && (
+        {view !== 'week' && view !== 'grades' && (
           <button
             onClick={() => setTimetableVisible(!showTimetable)}
             aria-pressed={showTimetable}
@@ -847,6 +856,8 @@ export function CalendarShell({ email, onSignOut, banner }: Props) {
             onOpenDay={openDay}
           />
         )}
+
+        {view === 'grades' && <GradesView />}
 
         {view === 'year' && (
           <YearView

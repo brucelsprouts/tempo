@@ -10,6 +10,8 @@ import type {
   CategoryRow,
   EventRow,
   EventVersionRow,
+  GradeCourseRow,
+  GradeItemRow,
   OccurrenceOverrideRow,
 } from '@/lib/db/database.types';
 import type {
@@ -23,6 +25,7 @@ import type {
   TempoEvent,
   VersionReason,
 } from './types';
+import type { GradeCourse, GradeItem } from './grades';
 import { canonicalReminders } from './reminders';
 
 const civilDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -279,6 +282,87 @@ export function overrideFromRow(row: OccurrenceOverrideRow): OccurrenceOverride 
 
 export function categoryFromRow(row: CategoryRow): Category {
   return { id: row.id, name: row.name, color: row.color, sortOrder: row.sort_order };
+}
+
+// ------------------------------------------------------------------- grades
+/**
+ * `numeric` columns, which PostgREST sends as JSON numbers but is free to send
+ * as strings when a value outgrows a double. Coerced, then range-checked, so a
+ * value the database should never hold degrades rather than throws.
+ */
+const percentSchema = z.coerce.number().min(0).max(100);
+const pointsSchema = z.coerce.number().min(0);
+
+function parsePercent(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const result = percentSchema.safeParse(value);
+  return result.success ? result.data : null;
+}
+
+/**
+ * A mark, both halves or neither. One half on its own — which the table's
+ * check constraint forbids — reads as no mark rather than as a guess.
+ */
+function parseMarkColumns(earned: unknown, outOf: unknown): { earned: number | null; outOf: number | null } {
+  if (earned === null || earned === undefined || outOf === null || outOf === undefined) {
+    return { earned: null, outOf: null };
+  }
+  const e = pointsSchema.safeParse(earned);
+  const o = pointsSchema.safeParse(outOf);
+  if (!e.success || !o.success || o.data <= 0) return { earned: null, outOf: null };
+  return { earned: e.data, outOf: o.data };
+}
+
+export function gradeCourseFromRow(row: GradeCourseRow): GradeCourse {
+  return {
+    id: row.id,
+    categoryId: row.category_id,
+    name: row.name,
+    notes: row.notes ?? '',
+    target: parsePercent(row.target),
+    sortOrder: row.sort_order,
+  };
+}
+
+export function gradeItemFromRow(row: GradeItemRow): GradeItem {
+  return {
+    id: row.id,
+    courseId: row.course_id,
+    name: row.name,
+    section: row.section ?? '',
+    // A weight the column's check should have refused counts for nothing,
+    // rather than taking the whole course's arithmetic with it.
+    weight: parsePercent(row.weight) ?? 0,
+    ...parseMarkColumns(row.earned, row.out_of),
+    notes: row.notes ?? '',
+    eventId: row.event_id,
+    sortOrder: row.sort_order,
+  };
+}
+
+/** Domain → row. Only the columns a client is allowed to set. */
+export function gradeCourseToRow(c: Partial<GradeCourse>): Partial<GradeCourseRow> {
+  const row: Partial<GradeCourseRow> = {};
+  if (c.categoryId !== undefined) row.category_id = c.categoryId;
+  if (c.name !== undefined) row.name = c.name;
+  if (c.notes !== undefined) row.notes = c.notes;
+  if (c.target !== undefined) row.target = c.target;
+  if (c.sortOrder !== undefined) row.sort_order = c.sortOrder;
+  return row;
+}
+
+export function gradeItemToRow(i: Partial<GradeItem>): Partial<GradeItemRow> {
+  const row: Partial<GradeItemRow> = {};
+  if (i.courseId !== undefined) row.course_id = i.courseId;
+  if (i.name !== undefined) row.name = i.name;
+  if (i.section !== undefined) row.section = i.section;
+  if (i.weight !== undefined) row.weight = i.weight;
+  if (i.earned !== undefined) row.earned = i.earned;
+  if (i.outOf !== undefined) row.out_of = i.outOf;
+  if (i.notes !== undefined) row.notes = i.notes;
+  if (i.eventId !== undefined) row.event_id = i.eventId;
+  if (i.sortOrder !== undefined) row.sort_order = i.sortOrder;
+  return row;
 }
 
 // ------------------------------------------------------------------- export

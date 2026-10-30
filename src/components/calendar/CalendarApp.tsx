@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect } from 'react';
 import { useCalendar } from '@/lib/store/calendar-store';
+import { useGrades } from '@/lib/store/grade-store';
 import { createClient } from '@/lib/supabase/client';
 import { CalendarShell } from './CalendarShell';
 
@@ -13,6 +14,8 @@ export function CalendarApp({ email }: { email: string }) {
   const refresh = useCalendar((s) => s.refresh);
   const connect = useCalendar((s) => s.connect);
   const disconnect = useCalendar((s) => s.disconnect);
+  const loadGrades = useGrades((s) => s.load);
+  const flushGrades = useGrades((s) => s.flush);
 
   /**
    * Read once, then listen.
@@ -26,13 +29,17 @@ export function CalendarApp({ email }: { email: string }) {
   useEffect(() => {
     let live = true;
     void load().then(() => {
-      if (live) connect();
+      if (!live) return;
+      connect();
+      // After the calendar, which is what the screen is waiting on; grades are
+      // two small tables and the course tabs want their numbers on arrival.
+      void loadGrades();
     });
     return () => {
       live = false;
       disconnect();
     };
-  }, [load, connect, disconnect]);
+  }, [load, connect, disconnect, loadGrades]);
 
   /**
    * Catch up when the app comes back.
@@ -42,12 +49,24 @@ export function CalendarApp({ email }: { email: string }) {
    * never arrive, and nothing says they were missed. Same cause, same remedy
    * as `useToday`: look again when the page is visible, focused or online.
    * `refresh()` ignores the extras when these fire together.
+   *
+   * Grades have no channel, so this is their only way to hear about another
+   * device. Hidden is when their waiting writes go, since a phone suspends a
+   * hidden page before a pending timer fires.
    */
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void refresh();
+      if (document.visibilityState === 'visible') {
+        void refresh();
+        void loadGrades();
+      } else {
+        void flushGrades();
+      }
     };
-    const onResume = () => void refresh();
+    const onResume = () => {
+      void refresh();
+      void loadGrades();
+    };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onResume);
     window.addEventListener('online', onResume);
@@ -56,7 +75,7 @@ export function CalendarApp({ email }: { email: string }) {
       window.removeEventListener('focus', onResume);
       window.removeEventListener('online', onResume);
     };
-  }, [refresh]);
+  }, [refresh, loadGrades, flushGrades]);
 
   const signOut = useCallback(async () => {
     await createClient().auth.signOut();

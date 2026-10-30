@@ -10,13 +10,13 @@
  * server snapshot and reconciles the client one itself.
  */
 
-export type View = 'scroll' | 'list' | 'year' | 'week';
+export type View = 'scroll' | 'list' | 'year' | 'week' | 'grades';
 
 const KEY = 'tempo.view';
 const DEFAULT: View = 'scroll';
 
 function isView(v: unknown): v is View {
-  return v === 'scroll' || v === 'list' || v === 'year' || v === 'week';
+  return v === 'scroll' || v === 'list' || v === 'year' || v === 'week' || v === 'grades';
 }
 
 /** Cached so `getSnapshot` is cheap and returns a stable value per change. */
