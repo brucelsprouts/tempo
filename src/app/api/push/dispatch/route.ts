@@ -215,11 +215,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ scanned: events.length, due: due.length, sent: 0, claimed: 0 });
   }
 
-  const { data: subs, error: subsError } = await supabase.from('push_subscriptions').select('*');
-  if (subsError) {
-    return NextResponse.json({ error: subsError.message }, { status: 500 });
-  }
-
   // No devices is not an error and does not un-claim anything. The reminder's
   // moment has passed either way, and leaving it unclaimed would mean that
   // subscribing a phone later replays every reminder still inside the catch-up
@@ -227,6 +222,13 @@ export async function POST(request: Request) {
   let sent = 0;
   let pruned = 0;
   for (const d of toSend) {
+    // Read per reminder, because each send can change the list: it counts
+    // failures against the row and can delete it, and the next send in this tick
+    // has to start from that rather than from a stale copy.
+    const { data: subs, error: subsError } = await supabase.from('push_subscriptions').select('*');
+    if (subsError) {
+      return NextResponse.json({ error: subsError.message }, { status: 500 });
+    }
     const { title, body } = reminderText(d);
     const result = await sendToAll(supabase, subs ?? [], {
       title,

@@ -9,7 +9,23 @@ import type { Database, PushSubscriptionRow } from '@/lib/db/database.types';
  * subscription the push service has retired answers 404 or 410, and a sender
  * that doesn't delete those accumulates dead rows that fail on every tick
  * forever. The two belong in the same place or the second one gets forgotten.
+ *
+ * Not every dead subscription says so. Some answer 400 or 401 instead, which
+ * could also mean a bad request or a key problem, so one of those is a strike
+ * rather than a verdict. `MAX_FAILURES` in a row with nothing delivered between
+ * them is the verdict. A wrong call costs little: the client re-subscribes every
+ * time the app is opened.
  */
+
+/** Rejections in a row, with no delivery between them, before a device is dropped. */
+export const MAX_FAILURES = 5;
+
+/**
+ * The answers that count against a device. Not 429 or a 5xx, which are the push
+ * service having a bad minute, and not 413, which is about the payload: none of
+ * those say anything about the subscription.
+ */
+const REJECTED = new Set([400, 401, 403]);
 
 /** What the service worker's `push` handler expects to parse. */
 export interface PushPayload {
@@ -76,6 +92,8 @@ export async function sendToAll(
 
   const body = JSON.stringify(payload);
   const dead: string[] = [];
+  /** New `failure_count` per subscription id, for the ones whose count changes. */
+  const counts = new Map<string, number>();
   let sent = 0;
   let failed = 0;
 
@@ -90,17 +108,30 @@ export async function sendToAll(
           { urgency: 'high', TTL: 60 * 60 },
         );
         sent += 1;
+        if (sub.failure_count > 0) counts.set(sub.id, 0);
       } catch (error) {
         // 404: the endpoint never existed. 410 Gone: the browser or the OS
         // retired it — which is exactly what iOS does when a PWA sits unused,
         // and the reason the client re-subscribes on every launch.
-        const status = (error as { statusCode?: number }).statusCode;
+        const { statusCode: status, body: reason } = error as { statusCode?: number; body?: string };
         if (status === 404 || status === 410) {
           dead.push(sub.endpoint);
-        } else {
-          failed += 1;
-          console.error('push send failed', status, (error as Error).message);
+          return;
         }
+        failed += 1;
+        // The host and not the endpoint: the rest of that URL is the credential
+        // for pushing to this device, and it has no business in a log file.
+        console.error(
+          'push send failed',
+          status,
+          sub.id,
+          new URL(sub.endpoint).host,
+          (reason || (error as Error).message).slice(0, 200),
+        );
+        if (status === undefined || !REJECTED.has(status)) return;
+        const strikes = sub.failure_count + 1;
+        if (strikes >= MAX_FAILURES) dead.push(sub.endpoint);
+        else counts.set(sub.id, strikes);
       }
     }),
   );
@@ -108,6 +139,11 @@ export async function sendToAll(
   if (dead.length > 0) {
     await supabase.from('push_subscriptions').delete().in('endpoint', dead);
   }
+  await Promise.all(
+    [...counts].map(([id, failure_count]) =>
+      supabase.from('push_subscriptions').update({ failure_count }).eq('id', id),
+    ),
+  );
 
   return { sent, pruned: dead.length, failed };
 }

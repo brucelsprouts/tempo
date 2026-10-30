@@ -257,6 +257,13 @@ and the one sent is the one nearer the deadline. **A time of day at or after the
 due moment is sent an hour before it instead**, since a 09:00 "today" on a 07:00
 exam is a reminder about something already happening.
 
+**A device that keeps being refused is dropped.** Only 404 and 410 used to remove
+a subscription, so a dead one answering 400 or 401 was retried on every reminder
+indefinitely. Those answers can also mean a bad request or a key problem, so one
+is a strike rather than a verdict: five in a row, with no delivery between them,
+removes the device. Outages and rate limits (5xx, 429) do not count. A wrong call
+is cheap, since the client re-subscribes every time the app opens.
+
 ## 13. The PWA installs; it does not pretend to work offline
 
 The service worker caches the app shell and an offline page, and deliberately
