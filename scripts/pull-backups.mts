@@ -19,7 +19,7 @@ import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { isStale, toFetch } from './sync.mts';
 
-const HOST = process.env.TEMPO_BACKUP_HOST ?? 'ubuntu@192.18.158.188';
+const HOST = process.env.TEMPO_BACKUP_HOST ?? 'tempo-box';
 const REMOTE = process.env.TEMPO_REMOTE_DIR ?? 'tempo-backups';
 const DIR =
   process.env.TEMPO_PULL_DIR ?? join(homedir(), 'Desktop', 'stuff', 'tempo-backups');

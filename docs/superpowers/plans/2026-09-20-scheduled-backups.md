@@ -77,7 +77,7 @@ turns out to be fine, this task is three commands and you move on.
 - [x] **Step 1: Read the actual versions on the box**
 
 ```bash
-ssh ubuntu@192.18.158.188 'node --version; which node; systemd-analyze --version | head -1'
+ssh tempo-box 'node --version; which node; systemd-analyze --version | head -1'
 ```
 
 Expected: a Node version and a systemd version. Record both — the node path is
@@ -87,7 +87,7 @@ timezone suffix in `OnCalendar` (24.04 ships 255).
 - [x] **Step 2: Confirm the box has the service role key**
 
 ```bash
-ssh ubuntu@192.18.158.188 'grep -c SUPABASE_SERVICE_ROLE_KEY ~/tempo/.env.local; grep -c SUPABASE_INTERNAL_URL ~/tempo/.env.local'
+ssh tempo-box 'grep -c SUPABASE_SERVICE_ROLE_KEY ~/tempo/.env.local; grep -c SUPABASE_INTERNAL_URL ~/tempo/.env.local'
 ```
 
 Expected: `1` and `1`. If `SUPABASE_SERVICE_ROLE_KEY` is missing, it comes from
@@ -105,7 +105,7 @@ deprecation warning. But it means restarting the app the user depends on, so it
 is their call, not yours. The upgrade, once approved:
 
 ```bash
-ssh ubuntu@192.18.158.188
+ssh tempo-box
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs
 node --version                                    # expect v22.x
@@ -837,7 +837,7 @@ import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { isStale, toFetch } from './sync.mts';
 
-const HOST = process.env.TEMPO_BACKUP_HOST ?? 'ubuntu@192.18.158.188';
+const HOST = process.env.TEMPO_BACKUP_HOST ?? 'tempo-box';
 const REMOTE = process.env.TEMPO_REMOTE_DIR ?? 'tempo-backups';
 const DIR =
   process.env.TEMPO_PULL_DIR ?? join(homedir(), 'Desktop', 'stuff', 'tempo-backups');
@@ -946,7 +946,7 @@ with:
 npm run pull-backups
 ```
 
-Expected: `Listing ubuntu@192.18.158.188:tempo-backups`, then — because Task 8
+Expected: `Listing tempo-box:tempo-backups`, then — because Task 8
 has not run yet — `Already current — 0 on the box.` followed by the stale
 warning, since a box with no backups is stale by definition.
 
@@ -981,7 +981,7 @@ git commit -m "Pull the box's backups down to the desktop"
 
 ```bash
 git push origin main
-ssh ubuntu@192.18.158.188 'cd ~/tempo && git pull'
+ssh tempo-box 'cd ~/tempo && git pull'
 ```
 
 Expected: the `scripts/` files and `package.json` updated.
@@ -992,7 +992,7 @@ running app. The scripts are run directly by node, outside Next.
 - [x] **Step 2: Take the first backup by hand, before automating it**
 
 ```bash
-ssh ubuntu@192.18.158.188 'cd ~/tempo && TEMPO_BACKUP_DIR=$HOME/tempo-backups npm run backup'
+ssh tempo-box 'cd ~/tempo && TEMPO_BACKUP_DIR=$HOME/tempo-backups npm run backup'
 ```
 
 Expected: `Reading http://localhost:8000` — confirming Task 3 worked and the
@@ -1006,7 +1006,7 @@ If it instead prints `Reading https://supabase.brucelsprouts.com`, then
 - [x] **Step 3: Confirm the file is real**
 
 ```bash
-ssh ubuntu@192.18.158.188 'find ~/tempo-backups -type f; du -sh ~/tempo-backups'
+ssh tempo-box 'find ~/tempo-backups -type f; du -sh ~/tempo-backups'
 ```
 
 Expected: one path of the form `…/2026-09/tempo-<ISO>Z.json`, around 1 MB.
@@ -1026,7 +1026,7 @@ to fall back on.
 - [x] **Step 1: Write the service unit**
 
 ```bash
-ssh ubuntu@192.18.158.188 'sudo tee /etc/systemd/system/tempo-backup.service > /dev/null' <<'UNIT'
+ssh tempo-box 'sudo tee /etc/systemd/system/tempo-backup.service > /dev/null' <<'UNIT'
 [Unit]
 Description=Tempo — nightly calendar backup
 # The stack has to be up for localhost:8000 to answer. Not a hard dependency:
@@ -1051,7 +1051,7 @@ that is not to put it there.
 - [x] **Step 2: Write the timer unit**
 
 ```bash
-ssh ubuntu@192.18.158.188 'sudo tee /etc/systemd/system/tempo-backup.timer > /dev/null' <<'UNIT'
+ssh tempo-box 'sudo tee /etc/systemd/system/tempo-backup.timer > /dev/null' <<'UNIT'
 [Unit]
 Description=Tempo — nightly calendar backup
 
@@ -1076,7 +1076,7 @@ UNIT
 - [x] **Step 3: Enable it**
 
 ```bash
-ssh ubuntu@192.18.158.188 'sudo systemctl daemon-reload && sudo systemctl enable --now tempo-backup.timer'
+ssh tempo-box 'sudo systemctl daemon-reload && sudo systemctl enable --now tempo-backup.timer'
 ```
 
 Expected: a symlink created into `timers.target.wants`.
@@ -1084,7 +1084,7 @@ Expected: a symlink created into `timers.target.wants`.
 - [x] **Step 4: Verify the schedule resolves to the hour you meant**
 
 ```bash
-ssh ubuntu@192.18.158.188 'systemctl list-timers tempo-backup.timer --all'
+ssh tempo-box 'systemctl list-timers tempo-backup.timer --all'
 ```
 
 Expected: a `NEXT` of the coming 03:00 Eastern, shown in the box's own timezone
@@ -1096,7 +1096,7 @@ recording that it then drifts an hour across DST.
 - [x] **Step 5: Verify the service runs when fired**
 
 ```bash
-ssh ubuntu@192.18.158.188 'sudo systemctl start tempo-backup.service && sleep 5 && cat ~/tempo-backup.log'
+ssh tempo-box 'sudo systemctl start tempo-backup.service && sleep 5 && cat ~/tempo-backup.log'
 ```
 
 Expected: `Reading http://localhost:8000`, the row counts, and `Unchanged since
@@ -1107,8 +1107,8 @@ already took today's, which is the hash check doing its job.
 
 ```bash
 mkdir -p deploy
-ssh ubuntu@192.18.158.188 'cat /etc/systemd/system/tempo-backup.service' > deploy/tempo-backup.service
-ssh ubuntu@192.18.158.188 'cat /etc/systemd/system/tempo-backup.timer' > deploy/tempo-backup.timer
+ssh tempo-box 'cat /etc/systemd/system/tempo-backup.service' > deploy/tempo-backup.service
+ssh tempo-box 'cat /etc/systemd/system/tempo-backup.timer' > deploy/tempo-backup.timer
 git add deploy/
 git commit -m "Record the units that run the nightly backup"
 ```

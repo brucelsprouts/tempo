@@ -8,7 +8,7 @@ memory of building it.
 
 | | |
 |---|---|
-| Host | `ubuntu@192.18.158.188` (Ubuntu 24.04, ARM64, 4 OCPU / 24 GB) |
+| Host | `tempo-box` (Ubuntu 24.04, ARM64, 4 OCPU / 24 GB) |
 | App | `~/tempo`, built with `npm run build`, run by PM2 as `tempo` on **:3000** |
 | Supabase | `~/supabase-tempo`, Docker Compose, gateway on **:8000** |
 | App env | `~/tempo/.env.local` (chmod 600) |
@@ -140,7 +140,7 @@ knows about the other; they meet in a directory.
 | On the desktop | `C:\Users\bruce\Desktop\stuff\tempo-backups\YYYY-MM\` — the archive, never pruned |
 | Hand-run backups | `…\stuff\tempo-backups-manual\` — a *different* folder, and deliberately so |
 | Pull | Task Scheduler, "Tempo backup pull", 03:30 daily, catches up after the PC has been off |
-| Key | the desktop reaches the box via `~/.ssh/config` (`Host 192.18.158.188` → `C:\Keys\new-key`) |
+| Key | the desktop reaches the box via `~/.ssh/config` (`Host tempo-box` → the private key kept outside the repo) |
 
 **Retention runs on the box only.** Under a week keeps every run; under three
 months the newest of each day; under two years the newest of each month; beyond
@@ -192,7 +192,7 @@ $p = New-ScheduledTaskPrincipal -UserId "BRUCELSPROUTS\bruce" -LogonType S4U -Ru
 Set-ScheduledTask -TaskName "Tempo backup pull" -Principal $p
 ```
 
-S4U can still read `C:\Keys\new-key` and `~/.ssh/config`, because both are
+S4U can still read the private key kept outside the repo and `~/.ssh/config`, because both are
 local files rather than anything needing network credentials — which is the
 thing to check first if a silent task ever starts failing to connect.
 
